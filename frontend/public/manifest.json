@@ -1,0 +1,17 @@
+{
+  "name": "Smart Attendance",
+  "short_name": "Attendance",
+  "description": "Secure real-time GPS & OTP based College Smart Attendance System",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#15102a",
+  "theme_color": "#15102a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
