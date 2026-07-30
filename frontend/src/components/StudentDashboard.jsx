@@ -232,7 +232,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           const studentMarker = window.L.circleMarker([studentLat, studentLon], {
             radius: 8,
             fillColor: '#2563eb',
-            color: '#fff',
+            color: 'var(--text-primary)',
             weight: 2,
             opacity: 1,
             fillOpacity: 0.8
@@ -441,7 +441,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             fontSize: '1rem',
             fontWeight: '700',
             fontFamily: 'var(--font-display)',
-            color: '#fff'
+            color: 'var(--text-primary)'
           }}>
             {pct}%
           </div>
@@ -791,7 +791,7 @@ const styles = {
     fontFamily: 'var(--font-display)',
     fontWeight: '700',
     fontSize: '1.25rem',
-    color: '#fff',
+    color: 'var(--text-primary)',
     letterSpacing: '0.02em'
   },
   headerActions: {
@@ -828,7 +828,7 @@ const styles = {
     gap: '14px',
     marginBottom: '20px',
     paddingBottom: '16px',
-    borderBottom: '1px solid rgba(255, 255, 255, 0.06)'
+    borderBottom: '1px solid var(--border-light)'
   },
   avatar: {
     width: '48px',
@@ -858,7 +858,7 @@ const styles = {
     fontFamily: 'var(--font-display)',
     fontSize: '1.2rem',
     fontWeight: '600',
-    color: '#fff',
+    color: 'var(--text-primary)',
     marginBottom: '20px'
   },
   formGroup: {

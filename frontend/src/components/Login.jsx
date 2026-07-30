@@ -64,7 +64,7 @@ export default function Login({ onLoginSuccess, onBack }) {
         )}
         <div style={styles.header}>
           <div style={styles.logoContainer}>
-            <GraduationCap size={36} color="#9333ea" />
+            <img src="/logo.png" alt="LJCCA Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
           </div>
           <h2 style={styles.title}>Smart Attendance</h2>
           <p style={styles.subtitle}>GPS + OTP Verification Portal</p>
@@ -258,22 +258,18 @@ const styles = {
     marginBottom: '30px'
   },
   logoContainer: {
-    width: '64px',
-    height: '64px',
-    borderRadius: '16px',
-    background: 'rgba(147, 51, 234, 0.15)',
+    width: '100px',
+    height: '100px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    margin: '0 auto 16px auto',
-    border: '1px solid rgba(147, 51, 234, 0.3)',
-    boxShadow: '0 0 20px rgba(147, 51, 234, 0.2)'
+    margin: '0 auto 16px auto'
   },
   title: {
     fontFamily: 'var(--font-display)',
     fontWeight: '700',
     fontSize: '1.8rem',
-    color: '#fff',
+    color: 'var(--text-primary)',
     marginBottom: '6px'
   },
   subtitle: {
@@ -282,8 +278,8 @@ const styles = {
   },
   tabContainer: {
     display: 'flex',
-    background: 'rgba(255, 255, 255, 0.04)',
-    border: '1px solid rgba(255, 255, 255, 0.06)',
+    background: 'var(--border-extra-light)',
+    border: '1px solid var(--border-light)',
     borderRadius: '10px',
     padding: '4px',
     marginBottom: '28px'
@@ -307,8 +303,8 @@ const styles = {
   activeTab: {
     background: 'rgba(147, 51, 234, 0.2)',
     border: '1px solid rgba(147, 51, 234, 0.3)',
-    color: '#fff',
-    textShadow: '0 0 10px rgba(147, 51, 234, 0.5)'
+    color: 'var(--text-primary)',
+    textShadow: 'none'
   },
   form: {
     display: 'flex',
@@ -339,7 +335,7 @@ const styles = {
   errorAlert: {
     background: 'rgba(239, 68, 68, 0.15)',
     border: '1px solid rgba(239, 68, 68, 0.3)',
-    color: '#f87171',
+    color: 'var(--danger)',
     padding: '12px',
     borderRadius: '8px',
     fontSize: '0.88rem',

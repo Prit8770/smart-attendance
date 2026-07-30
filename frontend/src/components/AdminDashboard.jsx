@@ -95,6 +95,16 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
   const [reportStudentId, setReportStudentId] = useState('');
   const [reportData, setReportData] = useState([]);
+  const [reportFilterSem, setReportFilterSem] = useState('');
+  const [reportFilterName, setReportFilterName] = useState('');
+  const [reportFilterEnroll, setReportFilterEnroll] = useState('');
+
+  const filteredReportData = reportData.filter(row => {
+    const matchSem = reportFilterSem ? String(row.semester) === reportFilterSem : true;
+    const matchName = reportFilterName ? row.name.toLowerCase().includes(reportFilterName.toLowerCase()) : true;
+    const matchEnroll = reportFilterEnroll ? row.enrollment_no.toLowerCase().includes(reportFilterEnroll.toLowerCase()) : true;
+    return matchSem && matchName && matchEnroll;
+  });
 
   // Fetch Dashboard Statistics
   const fetchStats = async () => {
@@ -1086,7 +1096,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     const tableColumn = ['Enrollment No', 'Name', 'Course/Sem', 'Session/OTP', 'Date', 'Time', 'Distance', 'Status'];
     const tableRows = [];
 
-    reportData.forEach((row) => {
+    filteredReportData.forEach((row) => {
       tableRows.push([
         row.enrollment_no,
         row.name,
@@ -1112,6 +1122,44 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     });
 
     doc.save(`Attendance_Report_${reportType}_${new Date().toISOString().split('T')[0]}.pdf`);
+  };
+
+  const handleExportExcel = () => {
+    const cleanData = filteredReportData.map(row => ({
+      'Enrollment No': row.enrollment_no,
+      'Name': row.name,
+      'Course': row.course,
+      'Semester': row.semester,
+      'Session/OTP': row.qr_session_id ? `QR Session #${row.qr_session_id}` : `${row.otp || 'N/A'} (OTP)`,
+      'Date': row.date,
+      'Time': row.time,
+      'Distance (m)': row.distance,
+      'Status': row.status === 'Success' ? 'Present' : 'Rejected'
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(cleanData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance logs');
+    XLSX.writeFile(workbook, `Attendance_Report_${reportType}_${new Date().toISOString().split('T')[0]}.xlsx`);
+  };
+
+  const handleExportCSV = () => {
+    const cleanData = filteredReportData.map(row => ({
+      'Enrollment No': row.enrollment_no,
+      'Name': row.name,
+      'Course': row.course,
+      'Semester': row.semester,
+      'Session/OTP': row.qr_session_id ? `QR Session #${row.qr_session_id}` : `${row.otp || 'N/A'} (OTP)`,
+      'Date': row.date,
+      'Time': row.time,
+      'Distance (m)': row.distance,
+      'Status': row.status === 'Success' ? 'Present' : 'Rejected'
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(cleanData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance logs');
+    XLSX.writeFile(workbook, `Attendance_Report_${reportType}_${new Date().toISOString().split('T')[0]}.csv`);
   };
 
   const filteredStudents = students.filter(
@@ -1276,7 +1324,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             {activeStatsList && (
               <div className="glass-panel" style={{ padding: '24px', borderRadius: '16px', marginBottom: '24px', border: '1px solid rgba(255,255,255,0.1)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#fff', margin: 0 }}>
+                  <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>
                     {activeStatsList === 'total' && 'Total Registered Students'}
                     {activeStatsList === 'total_faculty' && 'Total Registered Faculty'}
                     {activeStatsList === 'present' && 'Present Students List (Today)'}
@@ -1713,7 +1761,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           <div style={{ height: '100%', width: `${(qrCodeTimer / 20) * 100}%`, background: 'linear-gradient(90deg, #9333ea, #a855f7)', transition: 'width 1s linear' }}></div>
                         </div>
 
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: '#fff', fontWeight: '600' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: 'var(--text-primary)', fontWeight: '600' }}>
                           <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <Clock size={16} className="spin-slow" />
                             Session Remaining
@@ -1731,7 +1779,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: qrGenerationEnabled ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
                         <QrCode size={40} color={qrGenerationEnabled ? '#10b981' : '#ef4444'} />
                       </div>
-                      <h4 style={{ color: '#fff', marginBottom: '12px', fontWeight: 600 }}>Faculty QR Permission</h4>
+                      <h4 style={{ color: 'var(--text-primary)', marginBottom: '12px', fontWeight: 600 }}>Faculty QR Permission</h4>
                       <div style={{ display: 'inline-block', padding: '6px 14px', borderRadius: '20px', fontSize: '0.85rem', fontWeight: 'bold', background: qrGenerationEnabled ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)', color: qrGenerationEnabled ? '#10b981' : '#ef4444', border: qrGenerationEnabled ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)', marginBottom: '24px' }}>
                         {qrGenerationEnabled ? 'QR GENERATION ENABLED' : 'QR GENERATION DISABLED'}
                       </div>
@@ -1942,7 +1990,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   value={reportType}
                   onChange={(e) => setReportType(e.target.value)}
                   className="glass-input"
-                  style={{ background: '#16102b', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px' }}
+                  style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px' }}
                 >
                   <option value="today">Today's Attendance</option>
                   <option value="yesterday">Yesterday's Attendance</option>
@@ -1958,7 +2006,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     value={reportStudentId}
                     onChange={(e) => setReportStudentId(e.target.value)}
                     className="glass-input"
-                    style={{ background: '#16102b', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '8px' }}
+                    style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px' }}
                   >
                     <option value="">-- Choose Student --</option>
                     {students.map(s => (
@@ -1968,18 +2016,70 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                 </div>
               )}
 
-              <button 
-                className="btn btn-success" 
-                onClick={handleDownloadPDF}
-                disabled={reportData.length === 0 || (reportType === 'student_wise' && !reportStudentId)}
-                style={{ height: '42px', marginTop: 'auto' }}
-              >
-                <Download size={16} /> Download PDF Report
-              </button>
+              <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
+                <button 
+                  className="btn btn-success" 
+                  onClick={handleDownloadPDF}
+                  disabled={filteredReportData.length === 0 || (reportType === 'student_wise' && !reportStudentId)}
+                  style={{ height: '42px' }}
+                >
+                  <Download size={16} /> PDF
+                </button>
+                <button 
+                  className="btn btn-success" 
+                  onClick={handleExportExcel}
+                  disabled={filteredReportData.length === 0 || (reportType === 'student_wise' && !reportStudentId)}
+                  style={{ height: '42px' }}
+                >
+                  <Download size={16} /> Excel
+                </button>
+                <button 
+                  className="btn btn-success" 
+                  onClick={handleExportCSV}
+                  disabled={filteredReportData.length === 0 || (reportType === 'student_wise' && !reportStudentId)}
+                  style={{ height: '42px' }}
+                >
+                  <Download size={16} /> CSV
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Filters */}
+            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '20px', padding: '16px', background: 'var(--panel-bg)', borderRadius: '12px', border: '1px solid var(--border-light)' }}>
+              <div style={styles.inputGroup}>
+                <label style={styles.formLabel}>Filter by Sem</label>
+                <input 
+                  type="text" 
+                  placeholder="e.g. 3" 
+                  className="glass-input" 
+                  value={reportFilterSem} 
+                  onChange={e => setReportFilterSem(e.target.value)} 
+                />
+              </div>
+              <div style={styles.inputGroup}>
+                <label style={styles.formLabel}>Filter by Name</label>
+                <input 
+                  type="text" 
+                  placeholder="Search name..." 
+                  className="glass-input" 
+                  value={reportFilterName} 
+                  onChange={e => setReportFilterName(e.target.value)} 
+                />
+              </div>
+              <div style={styles.inputGroup}>
+                <label style={styles.formLabel}>Filter by Enrollment No.</label>
+                <input 
+                  type="text" 
+                  placeholder="Search enrollment..." 
+                  className="glass-input" 
+                  value={reportFilterEnroll} 
+                  onChange={e => setReportFilterEnroll(e.target.value)} 
+                />
+              </div>
             </div>
 
             <div className="custom-table-container">
-              {reportData.length === 0 ? (
+              {filteredReportData.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>
                   No attendance records matched the selected query filters.
                 </div>
@@ -1999,7 +2099,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     </tr>
                   </thead>
                   <tbody>
-                    {reportData.map((row) => (
+                    {filteredReportData.map((row) => (
                       <tr key={row.id}>
                         <td>{row.enrollment_no}</td>
                         <td style={{ fontWeight: 600 }}>{row.name}</td>
@@ -2103,7 +2203,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             {createdStudentCredentials ? (
               <div style={styles.credentialsSuccessCard}>
                 <CheckCircle size={32} color="#10b981" style={{ marginBottom: '10px' }} />
-                <h4 style={{ color: '#fff', marginBottom: '12px' }}>Student Added Successfully!</h4>
+                <h4 style={{ color: 'var(--text-primary)', marginBottom: '12px' }}>Student Added Successfully!</h4>
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
                   Please share these generated credentials with the student. They will not be shown again.
                 </p>
@@ -2239,7 +2339,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             {createdFacultyCredentials ? (
               <div style={styles.credentialsSuccessCard}>
                 <CheckCircle size={32} color="#10b981" style={{ marginBottom: '10px' }} />
-                <h4 style={{ color: '#fff', marginBottom: '12px' }}>Faculty Added Successfully!</h4>
+                <h4 style={{ color: 'var(--text-primary)', marginBottom: '12px' }}>Faculty Added Successfully!</h4>
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '16px' }}>
                   Please share these generated credentials with the faculty member. They will not be shown again.
                 </p>
@@ -2364,7 +2464,7 @@ const styles = {
     fontFamily: 'var(--font-display)',
     fontWeight: '700',
     fontSize: '1.25rem',
-    color: '#fff',
+    color: 'var(--text-primary)',
     letterSpacing: '0.02em'
   },
   headerActions: {
@@ -2403,7 +2503,7 @@ const styles = {
   navTabActive: {
     background: 'rgba(147, 51, 234, 0.2)',
     border: '1px solid rgba(147, 51, 234, 0.3)',
-    color: '#fff',
+    color: 'var(--text-primary)',
     textShadow: '0 0 10px rgba(147, 51, 234, 0.4)'
   },
   mainContent: {
@@ -2428,7 +2528,7 @@ const styles = {
     fontFamily: 'var(--font-display)',
     fontSize: '1.15rem',
     fontWeight: '600',
-    color: '#fff',
+    color: 'var(--text-primary)',
     marginBottom: '20px'
   },
   cardHeaderWithAction: {
@@ -2530,7 +2630,7 @@ const styles = {
     fontSize: '1.8rem',
     fontWeight: '700',
     fontFamily: 'var(--font-display)',
-    color: '#fff'
+    color: 'var(--text-primary)'
   },
   otpGlowLarge: {
     fontSize: '2.5rem',
@@ -2648,7 +2748,7 @@ const styles = {
     fontFamily: 'var(--font-display)',
     fontSize: '1.25rem',
     fontWeight: '600',
-    color: '#fff',
+    color: 'var(--text-primary)',
     marginBottom: '20px',
     textAlign: 'center'
   },

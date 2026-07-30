@@ -420,6 +420,25 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
     XLSX.writeFile(workbook, `Attendance_Report_${reportType}_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
+  const handleExportCSV = () => {
+    const cleanData = reportData.map(row => ({
+      'Enrollment No': row.enrollment_no,
+      'Name': row.name,
+      'Course': row.course,
+      'Semester': row.semester,
+      'Date': row.date,
+      'Time': row.time,
+      'Distance (m)': row.distance ? Math.round(row.distance) : '-',
+      'Status': row.status,
+      'Auth Type': row.qr_session_id ? 'QR' : 'OTP'
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(cleanData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance logs');
+    XLSX.writeFile(workbook, `Attendance_Report_${reportType}_${new Date().toISOString().split('T')[0]}.csv`);
+  };
+
   useEffect(() => {
     if (activeTab === 'reports') {
       fetchReportData();
@@ -734,11 +753,15 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 <div style={styles.buttonStackRow}>
                   <button onClick={handleExportPDF} className="btn btn-secondary" style={{ gap: '8px' }}>
                     <Download size={14} />
-                    PDF Report
+                    PDF
                   </button>
                   <button onClick={handleExportExcel} className="btn btn-secondary" style={{ gap: '8px' }}>
                     <Download size={14} />
-                    Excel Report
+                    Excel
+                  </button>
+                  <button onClick={handleExportCSV} className="btn btn-secondary" style={{ gap: '8px' }}>
+                    <Download size={14} />
+                    CSV
                   </button>
                 </div>
               </div>
@@ -922,7 +945,7 @@ const styles = {
     height: '42px',
     borderRadius: '12px',
     background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)',
-    color: '#fff',
+    color: 'var(--text-primary)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -933,7 +956,7 @@ const styles = {
   navTitle: {
     fontSize: '1.2rem',
     fontWeight: '700',
-    color: '#fff',
+    color: 'var(--text-primary)',
     margin: 0
   },
   navSubTitle: {
@@ -1008,7 +1031,7 @@ const styles = {
   menuItemBtnActive: {
     background: 'rgba(147, 51, 234, 0.15)',
     border: '1px solid rgba(147, 51, 234, 0.3)',
-    color: '#fff',
+    color: 'var(--text-primary)',
     textShadow: '0 0 10px rgba(147, 51, 234, 0.4)'
   },
   contentPane: {
@@ -1039,7 +1062,7 @@ const styles = {
   statVal: {
     fontSize: '2rem',
     fontWeight: '700',
-    color: '#fff',
+    color: 'var(--text-primary)',
     lineHeight: '1.2'
   },
   statSubText: {
@@ -1056,7 +1079,7 @@ const styles = {
   cardTitle: {
     fontSize: '1.15rem',
     fontWeight: '600',
-    color: '#fff',
+    color: 'var(--text-primary)',
     margin: '0 0 8px 0'
   },
   buttonStack: {
@@ -1149,7 +1172,7 @@ const styles = {
     fontSize: '3.6rem',
     fontWeight: '800',
     letterSpacing: '8px',
-    color: '#fff',
+    color: 'var(--text-primary)',
     textShadow: '0 0 30px rgba(147, 51, 234, 0.6)',
     fontFamily: 'monospace',
     marginBottom: '24px'
@@ -1174,7 +1197,7 @@ const styles = {
   timerVal: {
     fontSize: '1.2rem',
     fontWeight: '700',
-    color: '#fff'
+    color: 'var(--text-primary)'
   },
   noActiveSessionBox: {
     padding: '60px 0',
@@ -1206,7 +1229,7 @@ const styles = {
     border: '1px solid rgba(255, 255, 255, 0.1)',
     borderRadius: '10px',
     padding: '10px 14px',
-    color: '#fff',
+    color: 'var(--text-primary)',
     fontSize: '0.88rem',
     cursor: 'pointer',
     outline: 'none',

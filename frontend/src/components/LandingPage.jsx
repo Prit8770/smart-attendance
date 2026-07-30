@@ -1,10 +1,24 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   ShieldCheck, MapPin, Smartphone, ChevronRight, Zap, 
-  CheckCircle2, Users, Lock, TrendingUp 
+  CheckCircle2, Users, Lock, TrendingUp, Moon, Sun
 } from 'lucide-react';
 
 const LandingPage = ({ onGetStarted }) => {
+  const [isDark, setIsDark] = useState(() => {
+    return localStorage.getItem('theme') !== 'light';
+  });
+
+  useEffect(() => {
+    if (isDark) {
+      document.body.classList.remove('light-theme');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.body.classList.add('light-theme');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [isDark]);
+
   return (
     <div style={styles.container}>
       {/* Background Decorators */}
@@ -15,11 +29,18 @@ const LandingPage = ({ onGetStarted }) => {
       <header style={styles.header}>
         <div style={styles.logoContainer}>
           <div style={styles.logoIcon}>
-            <ShieldCheck size={28} color="var(--primary)" />
+            <img src="/logo.png" alt="LJCCA" style={{ width: '48px', height: '48px', objectFit: 'contain' }} />
           </div>
           <h1 style={styles.logoText}>Smart<span style={{color: 'var(--primary)'}}>Attend</span></h1>
         </div>
-        <div style={{ display: 'flex', gap: '16px' }}>
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+          <button 
+            style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '8px', display: 'flex', color: 'var(--text-primary)' }} 
+            onClick={() => setIsDark(!isDark)}
+            title="Toggle Theme"
+          >
+            {isDark ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
           <button className="btn" style={styles.ghostBtn} onClick={() => {
             document.getElementById('how-it-works').scrollIntoView({ behavior: 'smooth' });
           }}>
@@ -183,7 +204,7 @@ const LandingPage = ({ onGetStarted }) => {
       {/* Footer */}
       <footer style={styles.footer}>
         <div style={styles.logoContainer}>
-          <ShieldCheck size={20} color="var(--primary)" />
+          <img src="/logo.png" alt="LJCCA" style={{ width: '32px', height: '32px', objectFit: 'contain' }} />
           <span style={{...styles.logoText, fontSize: '1.2rem'}}>Smart<span style={{color: 'var(--primary)'}}>Attend</span></span>
         </div>
         <p style={{ marginTop: '10px' }}>© {new Date().getFullYear()} College Attendance System. Built for security.</p>
@@ -215,13 +236,9 @@ const styles = {
     gap: '12px'
   },
   logoIcon: {
-    background: 'rgba(147, 51, 234, 0.15)',
-    padding: '8px',
-    borderRadius: '12px',
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 0 15px rgba(147, 51, 234, 0.2)'
+    justifyContent: 'center'
   },
   logoText: {
     fontFamily: 'var(--font-display)',
@@ -345,7 +362,7 @@ const styles = {
     width: '240px',
     padding: '20px',
     zIndex: 2,
-    background: 'rgba(22, 16, 43, 0.7)',
+    background: 'var(--panel-bg)',
     border: '1px solid rgba(147, 51, 234, 0.3)',
     boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
   },
@@ -356,7 +373,7 @@ const styles = {
     width: '260px',
     padding: '20px',
     zIndex: 3,
-    background: 'rgba(22, 16, 43, 0.8)',
+    background: 'var(--panel-bg)',
     border: '1px solid rgba(16, 185, 129, 0.3)',
     boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
   },
@@ -375,14 +392,14 @@ const styles = {
     fontWeight: '600',
     fontSize: '1.1rem',
     marginBottom: '16px',
-    color: '#fff'
+    color: 'var(--text-primary)'
   },
   cardMiniData: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '10px',
-    background: 'rgba(255,255,255,0.05)',
+    background: 'var(--border-light)',
     borderRadius: '8px'
   },
   dataLabel: {
@@ -392,7 +409,7 @@ const styles = {
   dataValue: {
     fontSize: '0.9rem',
     fontWeight: '600',
-    color: '#fff'
+    color: 'var(--text-primary)'
   },
   statsBanner: {
     display: 'flex',
@@ -415,8 +432,7 @@ const styles = {
     fontFamily: 'var(--font-display)',
     fontSize: '2.5rem',
     fontWeight: '800',
-    color: '#fff',
-    textShadow: '0 0 20px rgba(255,255,255,0.2)'
+    color: 'var(--stat-text)'
   },
   statDesc: {
     color: 'var(--text-secondary)',
@@ -492,7 +508,7 @@ const styles = {
     height: '2px',
     width: '100%',
     minWidth: '50px',
-    background: 'rgba(255,255,255,0.1)',
+    background: 'var(--border-light)',
     marginTop: '32px'
   },
   featuresGrid: {
@@ -533,7 +549,7 @@ const styles = {
     width: '100%',
     maxWidth: '1000px',
     padding: '50px 40px',
-    background: 'linear-gradient(135deg, rgba(22, 16, 43, 0.8) 0%, rgba(147, 51, 234, 0.1) 100%)',
+    background: 'var(--panel-bg)',
     border: '1px solid rgba(147, 51, 234, 0.3)',
     display: 'flex',
     justifyContent: 'space-between',
