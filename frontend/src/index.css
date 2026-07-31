@@ -9,14 +9,17 @@
   --panel-bg: rgba(22, 16, 43, 0.45);
   --panel-border: rgba(255, 255, 255, 0.08);
   --panel-border-glow: rgba(147, 51, 234, 0.3);
-  
+  --logo-glow: 0 0 35px rgba(255, 255, 255, 0.5);
+  --logo-bg: rgba(255, 255, 255, 0.85);
+  --border-login: rgba(255, 255, 255, 0.08);
+
   --primary: #9333ea;       /* Purple */
   --primary-glow: rgba(147, 51, 234, 0.5);
   --primary-hover: #a855f7;
-  
+
   --secondary: #2563eb;     /* Blue */
   --secondary-glow: rgba(37, 99, 235, 0.5);
-  
+
   --accent: #0ea5e9;        /* Sky Blue */
   --accent-glow: rgba(14, 165, 233, 0.5);
 
@@ -25,7 +28,7 @@
   --danger: #ef4444;        /* Red */
   --danger-glow: rgba(239, 68, 68, 0.3);
   --warning: #f59e0b;       /* Orange */
-  
+
   --text-primary: #f3f4f6;
   --text-secondary: #9ca3af;
   --text-muted: #6b7280;
@@ -45,25 +48,28 @@
   --panel-bg: rgba(255, 255, 255, 0.7);
   --panel-border: rgba(0, 0, 0, 0.08);
   --panel-border-glow: rgba(147, 51, 234, 0.15);
-  
+  --logo-glow: 0 0 20px rgba(147, 51, 234, 0.4);
+  --logo-bg: transparent;
+  --border-login: #000000;
+
   --primary: #8b5cf6;
   --primary-glow: rgba(139, 92, 246, 0.2);
   --primary-hover: #7c3aed;
-  
+
   --secondary: #3b82f6;
   --secondary-glow: rgba(59, 130, 246, 0.2);
-  
+
   --accent: #0284c7;
   --accent-glow: rgba(2, 132, 199, 0.2);
 
-  --text-primary: #1f2937;
-  --text-secondary: #4b5563;
-  --text-muted: #9ca3af;
-  --stat-text: #1f2937;
-  
-  --border-light: rgba(0, 0, 0, 0.08);
-  --border-extra-light: rgba(0, 0, 0, 0.04);
-  --table-hover: rgba(0, 0, 0, 0.02);
+  --text-primary: #000000;
+  --text-secondary: #000000;
+  --text-muted: #000000;
+  --stat-text: #000000;
+
+  --border-light: rgba(0, 0, 0, 0.3);
+  --border-extra-light: rgba(0, 0, 0, 0.1);
+  --table-hover: rgba(0, 0, 0, 0.05);
   --scrollbar-track: rgba(0, 0, 0, 0.05);
 }
 
@@ -423,20 +429,20 @@ body {
     grid-template-columns: 1fr;
     gap: 16px;
   }
-  
+
   .grid-1-2,
   .grid-3-cols,
   .hero-layout {
     grid-template-columns: 1fr !important;
     gap: 16px !important;
   }
-  
+
   /* Landing page overrides */
   .steps-grid {
     grid-template-columns: 1fr !important;
     gap: 30px !important;
   }
-  
+
   div[style*="minWidth: '50px'"] {
     display: none !important; /* hide connector lines on mobile */
   }
@@ -444,12 +450,12 @@ body {
   .glass-panel {
     padding: 16px !important;
   }
-  
+
   /* Typography scaling */
   .heroTitle {
     font-size: 2.2rem !important;
   }
-  
+
   /* Button touch targets */
   .btn {
     padding: 12px 20px;
@@ -467,7 +473,7 @@ body {
     padding: 10px;
     font-size: 0.85rem;
   }
-  
+
   /* Login card sizing */
   .loginCard {
     padding: 30px 20px !important;
@@ -481,4 +487,11 @@ body {
   .stat-card-info p {
     font-size: 1.4rem;
   }
+}
+
+img[src="/logo.png"] {
+  background-color: var(--logo-bg);
+  border-radius: 12px;
+  padding: 4px;
+  transition: background-color 0.3s;
 }

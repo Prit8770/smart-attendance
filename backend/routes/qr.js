@@ -61,6 +61,7 @@ router.post('/toggle-settings', authenticateJWT, async (req, res) => {
 
 // POST start new QR session (Faculty only)
 router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, res) => {
+  const { semester } = req.body;
   const today = getLocalDateString();
   try {
     // 1. Check if global QR generation is enabled by Admin
@@ -89,8 +90,8 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
     const expiresAt = new Date(now.getTime() + 2 * 60 * 1000).toISOString(); // 2 minutes
 
     const result = await dbQuery.run(
-      'INSERT INTO qr_sessions (created_at, expires_at, created_by_faculty_id, date, tokens) VALUES (?, ?, ?, ?, ?)',
-      [createdAt, expiresAt, req.user.id, today, JSON.stringify(tokens)]
+      'INSERT INTO qr_sessions (created_at, expires_at, created_by_faculty_id, date, tokens, semester) VALUES (?, ?, ?, ?, ?, ?)',
+      [createdAt, expiresAt, req.user.id, today, JSON.stringify(tokens), semester ? parseInt(semester) : null]
     );
 
     res.status(201).json({

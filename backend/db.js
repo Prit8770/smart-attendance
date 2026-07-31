@@ -135,6 +135,12 @@ function initializeSchema(resolve, reject) {
       db.run("ALTER TABLE qr_sessions ADD COLUMN created_by_faculty_id INTEGER", (err) => {
         // Safe to ignore if it already exists
       });
+      db.run("ALTER TABLE qr_sessions ADD COLUMN semester INTEGER", (err) => {
+        // Safe to ignore if it already exists
+      });
+      db.run("ALTER TABLE otp ADD COLUMN semester INTEGER", (err) => {
+        // Safe to ignore if it already exists
+      });
       db.run(`
         CREATE TABLE IF NOT EXISTS settings (
           key TEXT PRIMARY KEY,

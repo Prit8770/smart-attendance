@@ -75,6 +75,7 @@ router.get('/active', authenticateJWT, async (req, res) => {
 
 // POST generate new OTP
 router.post('/generate', authenticateJWT, requireAdmin, async (req, res) => {
+  const { semester } = req.body;
   const today = getLocalDateString();
 
   try {
@@ -93,8 +94,8 @@ router.post('/generate', authenticateJWT, requireAdmin, async (req, res) => {
     const expireTime = new Date(now.getTime() + 2 * 60 * 1000).toISOString();
 
     const result = await dbQuery.run(
-      'INSERT INTO otp (otp, generated_time, expire_time, generated_by, date) VALUES (?, ?, ?, ?, ?)',
-      [otpCode, generatedTime, expireTime, req.user.id, today]
+      'INSERT INTO otp (otp, generated_time, expire_time, generated_by, date, semester) VALUES (?, ?, ?, ?, ?, ?)',
+      [otpCode, generatedTime, expireTime, req.user.id, today, semester ? parseInt(semester) : null]
     );
 
     res.status(201).json({

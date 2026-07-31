@@ -244,10 +244,14 @@ router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
   const today = getLocalDateString();
   try {
     const logs = await dbQuery.all(
-      `SELECT a.id, s.enrollment_no, s.name, s.course, s.semester, s.mobile, a.time, a.distance, a.status, o.otp, a.qr_session_id
+      `SELECT a.id, s.enrollment_no, s.name, s.course, s.semester, s.mobile, a.time, a.distance, a.status, o.otp, a.qr_session_id,
+              COALESCE(fq.name, fo.name, 'Admin') AS faculty_name
        FROM attendance a
        JOIN students s ON a.student_id = s.id
        LEFT JOIN otp o ON a.otp_id = o.id
+       LEFT JOIN qr_sessions q ON a.qr_session_id = q.id
+       LEFT JOIN faculty fq ON q.created_by_faculty_id = fq.id
+       LEFT JOIN faculty fo ON o.generated_by = fo.id
        WHERE a.date = ?
        ORDER BY a.time DESC`,
       [today]
@@ -264,10 +268,14 @@ router.get('/reports', authenticateJWT, requireAdmin, async (req, res) => {
   const { date, startDate, endDate, studentId } = req.query;
 
   let query = `
-    SELECT a.id, s.enrollment_no, s.name, s.course, s.semester, a.date, a.time, a.distance, a.status, o.otp, a.qr_session_id
+    SELECT a.id, s.enrollment_no, s.name, s.course, s.semester, a.date, a.time, a.distance, a.status, o.otp, a.qr_session_id,
+           COALESCE(fq.name, fo.name, 'Admin') AS faculty_name
     FROM attendance a
     JOIN students s ON a.student_id = s.id
     LEFT JOIN otp o ON a.otp_id = o.id
+    LEFT JOIN qr_sessions q ON a.qr_session_id = q.id
+    LEFT JOIN faculty fq ON q.created_by_faculty_id = fq.id
+    LEFT JOIN faculty fo ON o.generated_by = fo.id
     WHERE 1=1
   `;
   const params = [];

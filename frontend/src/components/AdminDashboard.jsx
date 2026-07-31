@@ -1093,7 +1093,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       }
     }
 
-    const tableColumn = ['Enrollment No', 'Name', 'Course/Sem', 'Session/OTP', 'Date', 'Time', 'Distance', 'Status'];
+    const tableColumn = ['Enrollment No', 'Name', 'Course/Sem', 'Faculty', 'Session/OTP', 'Date', 'Time', 'Distance', 'Status'];
     const tableRows = [];
 
     filteredReportData.forEach((row) => {
@@ -1101,6 +1101,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         row.enrollment_no,
         row.name,
         `${row.course} - S${row.semester}`,
+        row.faculty_name || 'Admin',
         row.qr_session_id ? `QR Session #${row.qr_session_id}` : `${row.otp || 'N/A'} (OTP)`,
         row.date,
         row.time,
@@ -1117,7 +1118,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       headStyles: { fillColor: [147, 51, 234] },
       styles: { fontSize: 8 },
       columnStyles: {
-        7: { fontStyle: 'bold' } // bold status
+        8: { fontStyle: 'bold' } // bold status
       }
     });
 
@@ -1130,6 +1131,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       'Name': row.name,
       'Course': row.course,
       'Semester': row.semester,
+      'Faculty': row.faculty_name || 'Admin',
       'Session/OTP': row.qr_session_id ? `QR Session #${row.qr_session_id}` : `${row.otp || 'N/A'} (OTP)`,
       'Date': row.date,
       'Time': row.time,
@@ -1149,6 +1151,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       'Name': row.name,
       'Course': row.course,
       'Semester': row.semester,
+      'Faculty': row.faculty_name || 'Admin',
       'Session/OTP': row.qr_session_id ? `QR Session #${row.qr_session_id}` : `${row.otp || 'N/A'} (OTP)`,
       'Date': row.date,
       'Time': row.time,
@@ -2091,6 +2094,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <th>Name</th>
                       <th>Course</th>
                       <th>Semester</th>
+                      <th>Faculty</th>
                       <th>Session/OTP</th>
                       <th>Date</th>
                       <th>Time</th>
@@ -2105,6 +2109,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         <td style={{ fontWeight: 600 }}>{row.name}</td>
                         <td>{row.course}</td>
                         <td>Sem {row.semester}</td>
+                        <td style={{ fontWeight: 500, color: 'var(--primary)' }}>{row.faculty_name || 'Admin'}</td>
                         <td>
                           {row.qr_session_id ? (
                             <span className="status-badge success" style={{ fontSize: '0.75rem', background: 'rgba(147,51,234,0.15)', color: '#a855f7', border: '1px solid rgba(147,51,234,0.3)' }}>
