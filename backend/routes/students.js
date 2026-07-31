@@ -24,7 +24,10 @@ const requireAdmin = (req, res, next) => {
 };
 
 // GET all students
-router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
+router.get('/', authenticateJWT, async (req, res) => {
+  if (req.user.role !== 'admin' && req.user.role !== 'faculty') {
+    return res.status(403).json({ error: 'Access denied' });
+  }
   try {
     const students = await dbQuery.all('SELECT id, enrollment_no, name, course, semester, mobile, username, plain_password FROM students');
     res.json(students);

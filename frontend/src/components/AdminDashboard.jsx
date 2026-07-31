@@ -1536,7 +1536,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
               {/* Attendance Live Monitor */}
               <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: 2, minWidth: '350px' }}>
-                <div style={styles.cardHeaderWithAction}>
+                <div className="mobile-stack-header" style={styles.cardHeaderWithAction}>
                   <h3 style={styles.cardTitle}>Live Attendance Monitor (Today)</h3>
                   <button className="btn btn-secondary" onClick={fetchLiveLogs} style={{ padding: '6px 10px', fontSize: '0.75rem' }}>
                     <RefreshCw size={12} /> Reload
@@ -1807,7 +1807,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
               <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: 1.8 }}>
                 {activeQrSessionDetails ? (
                   <div>
-                    <div style={{ ...styles.cardHeaderWithAction, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px', marginBottom: '16px' }}>
+                    <div className="mobile-stack-header" style={{ ...styles.cardHeaderWithAction, borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '12px', marginBottom: '16px' }}>
                       <h3 style={styles.cardTitle}>Live Checked-In Students</h3>
                       <span className="status-badge success" style={{ fontSize: '0.75rem', padding: '4px 10px' }}>
                         {currentSessionLogs.length} Checked In

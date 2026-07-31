@@ -543,8 +543,7 @@ body {
   div[style*="buttonStackRow"],
   div[style*="reportsFilterHeader"],
   div[style*="crudHeader"],
-  div[style*="flexSpaceBetween"],
-  div[style*="cardHeaderWithAction"],
+  .mobile-stack-header,
   div[style*="gridTemplateColumns: '1fr 2fr'"] {
     flex-direction: column !important;
     grid-template-columns: 1fr !important;

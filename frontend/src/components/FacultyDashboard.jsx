@@ -896,7 +896,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
               {/* Live Monitor */}
               <div className="glass-panel" style={styles.cardPadding}>
-                <div style={styles.flexSpaceBetween}>
+                <div className="mobile-stack-header" style={styles.flexSpaceBetween}>
                   <h3 style={styles.cardTitle}>Live Attendance Feed</h3>
                   <div style={styles.badgeSuccess}>Live Polling</div>
                 </div>
@@ -954,7 +954,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
               {/* Generator Controls at top */}
               <div className="glass-panel" style={{ ...styles.cardPadding, marginBottom: '20px' }}>
-                <div style={styles.flexSpaceBetween}>
+                <div className="mobile-stack-header" style={styles.flexSpaceBetween}>
                   <div>
                     <h3 style={styles.cardTitle}>Session Controllers</h3>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '4px' }}>
@@ -1065,7 +1065,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
           {activeTab === 'reports' && (
             <div className="glass-panel" style={styles.cardPadding}>
-              <div style={styles.flexSpaceBetween}>
+              <div className="mobile-stack-header" style={styles.flexSpaceBetween}>
                 <h2 style={styles.cardTitle}>Attendance Database Reports</h2>
                 <div style={styles.buttonStackRow}>
                   <button onClick={handleExportPDF} className="btn btn-secondary" style={{ gap: '8px' }}>

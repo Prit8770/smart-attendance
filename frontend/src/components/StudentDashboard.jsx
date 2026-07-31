@@ -623,7 +623,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
 
               {/* GPS Field */}
               <div style={styles.formGroup}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="mobile-stack-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <label style={styles.formLabel}>GPS Location Verification</label>
                   <button
                     type="button"
@@ -704,7 +704,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           </div>
 
           <div className="glass-panel" style={styles.historyCard}>
-            <div style={styles.historyHeader}>
+            <div className="mobile-stack-header" style={styles.historyHeader}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <History size={20} color="#9333ea" />
                 <h2 style={styles.sectionTitle}>Attendance History</h2>

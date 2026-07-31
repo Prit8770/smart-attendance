@@ -131,7 +131,7 @@ export default function Login({ onLoginSuccess, onBack }) {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  style={{ paddingLeft: '40px' }}
+                  style={{ paddingLeft: '44px' }}
                 />
               </div>
             </div>
@@ -147,7 +147,7 @@ export default function Login({ onLoginSuccess, onBack }) {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required
-                  style={{ paddingLeft: '40px' }}
+                  style={{ paddingLeft: '44px' }}
                 />
               </div>
             </div>
@@ -163,7 +163,7 @@ export default function Login({ onLoginSuccess, onBack }) {
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   required
-                  style={{ paddingLeft: '40px' }}
+                  style={{ paddingLeft: '44px' }}
                 />
               </div>
             </div>
@@ -180,7 +180,7 @@ export default function Login({ onLoginSuccess, onBack }) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                style={{ paddingLeft: '40px' }}
+                style={{ paddingLeft: '44px' }}
               />
             </div>
           </div>
@@ -208,82 +208,92 @@ const styles = {
     width: '100vw',
     position: 'relative',
     padding: '20px',
-    overflow: 'hidden'
+    overflow: 'hidden',
+    background: 'var(--bg-gradient)'
   },
   blurCircle1: {
     position: 'absolute',
-    width: '350px',
-    height: '350px',
+    width: '450px',
+    height: '450px',
     borderRadius: '50%',
-    background: 'radial-gradient(circle, rgba(147, 51, 234, 0.4) 0%, rgba(0,0,0,0) 70%)',
-    top: '15%',
-    left: '20%',
+    background: 'radial-gradient(circle, rgba(147, 51, 234, 0.25) 0%, rgba(0,0,0,0) 70%)',
+    top: '-10%',
+    left: '-10%',
     zIndex: 0
   },
   blurCircle2: {
     position: 'absolute',
-    width: '400px',
-    height: '400px',
+    width: '450px',
+    height: '450px',
     borderRadius: '50%',
-    background: 'radial-gradient(circle, rgba(37, 99, 235, 0.3) 0%, rgba(0,0,0,0) 70%)',
-    bottom: '15%',
-    right: '20%',
+    background: 'radial-gradient(circle, rgba(37, 99, 235, 0.2) 0%, rgba(0,0,0,0) 70%)',
+    bottom: '-10%',
+    right: '-10%',
     zIndex: 0
   },
   loginCard: {
     width: '100%',
     maxWidth: '420px',
-    padding: '40px 30px',
+    padding: '40px 32px',
     zIndex: 1,
-    boxShadow: '0 20px 50px rgba(0, 0, 0, 0.5)',
+    boxShadow: '0 24px 50px rgba(0, 0, 0, 0.25), 0 0 40px rgba(147, 51, 234, 0.15)',
     position: 'relative',
-    border: '2px solid var(--border-login)'
+    borderRadius: '24px',
+    background: 'rgba(255, 255, 255, 0.03)',
+    backdropFilter: 'blur(16px)',
+    border: '1px solid rgba(255, 255, 255, 0.1)'
   },
   backBtn: {
     position: 'absolute',
     top: '20px',
     left: '20px',
-    background: 'none',
-    border: 'none',
+    background: 'rgba(255, 255, 255, 0.05)',
+    border: '1px solid rgba(255, 255, 255, 0.1)',
     color: 'var(--text-secondary)',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: '8px',
+    padding: '10px',
     borderRadius: '50%',
-    transition: 'background 0.2s',
+    transition: 'all 0.3s ease',
   },
   header: {
     textAlign: 'center',
-    marginBottom: '30px'
+    marginBottom: '32px'
   },
   logoContainer: {
-    width: '100px',
-    height: '100px',
+    width: '90px',
+    height: '90px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    margin: '0 auto 16px auto'
+    margin: '0 auto 20px auto',
+    background: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: '20px',
+    padding: '12px',
+    boxShadow: 'inset 0 0 20px rgba(255, 255, 255, 0.05), 0 8px 16px rgba(0,0,0,0.1)'
   },
   title: {
     fontFamily: 'var(--font-display)',
-    fontWeight: '700',
-    fontSize: '1.8rem',
+    fontWeight: '800',
+    fontSize: '2rem',
     color: 'var(--text-primary)',
-    marginBottom: '6px'
+    marginBottom: '8px',
+    letterSpacing: '-0.02em'
   },
   subtitle: {
-    fontSize: '0.9rem',
-    color: 'var(--text-secondary)'
+    fontSize: '0.95rem',
+    color: 'var(--text-secondary)',
+    fontWeight: '500'
   },
   tabContainer: {
     display: 'flex',
-    background: 'var(--border-extra-light)',
-    border: '1px solid var(--border-light)',
-    borderRadius: '10px',
-    padding: '4px',
-    marginBottom: '28px'
+    background: 'rgba(0, 0, 0, 0.15)',
+    borderRadius: '12px',
+    padding: '6px',
+    marginBottom: '32px',
+    boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.1)'
   },
   tab: {
     flex: 1,
@@ -292,36 +302,35 @@ const styles = {
     justifyContent: 'center',
     gap: '8px',
     border: 'none',
-    background: 'none',
-    color: 'var(--text-secondary)',
-    padding: '10px',
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    padding: '12px 8px',
     borderRadius: '8px',
     cursor: 'pointer',
     fontSize: '0.88rem',
-    fontWeight: '500',
-    transition: 'all 0.2s ease'
+    fontWeight: '600',
+    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
   },
   activeTab: {
-    background: 'rgba(147, 51, 234, 0.2)',
-    border: '1px solid rgba(147, 51, 234, 0.3)',
-    color: 'var(--text-primary)',
-    textShadow: 'none'
+    background: 'var(--primary)',
+    color: '#ffffff',
+    boxShadow: '0 4px 12px rgba(139, 92, 246, 0.3)',
   },
   form: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '20px'
+    gap: '24px'
   },
   inputGroup: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '8px'
+    gap: '10px'
   },
   label: {
-    fontSize: '0.85rem',
+    fontSize: '0.9rem',
     color: 'var(--text-secondary)',
-    fontWeight: '500',
-    paddingLeft: '4px'
+    fontWeight: '600',
+    paddingLeft: '6px'
   },
   inputWrapper: {
     position: 'relative',
@@ -330,16 +339,17 @@ const styles = {
   },
   inputIcon: {
     position: 'absolute',
-    left: '12px',
+    left: '16px',
     color: 'var(--text-muted)'
   },
   errorAlert: {
-    background: 'rgba(239, 68, 68, 0.15)',
-    border: '1px solid rgba(239, 68, 68, 0.3)',
-    color: 'var(--danger)',
-    padding: '12px',
-    borderRadius: '8px',
-    fontSize: '0.88rem',
-    textAlign: 'center'
+    background: 'rgba(239, 68, 68, 0.1)',
+    border: '1px solid rgba(239, 68, 68, 0.2)',
+    color: '#ef4444',
+    padding: '14px',
+    borderRadius: '12px',
+    fontSize: '0.9rem',
+    textAlign: 'center',
+    fontWeight: '500'
   }
 };
