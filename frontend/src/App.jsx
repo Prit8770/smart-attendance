@@ -4,6 +4,7 @@ import AdminDashboard from './components/AdminDashboard';
 import StudentDashboard from './components/StudentDashboard';
 import FacultyDashboard from './components/FacultyDashboard';
 import LandingPage from './components/LandingPage';
+import PwaInstallPrompt from './components/PwaInstallPrompt';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -86,6 +87,7 @@ export default function App() {
       ) : (
         <StudentDashboard user={user} token={token} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
       )}
+      <PwaInstallPrompt />
     </div>
   );
 }

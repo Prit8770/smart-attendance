@@ -270,13 +270,13 @@ body {
 .status-badge.success {
   background: rgba(16, 185, 129, 0.15);
   color: #34d399;
-  border: 1px solid rgba(16, 185, 129, 0.3);
+  border: none;
 }
 
 .status-badge.failed {
   background: rgba(239, 68, 68, 0.15);
   color: #f87171;
-  border: 1px solid rgba(239, 68, 68, 0.3);
+  border: none;
 }
 
 /* Grid Layouts */
@@ -398,7 +398,7 @@ body {
    Mobile Responsiveness & PWA Utilities
    ========================================================================== */
 
-/* Responsive Grid Utility */
+/* Responsive Grid Utilities */
 .responsive-grid-2col {
   display: grid;
   grid-template-columns: 1fr 1.5fr;
@@ -417,30 +417,156 @@ body {
   gap: 24px;
 }
 
+/* Scrollbar hiding for horizontal tab bars */
+.mobile-scroll-tabs,
+.tabNavbar,
+.sideMenuList {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;  /* IE and Edge */
+}
+.mobile-scroll-tabs::-webkit-scrollbar,
+.tabNavbar::-webkit-scrollbar,
+.sideMenuList::-webkit-scrollbar {
+  display: none; /* Chrome, Safari, Opera */
+}
+
+/* Mobile Hamburger Menu button */
+.mobile-menu-toggle {
+  display: none;
+}
+
 @media (max-width: 900px) {
   .responsive-grid-2col {
     grid-template-columns: 1fr;
   }
+  
+  /* Faculty Dashboard mainGrid override */
+  div[style*="gridTemplateColumns: '260px 1fr'"],
+  div[style*="grid-template-columns: 260px 1fr"] {
+    grid-template-columns: 1fr !important;
+    gap: 16px !important;
+  }
+
+  /* Faculty Navigation Card on Mobile (matches requested photo) */
+  aside.faculty-sidebar {
+    display: block !important;
+    width: 100% !important;
+    padding: 16px !important;
+    margin-bottom: 20px !important;
+    border-radius: 16px !important;
+  }
+
+  aside ul[style*="sideMenuList"] {
+    flex-direction: column !important;
+    overflow-x: visible !important;
+    white-space: normal !important;
+    gap: 8px !important;
+  }
+
+  aside ul[style*="sideMenuList"] li {
+    width: 100% !important;
+  }
+
+  aside ul[style*="sideMenuList"] button {
+    width: 100% !important;
+    padding: 12px 16px !important;
+    font-size: 0.95rem !important;
+  }
+}
+
+@keyframes fadeInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @media (max-width: 768px) {
-  /* Layout adjustments */
+  /* Container padding */
+  div[style*="maxWidth: '1200px'"],
+  div[style*="max-width: 1200px"] {
+    padding: 12px 10px !important;
+  }
+
+  /* Header & Navigation */
+  header, nav {
+    padding: 12px 16px !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+  }
+
+  div[style*="headerActions"],
+  div[style*="navRight"] {
+    width: 100% !important;
+    justify-content: space-between !important;
+  }
+
+  div[style*="tabNavbar"] {
+    overflow-x: auto !important;
+    white-space: nowrap !important;
+    flex-wrap: nowrap !important;
+    justify-content: flex-start !important;
+    padding: 8px !important;
+    gap: 8px !important;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  div[style*="tabNavbar"] button {
+    flex: 0 0 auto !important;
+    padding: 8px 12px !important;
+    font-size: 0.82rem !important;
+  }
+
+  /* Dashboard Grids & Flex containers */
   .dashboard-grid {
     grid-template-columns: 1fr;
-    gap: 16px;
+    gap: 12px;
   }
 
   .grid-1-2,
   .grid-3-cols,
   .hero-layout {
     grid-template-columns: 1fr !important;
-    gap: 16px !important;
+    gap: 12px !important;
+  }
+
+  /* Flex row to column overrides for mobile */
+  .button-stack-row,
+  div[style*="dashboardRow"],
+  div[style*="otpDashboardRow"],
+  div[style*="locationDashboardRow"],
+  div[style*="buttonStackRow"],
+  div[style*="reportsFilterHeader"],
+  div[style*="crudHeader"],
+  div[style*="gridTemplateColumns: '1fr 2fr'"] {
+    flex-direction: column !important;
+    grid-template-columns: 1fr !important;
+    gap: 12px !important;
+    width: 100% !important;
+  }
+
+  .button-stack-row button {
+    width: 100% !important;
+  }
+
+  /* Override fixed minWidths on mobile */
+  div[style*="minWidth: '350px'"],
+  div[style*="minWidth: '320px'"],
+  div[style*="minWidth: '300px'"],
+  div[style*="minWidth: '200px'"] {
+    min-width: 0 !important;
+    width: 100% !important;
   }
 
   /* Landing page overrides */
   .steps-grid {
     grid-template-columns: 1fr !important;
-    gap: 30px !important;
+    gap: 20px !important;
   }
 
   div[style*="minWidth: '50px'"] {
@@ -448,44 +574,94 @@ body {
   }
 
   .glass-panel {
-    padding: 16px !important;
+    padding: 14px !important;
   }
 
   /* Typography scaling */
   .heroTitle {
-    font-size: 2.2rem !important;
+    font-size: 2rem !important;
+  }
+
+  h1 {
+    font-size: 1.15rem !important;
+  }
+
+  h2 {
+    font-size: 1.05rem !important;
+  }
+
+  h3 {
+    font-size: 0.95rem !important;
   }
 
   /* Button touch targets */
   .btn {
-    padding: 12px 20px;
-    font-size: 1rem;
-    min-height: 44px; /* Apple Human Interface Guideline for touch target */
+    padding: 10px 16px;
+    font-size: 0.9rem;
+    min-height: 42px; /* Touch target size */
   }
 
   .tab {
-    min-height: 44px;
+    min-height: 42px;
+  }
+
+  /* Modal dialog responsiveness */
+  div[style*="modalContent"],
+  div[style*="codeGeneratorCard"] {
+    width: 94vw !important;
+    max-width: 94vw !important;
+    padding: 20px 14px !important;
+    max-height: 90vh !important;
+    overflow-y: auto !important;
   }
 
   /* Table responsiveness */
+  .custom-table-container,
+  div[style*="tableScrollable"] {
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    width: 100% !important;
+  }
+
   .custom-table th,
-  .custom-table td {
-    padding: 10px;
-    font-size: 0.85rem;
+  table th {
+    padding: 16px 18px 14px 18px !important;
+    font-size: 0.85rem !important;
+    line-height: 1.6 !important;
+    white-space: nowrap !important;
+  }
+
+  .custom-table td,
+  table td {
+    padding: 20px 18px 18px 18px !important;
+    font-size: 0.85rem !important;
+    line-height: 1.6 !important;
+    white-space: nowrap !important;
   }
 
   /* Login card sizing */
   .loginCard {
-    padding: 30px 20px !important;
+    padding: 24px 16px !important;
+    width: 94vw !important;
   }
 }
 
 @media (max-width: 480px) {
   .heroTitle {
-    font-size: 1.8rem !important;
+    font-size: 1.6rem !important;
   }
+
   .stat-card-info p {
-    font-size: 1.4rem;
+    font-size: 1.3rem;
+  }
+
+  .btn {
+    width: 100% !important;
+  }
+
+  div[style*="headerActions"] {
+    flex-wrap: wrap;
+    gap: 8px !important;
   }
 }
 
@@ -495,3 +671,4 @@ img[src="/logo.png"] {
   padding: 4px;
   transition: background-color 0.3s;
 }
+

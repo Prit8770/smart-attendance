@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Users, KeyRound, QrCode, BarChart3, Download, Search, CheckCircle,
-  XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Sun, Moon
+  XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Sun, Moon, Menu, X
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -10,6 +10,7 @@ import QRCode from 'qrcode';
 
 export default function FacultyDashboard({ user, token, onLogout, theme, toggleTheme }) {
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'otp', 'reports', 'settings'
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Stats
   const [stats, setStats] = useState({
@@ -700,8 +701,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
       {/* Main Grid Layout */}
       <div style={styles.mainGrid}>
-        {/* Sidebar Nav */}
-        <aside style={styles.sidebar} className="glass-panel">
+        {/* Sidebar Nav (Mobile card view at top, Desktop sidebar on left) */}
+        <aside style={styles.sidebar} className="glass-panel faculty-sidebar">
           <ul style={styles.sideMenuList}>
             <li>
               <button
@@ -836,7 +837,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               </div>
 
               {/* Start Session Buttons & QR Stats */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px', marginBottom: '20px' }}>
+              <div className="responsive-grid-2col" style={{ marginBottom: '20px' }}>
                 
                 {/* Left Column: QR Sessions Run */}
                 <div className="glass-panel" style={styles.statCard}>
@@ -855,7 +856,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     Generate dynamic, high-security codes to mark class attendance.
                   </p>
 
-                  <div style={styles.buttonStackRow}>
+                  <div className="button-stack-row" style={styles.buttonStackRow}>
                     <button
                       onClick={() => openSemesterModal('qr')}
                       className="btn btn-primary"
@@ -903,45 +904,45 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   Student check-ins will pop up here in real time.
                 </p>
 
-                <div style={styles.tableScrollable}>
-                  <table style={styles.table}>
+                <div style={styles.tableScrollable} className="custom-table-container">
+                  <table className="custom-table" style={styles.table}>
                     <thead>
+                      <tr>
+                        <th style={styles.tableTh}>Student</th>
+                        <th style={styles.tableTh}>Enrollment No</th>
+                        <th style={styles.tableTh}>Course/Sem</th>
+                        <th style={styles.tableTh}>Time</th>
+                        <th style={styles.tableTh}>Distance</th>
+                        <th style={styles.tableTh}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {liveLogs.length === 0 ? (
                         <tr>
-                          <th style={{ textAlign: 'center' }}>Student</th>
-                          <th style={{ textAlign: 'center' }}>Enrollment No</th>
-                          <th style={{ textAlign: 'center' }}>Course/Sem</th>
-                          <th style={{ textAlign: 'center' }}>Time</th>
-                          <th style={{ textAlign: 'center' }}>Distance</th>
-                          <th style={{ textAlign: 'center' }}>Status</th>
+                          <td colSpan={6} style={{ ...styles.noDataRow, textAlign: 'center' }}>
+                            No student registrations today yet.
+                          </td>
                         </tr>
-                      </thead>
-                      <tbody>
-                        {liveLogs.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} style={{ ...styles.noDataRow, textAlign: 'center' }}>
-                              No student registrations today yet.
+                      ) : (
+                        liveLogs.map((log) => (
+                          <tr key={log.id}>
+                            <td style={styles.tableTd}>{log.name}</td>
+                            <td style={styles.tableTd}>{log.enrollment_no}</td>
+                            <td style={styles.tableTd}>{log.course} (Sem {log.semester})</td>
+                            <td style={styles.tableTd}>{log.time}</td>
+                            <td style={styles.tableTd}>{log.distance ? `${Math.round(log.distance)}m` : '-'}</td>
+                            <td style={styles.tableTd}>
+                              <span style={{
+                                ...styles.statusTag,
+                                ...(log.status === 'Success' ? styles.statusSuccess : styles.statusFail)
+                              }}>
+                                {log.status === 'Success' ? 'Present' : 'Rejected'}
+                              </span>
                             </td>
                           </tr>
-                        ) : (
-                          liveLogs.map((log) => (
-                            <tr key={log.id}>
-                              <td style={{ textAlign: 'center' }}>{log.name}</td>
-                              <td style={{ textAlign: 'center' }}>{log.enrollment_no}</td>
-                              <td style={{ textAlign: 'center' }}>{log.course} (Sem {log.semester})</td>
-                              <td style={{ textAlign: 'center' }}>{log.time}</td>
-                              <td style={{ textAlign: 'center' }}>{log.distance ? `${Math.round(log.distance)}m` : '-'}</td>
-                              <td style={{ textAlign: 'center' }}>
-                                <span style={{
-                                  ...styles.statusTag,
-                                  ...(log.status === 'Success' ? styles.statusSuccess : styles.statusFail)
-                                }}>
-                                  {log.status === 'Success' ? 'Present' : 'Rejected'}
-                                </span>
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
+                        ))
+                      )}
+                    </tbody>
                     </table>
                   </div>
                 </div>
@@ -1386,7 +1387,9 @@ const styles = {
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '16px 24px',
-    borderRadius: '16px'
+    borderRadius: '16px',
+    position: 'relative',
+    top: 'auto'
   },
   navLeft: {
     display: 'flex',
@@ -1455,7 +1458,9 @@ const styles = {
   },
   sidebar: {
     padding: '24px 16px',
-    borderRadius: '16px'
+    borderRadius: '16px',
+    position: 'relative',
+    top: 'auto'
   },
   sideMenuList: {
     listStyle: 'none',
@@ -1567,9 +1572,29 @@ const styles = {
   },
   table: {
     width: '100%',
+    minWidth: '680px',
     borderCollapse: 'collapse',
     fontSize: '0.9rem',
     color: 'var(--text-secondary)'
+  },
+  tableTh: {
+    textAlign: 'center',
+    padding: '18px 20px 16px 20px',
+    borderBottom: '2px solid var(--border-light)',
+    fontSize: '0.85rem',
+    fontWeight: '600',
+    color: 'var(--text-secondary)',
+    lineHeight: '1.6',
+    whiteSpace: 'nowrap'
+  },
+  tableTd: {
+    textAlign: 'center',
+    padding: '22px 20px 20px 20px',
+    borderBottom: '1px solid var(--border-extra-light)',
+    fontSize: '0.9rem',
+    color: 'var(--text-primary)',
+    lineHeight: '1.6',
+    whiteSpace: 'nowrap'
   },
   noDataRow: {
     textAlign: 'center',
@@ -1578,19 +1603,22 @@ const styles = {
     fontStyle: 'italic'
   },
   statusTag: {
-    padding: '4px 10px',
+    display: 'inline-block',
+    padding: '6px 14px',
     borderRadius: '20px',
-    fontSize: '0.78rem',
-    fontWeight: '600'
+    fontSize: '0.8rem',
+    fontWeight: '600',
+    lineHeight: '1.4',
+    whiteSpace: 'nowrap'
   },
   statusSuccess: {
-    background: 'rgba(34, 197, 94, 0.1)',
-    border: '1px solid rgba(34, 197, 94, 0.3)',
+    background: 'rgba(34, 197, 94, 0.15)',
+    border: 'none',
     color: '#4ade80'
   },
   statusFail: {
-    background: 'rgba(239, 68, 68, 0.1)',
-    border: '1px solid rgba(239, 68, 68, 0.3)',
+    background: 'rgba(239, 68, 68, 0.15)',
+    border: 'none',
     color: '#f87171'
   },
   codeGeneratorCard: {
