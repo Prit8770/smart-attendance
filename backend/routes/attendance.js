@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { dbQuery } = require('../db');
+const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
 
 // Middleware to restrict to admins or faculty
@@ -31,11 +31,10 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
   return R * c; // Distance in meters
 }
 
-// Get today's local date string (YYYY-MM-DD)
-function getLocalDateString() {
-  const d = new Date();
-  const offset = d.getTimezoneOffset();
-  const localD = new Date(d.getTime() - (offset * 60 * 1000));
+// Get local date string (YYYY-MM-DD)
+function getLocalDateString(dateObj = new Date()) {
+  const offset = dateObj.getTimezoneOffset();
+  const localD = new Date(dateObj.getTime() - (offset * 60 * 1000));
   return localD.toISOString().split('T')[0];
 }
 
@@ -57,10 +56,14 @@ router.post('/submit', authenticateJWT, async (req, res) => {
 
     // Hardware/Device Cooldown Check (15 minutes)
     if (deviceId) {
-      const lastDeviceAttendance = await dbQuery.get(
-        "SELECT date, time FROM attendance WHERE device_id = ? AND status = 'Success' ORDER BY id DESC LIMIT 1",
-        [deviceId]
-      );
+      const { data: lastDeviceAttendance } = await supabase.from('attendance')
+        .select('date, time')
+        .eq('device_id', deviceId)
+        .eq('status', 'Success')
+        .order('id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
       if (lastDeviceAttendance) {
         const [year, month, day] = lastDeviceAttendance.date.split('-');
         const [hours, minutes, seconds] = lastDeviceAttendance.time.split(':');
@@ -79,7 +82,8 @@ router.post('/submit', authenticateJWT, async (req, res) => {
 
     if (sessionId !== undefined && tokenIndex !== undefined && tokenValue !== undefined) {
       // 1. QR Code Submission
-      qrSessionRecord = await dbQuery.get('SELECT * FROM qr_sessions WHERE id = ?', [sessionId]);
+      const { data: qrSession } = await supabase.from('qr_sessions').select('*').eq('id', sessionId).maybeSingle();
+      qrSessionRecord = qrSession;
       if (!qrSessionRecord) {
         return res.status(400).json({ error: 'Invalid QR session. Please scan a valid QR code.' });
       }
@@ -120,10 +124,12 @@ router.post('/submit', authenticateJWT, async (req, res) => {
       }
 
       // Check duplicate submission
-      const duplicate = await dbQuery.get(
-        'SELECT id, status FROM attendance WHERE student_id = ? AND qr_session_id = ?',
-        [req.user.id, sessionId]
-      );
+      const { data: duplicate } = await supabase.from('attendance')
+        .select('id, status')
+        .eq('student_id', req.user.id)
+        .eq('qr_session_id', sessionId)
+        .limit(1)
+        .maybeSingle();
 
       if (duplicate) {
         if (duplicate.status === 'Success') {
@@ -137,7 +143,8 @@ router.post('/submit', authenticateJWT, async (req, res) => {
       attendanceLinkId = sessionId;
     } else {
       // 2. Legacy OTP Submission
-      const otpRecord = await dbQuery.get('SELECT * FROM otp WHERE otp = ? ORDER BY id DESC LIMIT 1', [otp]);
+      const { data: otpRecord } = await supabase.from('otp').select('*').eq('otp', otp).order('id', { ascending: false }).limit(1).maybeSingle();
+      
       if (!otpRecord) {
         return res.status(400).json({ error: 'Invalid OTP. Please enter the correct code.' });
       }
@@ -149,10 +156,12 @@ router.post('/submit', authenticateJWT, async (req, res) => {
       }
 
       // Check duplicate submission
-      const duplicate = await dbQuery.get(
-        'SELECT id, status FROM attendance WHERE student_id = ? AND otp_id = ?',
-        [req.user.id, otpRecord.id]
-      );
+      const { data: duplicate } = await supabase.from('attendance')
+        .select('id, status')
+        .eq('student_id', req.user.id)
+        .eq('otp_id', otpRecord.id)
+        .limit(1)
+        .maybeSingle();
 
       if (duplicate) {
         if (duplicate.status === 'Success') {
@@ -167,7 +176,7 @@ router.post('/submit', authenticateJWT, async (req, res) => {
     }
 
     // Retrieve College Location
-    const collegeLoc = await dbQuery.get('SELECT * FROM college_location LIMIT 1');
+    const { data: collegeLoc } = await supabase.from('college_location').select('*').limit(1).maybeSingle();
     if (!collegeLoc) {
       return res.status(500).json({ error: 'College location is not configured by Admin.' });
     }
@@ -182,21 +191,19 @@ router.post('/submit', authenticateJWT, async (req, res) => {
     const localTimeStr = submitTime.toLocaleTimeString('en-US', { hour12: false });
     const localDateStr = getLocalDateString();
 
-    await dbQuery.run(
-      `INSERT INTO attendance (student_id, ${attendanceLinkCol}, date, time, latitude, longitude, distance, status, device_id) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        req.user.id,
-        attendanceLinkId,
-        localDateStr,
-        localTimeStr,
-        latitude,
-        longitude,
-        parseFloat(dist.toFixed(2)),
-        status,
-        deviceId || null
-      ]
-    );
+    const insertPayload = {
+      student_id: req.user.id,
+      date: localDateStr,
+      time: localTimeStr,
+      latitude,
+      longitude,
+      distance: parseFloat(dist.toFixed(2)),
+      status,
+      device_id: deviceId || null
+    };
+    insertPayload[attendanceLinkCol] = attendanceLinkId;
+
+    await supabase.from('attendance').insert([insertPayload]);
 
     if (status === 'Success') {
       res.json({
@@ -224,15 +231,18 @@ router.get('/history/student', authenticateJWT, async (req, res) => {
   }
 
   try {
-    const history = await dbQuery.all(
-      `SELECT a.id, a.date, a.time, a.latitude, a.longitude, a.distance, a.status, o.otp, a.qr_session_id
-       FROM attendance a
-       LEFT JOIN otp o ON a.otp_id = o.id
-       WHERE a.student_id = ?
-       ORDER BY a.date DESC, a.time DESC`,
-      [req.user.id]
-    );
-    res.json(history);
+    const { data: history } = await supabase.from('attendance')
+      .select('id, date, time, latitude, longitude, distance, status, qr_session_id, otp:otp_id(otp)')
+      .eq('student_id', req.user.id)
+      .order('date', { ascending: false })
+      .order('time', { ascending: false });
+
+    const mappedHistory = (history || []).map(h => ({
+      ...h,
+      otp: h.otp ? h.otp.otp : null
+    }));
+
+    res.json(mappedHistory);
   } catch (err) {
     console.error('Error fetching student attendance history:', err);
     res.status(500).json({ error: 'Failed to retrieve attendance history.' });
@@ -243,20 +253,32 @@ router.get('/history/student', authenticateJWT, async (req, res) => {
 router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
   const today = getLocalDateString();
   try {
-    const logs = await dbQuery.all(
-      `SELECT a.id, s.enrollment_no, s.name, s.course, s.semester, s.mobile, a.time, a.distance, a.status, o.otp, a.qr_session_id,
-              COALESCE(fq.name, fo.name, 'Admin') AS faculty_name
-       FROM attendance a
-       JOIN students s ON a.student_id = s.id
-       LEFT JOIN otp o ON a.otp_id = o.id
-       LEFT JOIN qr_sessions q ON a.qr_session_id = q.id
-       LEFT JOIN faculty fq ON q.created_by_faculty_id = fq.id
-       LEFT JOIN faculty fo ON o.generated_by = fo.id
-       WHERE a.date = ?
-       ORDER BY a.time DESC`,
-      [today]
-    );
-    res.json(logs);
+    const { data: logs } = await supabase.from('attendance')
+      .select(`
+        id, time, distance, status, date, qr_session_id,
+        student:student_id (enrollment_no, name, course, semester, mobile),
+        otp:otp_id (otp, faculty:generated_by(name)),
+        qr_session:qr_session_id (faculty:created_by_faculty_id(name))
+      `)
+      .eq('date', today)
+      .order('time', { ascending: false });
+
+    const flatLogs = (logs || []).map(log => ({
+      id: log.id,
+      enrollment_no: log.student?.enrollment_no,
+      name: log.student?.name,
+      course: log.student?.course,
+      semester: log.student?.semester,
+      mobile: log.student?.mobile,
+      time: log.time,
+      distance: log.distance,
+      status: log.status,
+      otp: log.otp?.otp,
+      qr_session_id: log.qr_session_id,
+      faculty_name: log.qr_session?.faculty?.name || log.otp?.faculty?.name || 'Admin'
+    }));
+
+    res.json(flatLogs);
   } catch (err) {
     console.error('Error fetching live monitor logs:', err);
     res.status(500).json({ error: 'Failed to retrieve live monitor logs.' });
@@ -267,37 +289,46 @@ router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
 router.get('/reports', authenticateJWT, requireAdmin, async (req, res) => {
   const { date, startDate, endDate, studentId } = req.query;
 
-  let query = `
-    SELECT a.id, s.enrollment_no, s.name, s.course, s.semester, a.date, a.time, a.distance, a.status, o.otp, a.qr_session_id,
-           COALESCE(fq.name, fo.name, 'Admin') AS faculty_name
-    FROM attendance a
-    JOIN students s ON a.student_id = s.id
-    LEFT JOIN otp o ON a.otp_id = o.id
-    LEFT JOIN qr_sessions q ON a.qr_session_id = q.id
-    LEFT JOIN faculty fq ON q.created_by_faculty_id = fq.id
-    LEFT JOIN faculty fo ON o.generated_by = fo.id
-    WHERE 1=1
-  `;
-  const params = [];
-
-  if (date) {
-    query += ` AND a.date = ?`;
-    params.push(date);
-  } else if (startDate && endDate) {
-    query += ` AND a.date BETWEEN ? AND ?`;
-    params.push(startDate, endDate);
-  }
-
-  if (studentId) {
-    query += ` AND a.student_id = ?`;
-    params.push(studentId);
-  }
-
-  query += ` ORDER BY a.date DESC, a.time DESC`;
-
   try {
-    const reports = await dbQuery.all(query, params);
-    res.json(reports);
+    let reqQuery = supabase.from('attendance').select(`
+      id, time, distance, status, date, qr_session_id,
+      student:student_id (enrollment_no, name, course, semester, mobile),
+      otp:otp_id (otp, faculty:generated_by(name)),
+      qr_session:qr_session_id (faculty:created_by_faculty_id(name))
+    `);
+
+    if (date) {
+      reqQuery = reqQuery.eq('date', date);
+    } else if (startDate && endDate) {
+      reqQuery = reqQuery.gte('date', startDate).lte('date', endDate);
+    }
+
+    if (studentId) {
+      reqQuery = reqQuery.eq('student_id', studentId);
+    }
+
+    reqQuery = reqQuery.order('date', { ascending: false }).order('time', { ascending: false });
+
+    const { data: reports, error } = await reqQuery;
+    if (error) throw error;
+
+    const flatReports = (reports || []).map(log => ({
+      id: log.id,
+      enrollment_no: log.student?.enrollment_no,
+      name: log.student?.name,
+      course: log.student?.course,
+      semester: log.student?.semester,
+      mobile: log.student?.mobile,
+      date: log.date,
+      time: log.time,
+      distance: log.distance,
+      status: log.status,
+      otp: log.otp?.otp,
+      qr_session_id: log.qr_session_id,
+      faculty_name: log.qr_session?.faculty?.name || log.otp?.faculty?.name || 'Admin'
+    }));
+
+    res.json(flatReports);
   } catch (err) {
     console.error('Error fetching report data:', err);
     res.status(500).json({ error: 'Failed to fetch report data.' });
@@ -309,30 +340,24 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
   const today = getLocalDateString();
   try {
     // 1. Total Students
-    const totalStudentsRow = await dbQuery.get('SELECT COUNT(*) as count FROM students');
-    const totalStudents = totalStudentsRow.count;
-
+    const { count: totalStudents } = await supabase.from('students').select('*', { count: 'exact', head: true });
+    
     // 1b. Total Faculty
-    const totalFacultyRow = await dbQuery.get('SELECT COUNT(*) as count FROM faculty');
-    const totalFaculty = totalFacultyRow.count;
-
-    // 2. Present Today (Success logs count)
-    const presentTodayRow = await dbQuery.get(
-      "SELECT COUNT(DISTINCT student_id) as count FROM attendance WHERE date = ? AND status = 'Success'",
-      [today]
-    );
-    const presentToday = presentTodayRow.count;
+    const { count: totalFaculty } = await supabase.from('faculty').select('*', { count: 'exact', head: true });
+    
+    // 2. Present Today (Success logs count unique student_id)
+    const { data: presentRows } = await supabase.from('attendance').select('student_id').eq('date', today).eq('status', 'Success');
+    const presentToday = new Set((presentRows || []).map(r => r.student_id)).size;
 
     // 3. Absent Today
-    const absentToday = Math.max(0, totalStudents - presentToday);
+    const absentToday = Math.max(0, (totalStudents || 0) - presentToday);
 
     // 4. Legacy OTPs generated today
-    const otpsTodayRow = await dbQuery.get('SELECT COUNT(*) as count FROM otp WHERE date = ?', [today]);
-    const otpsGenerated = otpsTodayRow.count;
-    const otpsRemaining = Math.max(0, 5 - otpsGenerated);
+    const { count: otpsGenerated } = await supabase.from('otp').select('*', { count: 'exact', head: true }).eq('date', today);
+    const otpsRemaining = Math.max(0, 5 - (otpsGenerated || 0));
 
     // 5. Legacy Active OTP info
-    const latestOtp = await dbQuery.get('SELECT * FROM otp ORDER BY id DESC LIMIT 1');
+    const { data: latestOtp } = await supabase.from('otp').select('*').order('id', { ascending: false }).limit(1).maybeSingle();
     let activeOtp = null;
     if (latestOtp) {
       const now = new Date().getTime();
@@ -345,18 +370,16 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
     // 6. QR Sessions generated today
     let qrSessionsGenerated = 0;
     if (req.user.role === 'faculty') {
-      const qrTodayRow = await dbQuery.get(
-        'SELECT COUNT(*) as count FROM qr_sessions WHERE date = ? AND created_by_faculty_id = ?',
-        [today, req.user.id]
-      );
-      qrSessionsGenerated = qrTodayRow.count;
+      const { count } = await supabase.from('qr_sessions').select('*', { count: 'exact', head: true })
+        .eq('date', today).eq('created_by_faculty_id', req.user.id);
+      qrSessionsGenerated = count || 0;
     } else {
-      const qrTodayRow = await dbQuery.get('SELECT COUNT(*) as count FROM qr_sessions WHERE date = ?', [today]);
-      qrSessionsGenerated = qrTodayRow.count;
+      const { count } = await supabase.from('qr_sessions').select('*', { count: 'exact', head: true }).eq('date', today);
+      qrSessionsGenerated = count || 0;
     }
 
     // 7. Active QR session info
-    const latestQr = await dbQuery.get('SELECT * FROM qr_sessions ORDER BY id DESC LIMIT 1');
+    const { data: latestQr } = await supabase.from('qr_sessions').select('*').order('id', { ascending: false }).limit(1).maybeSingle();
     let activeQrSession = null;
     if (latestQr) {
       const now = new Date().getTime();
@@ -372,24 +395,27 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
     }
 
     // 8. Last 7 Days Attendance Trend (for graph)
-    const trendRows = await dbQuery.all(`
-      SELECT date, COUNT(DISTINCT student_id) as present_count 
-      FROM attendance 
-      WHERE status = 'Success'
-      GROUP BY date 
-      ORDER BY date DESC 
-      LIMIT 7
-    `);
-
-    // Reverse to chronological order
-    const trend = trendRows.reverse();
+    const trend = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = getLocalDateString(d);
+      
+      const { data: att } = await supabase.from('attendance')
+        .select('student_id')
+        .eq('date', dateStr)
+        .eq('status', 'Success');
+        
+      const pCount = new Set((att || []).map(r => r.student_id)).size;
+      trend.push({ date: dateStr, present_count: pCount });
+    }
 
     res.json({
-      totalStudents,
-      totalFaculty,
+      totalStudents: totalStudents || 0,
+      totalFaculty: totalFaculty || 0,
       presentToday,
       absentToday,
-      otpsGenerated,
+      otpsGenerated: otpsGenerated || 0,
       otpsRemaining,
       activeOtp,
       qrSessionsGenerated,
@@ -410,22 +436,30 @@ router.get('/student-trend', authenticateJWT, async (req, res) => {
 
   try {
     // 1. Get all lectures (OTPs and QR Sessions)
-    const otps = await dbQuery.all("SELECT id, date, generated_time as time, 'otp' as type FROM otp");
-    const qrs = await dbQuery.all("SELECT id, date, created_at as time, 'qr' as type FROM qr_sessions");
+    const { data: otps } = await supabase.from('otp').select('id, date, generated_time');
+    const mappedOtps = (otps || []).map(o => ({ id: o.id, date: o.date, time: o.generated_time, type: 'otp' }));
+    
+    const { data: qrs } = await supabase.from('qr_sessions').select('id, date, created_at');
+    const mappedQrs = (qrs || []).map(q => ({ id: q.id, date: q.date, time: q.created_at, type: 'qr' }));
     
     // Merge and sort by time
-    const lectures = [...otps, ...qrs].sort((a, b) => new Date(a.time) - new Date(b.time));
+    const lectures = [...mappedOtps, ...mappedQrs].sort((a, b) => new Date(a.time) - new Date(b.time));
 
     // 2. Get successful attendances
-    const successOtpAttendances = await dbQuery.all(
-      "SELECT otp_id FROM attendance WHERE student_id = ? AND status = 'Success' AND otp_id IS NOT NULL"
-    );
-    const successQrAttendances = await dbQuery.all(
-      "SELECT qr_session_id FROM attendance WHERE student_id = ? AND status = 'Success' AND qr_session_id IS NOT NULL"
-    );
+    const { data: successOtpAtt } = await supabase.from('attendance')
+      .select('otp_id')
+      .eq('student_id', req.user.id)
+      .eq('status', 'Success')
+      .not('otp_id', 'is', null);
+      
+    const { data: successQrAtt } = await supabase.from('attendance')
+      .select('qr_session_id')
+      .eq('student_id', req.user.id)
+      .eq('status', 'Success')
+      .not('qr_session_id', 'is', null);
     
-    const successOtpIds = new Set(successOtpAttendances.map(a => a.otp_id));
-    const successQrIds = new Set(successQrAttendances.map(a => a.qr_session_id));
+    const successOtpIds = new Set((successOtpAtt || []).map(a => a.otp_id));
+    const successQrIds = new Set((successQrAtt || []).map(a => a.qr_session_id));
 
     let currentAttendance = 100.0;
     const trend = [];

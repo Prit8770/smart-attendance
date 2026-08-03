@@ -55,7 +55,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   // Load college location config
   const fetchCollegeLocation = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/location', {
+      const res = await fetch('/api/location', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -71,7 +71,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   const fetchHistory = async () => {
     setHistoryLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/attendance/history/student', {
+      const res = await fetch('/api/attendance/history/student', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -89,7 +89,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   const fetchStudentTrend = async () => {
     setTrendLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/attendance/student-trend', {
+      const res = await fetch('/api/attendance/student-trend', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -171,7 +171,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     };
 
     const handleBeforeUnload = () => {
-      fetch('http://localhost:5000/api/auth/student/lock', {
+      fetch('/api/auth/student/lock', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -285,7 +285,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     setMessage({ text: '', type: '' });
 
     try {
-      const res = await fetch('http://localhost:5000/api/attendance/submit', {
+      const res = await fetch('/api/attendance/submit', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

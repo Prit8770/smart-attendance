@@ -2,14 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Users, KeyRound, QrCode, MapPin, BarChart3, Download, Plus, Search, 
   Trash2, Edit, CheckCircle, XCircle, Clock, ShieldAlert, LogOut, RefreshCw,
-  Sun, Moon, GraduationCap
+  Sun, Moon, GraduationCap, User, Settings
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import QRCode from 'qrcode';
 
-export default function AdminDashboard({ user, token, onLogout, theme, toggleTheme }) {
+export default function AdminDashboard({ user, token, onLogout, theme, toggleTheme, onUpdateUser }) {
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'students', 'otp', 'location', 'reports'
   const [activeStatsList, setActiveStatsList] = useState(null); // null, 'total', 'present', 'absent', 'qrsessions'
   
@@ -89,6 +89,23 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const [settingsMessage, setSettingsMessage] = useState({ text: '', type: '' });
   const [settingsLoading, setSettingsLoading] = useState(false);
 
+  // Profile Update State
+  const [profileForm, setProfileForm] = useState({
+    name: user?.name || '',
+    email: user?.email || ''
+  });
+  const [profileMessage, setProfileMessage] = useState({ text: '', type: '' });
+  const [profileLoading, setProfileLoading] = useState(false);
+
+  useEffect(() => {
+    if (user) {
+      setProfileForm({
+        name: user.name || '',
+        email: user.email || ''
+      });
+    }
+  }, [user]);
+
   // Attendance live monitor & reports
   const [liveLogs, setLiveLogs] = useState([]);
   const [reportType, setReportType] = useState('today'); // 'today', 'yesterday', 'monthly', 'student_wise'
@@ -109,7 +126,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   // Fetch Dashboard Statistics
   const fetchStats = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/attendance/stats', {
+      const res = await fetch('/api/attendance/stats', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -127,7 +144,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const fetchStudents = async () => {
     setStudentsLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/students', {
+      const res = await fetch('/api/students', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -145,7 +162,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const fetchFaculties = async () => {
     setFacultyLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/faculty', {
+      const res = await fetch('/api/faculty', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -163,7 +180,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const fetchQrData = async () => {
     try {
       // 1. Fetch active QR session
-      const resActive = await fetch('http://localhost:5000/api/qr/active', {
+      const resActive = await fetch('/api/qr/active', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (resActive.ok) {
@@ -178,7 +195,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       }
 
       // 2. Fetch today's QR history
-      const resToday = await fetch('http://localhost:5000/api/qr/today', {
+      const resToday = await fetch('/api/qr/today', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (resToday.ok) {
@@ -192,7 +209,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
   const fetchQrSettings = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/qr/settings', {
+      const res = await fetch('/api/qr/settings', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -207,7 +224,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const handleToggleQrSettings = async () => {
     try {
       const nextState = !qrGenerationEnabled;
-      const res = await fetch('http://localhost:5000/api/qr/toggle-settings', {
+      const res = await fetch('/api/qr/toggle-settings', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -226,7 +243,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   // Fetch College Location
   const fetchLocation = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/location', {
+      const res = await fetch('/api/location', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -245,7 +262,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   // Fetch Live Logs (Monitor)
   const fetchLiveLogs = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/attendance/monitor', {
+      const res = await fetch('/api/attendance/monitor', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -279,7 +296,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     }
 
     try {
-      const res = await fetch(`http://localhost:5000/api/attendance/reports${query}`, {
+      const res = await fetch(`/api/attendance/reports${query}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -489,7 +506,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     e.preventDefault();
     setLocationMessage('');
     try {
-      const res = await fetch('http://localhost:5000/api/location', {
+      const res = await fetch('/api/location', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -630,6 +647,43 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     }
   };
 
+  // Handle Profile Update Submission
+  const handleUpdateProfile = async (e) => {
+    e.preventDefault();
+    setProfileMessage({ text: '', type: '' });
+    setProfileLoading(true);
+    try {
+      const res = await fetch('/api/auth/update-profile', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          name: profileForm.name,
+          email: profileForm.email
+        })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setProfileMessage({ text: 'Profile updated successfully! All details synchronized.', type: 'success' });
+        if (onUpdateUser) {
+          onUpdateUser(data.user, data.token);
+        } else {
+          localStorage.setItem('attendance_user', JSON.stringify(data.user));
+          if (data.token) localStorage.setItem('attendance_token', data.token);
+        }
+      } else {
+        setProfileMessage({ text: data.error || 'Failed to update profile.', type: 'danger' });
+      }
+    } catch (err) {
+      console.error('Profile update error:', err);
+      setProfileMessage({ text: 'Network error. Failed to connect to server.', type: 'danger' });
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
   // Change Admin Password Submission
   const handleChangeAdminPassword = async (e) => {
     e.preventDefault();
@@ -643,7 +697,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     setSettingsLoading(true);
 
     try {
-      const res = await fetch('http://localhost:5000/api/auth/change-password', {
+      const res = await fetch('/api/auth/change-password', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -674,7 +728,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   // Start QR Session logic
   const handleStartQrSession = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/qr/start-session', {
+      const res = await fetch('/api/qr/start-session', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -696,7 +750,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   // Send imported student batch to backend
   const sendBulkImport = async (studentsList) => {
     try {
-      const response = await fetch('http://localhost:5000/api/students/import', {
+      const response = await fetch('/api/students/import', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -861,8 +915,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     const isEdit = modalMode === 'edit';
     const method = isEdit ? 'PUT' : 'POST';
     const endpoint = isEdit 
-      ? `http://localhost:5000/api/students/${studentForm.id}`
-      : 'http://localhost:5000/api/students';
+      ? `/api/students/${studentForm.id}`
+      : '/api/students';
 
     try {
       const res = await fetch(endpoint, {
@@ -904,7 +958,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     if (!window.confirm('Are you sure you want to delete this student and their entire history?')) return;
 
     try {
-      const res = await fetch(`http://localhost:5000/api/students/${studentId}`, {
+      const res = await fetch(`/api/students/${studentId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -986,8 +1040,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     e.preventDefault();
     const isEdit = facultyModalMode === 'edit';
     const url = isEdit 
-      ? `http://localhost:5000/api/faculty/${facultyForm.id}`
-      : 'http://localhost:5000/api/faculty';
+      ? `/api/faculty/${facultyForm.id}`
+      : '/api/faculty';
     const method = isEdit ? 'PUT' : 'POST';
 
     try {
@@ -1024,7 +1078,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     if (!window.confirm('Are you sure you want to reset password for this faculty member?')) return;
     try {
       const facultyObj = faculties.find(f => f.id === facultyId);
-      const res = await fetch(`http://localhost:5000/api/faculty/${facultyId}`, {
+      const res = await fetch(`/api/faculty/${facultyId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -1052,7 +1106,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const handleDeleteFaculty = async (facultyId) => {
     if (!window.confirm('Are you sure you want to delete this faculty member?')) return;
     try {
-      const res = await fetch(`http://localhost:5000/api/faculty/${facultyId}`, {
+      const res = await fetch(`/api/faculty/${facultyId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -1180,7 +1234,10 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
           <h1 style={styles.headerTitle}>College Admin Dashboard</h1>
         </div>
         <div style={styles.headerActions}>
-          <span style={styles.welcomeText}>Welcome, <strong>Admin</strong></span>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', marginRight: '8px' }}>
+            <span style={styles.welcomeText}>Welcome, <strong style={{ color: 'var(--primary)', fontWeight: '700' }}>{user?.name || 'Admin'}</strong></span>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{user?.email || 'Administrator'}</span>
+          </div>
           <button className="btn btn-secondary" onClick={toggleTheme} style={{ padding: '8px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Toggle Light/Dark Mode">
             {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
           </button>
@@ -1239,8 +1296,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
           style={{ ...styles.navTab, ...(activeTab === 'settings' ? styles.navTabActive : {}) }}
           onClick={() => setActiveTab('settings')}
         >
-          <KeyRound size={16} />
-          Change Password
+          <Settings size={16} />
+          Profile & Settings
         </button>
       </div>
 
@@ -1582,7 +1639,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
         {/* PANEL 2: STUDENT CRUD MANAGEMENT */}
         {activeTab === 'students' && (
-          <div style={styles.tabPanel} className="glass-panel" style={styles.studentCrudPanel}>
+          <div style={{ ...styles.tabPanel, ...styles.studentCrudPanel }} className="glass-panel">
             <div style={styles.crudHeader}>
               <div style={styles.searchContainer}>
                 <Search size={18} style={styles.searchIcon} />
@@ -1662,7 +1719,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
         {/* PANEL 2b: FACULTY CRUD MANAGEMENT */}
         {activeTab === 'faculty' && (
-          <div style={styles.tabPanel} className="glass-panel" style={styles.studentCrudPanel}>
+          <div style={{ ...styles.tabPanel, ...styles.studentCrudPanel }} className="glass-panel">
             <div style={styles.crudHeader}>
               <div style={styles.searchContainer}>
                 <Search size={18} style={styles.searchIcon} />
@@ -1740,7 +1797,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         {activeTab === 'otp' && (() => {
           const currentSessionLogs = liveLogs.filter(log => log.qr_session_id === activeQrSessionDetails?.id);
           return (
-            <div style={styles.tabPanel} style={styles.otpDashboardRow}>
+            <div style={{ ...styles.tabPanel, ...styles.otpDashboardRow }}>
               {/* Left Box: QR Controller / Smart TV Screen */}
               <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: 1.2, minWidth: '320px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '30px' }}>
                 <h3 style={{ ...styles.cardTitle, width: '100%', textAlign: 'center' }}>Smart TV QR Display</h3>
@@ -1890,7 +1947,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
         {/* PANEL 4: LOCATION MAP SETUP */}
         {activeTab === 'location' && (
-          <div style={styles.tabPanel} style={styles.locationDashboardRow}>
+          <div style={{ ...styles.tabPanel, ...styles.locationDashboardRow }}>
             {/* Configuration Form */}
             <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: 1, minWidth: '320px' }}>
               <h3 style={styles.cardTitle}>Location Configuration</h3>
@@ -1985,7 +2042,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
         {/* PANEL 5: REPORTS & PDF DOWNLOADS */}
         {activeTab === 'reports' && (
-          <div style={styles.tabPanel} className="glass-panel" style={styles.reportsPanel}>
+          <div style={{ ...styles.tabPanel, ...styles.reportsPanel }} className="glass-panel">
             <div style={styles.reportsFilterHeader}>
               <div style={styles.filterGroup}>
                 <label style={styles.formLabel}>Report Type</label>
@@ -2136,62 +2193,139 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
           </div>
         )}
 
-        {/* PANEL 6: ADMIN PASSWORD CHANGE */}
+        {/* PANEL 6: ADMIN PROFILE & SETTINGS */}
         {activeTab === 'settings' && (
-          <div style={styles.tabPanel} className="glass-panel" style={{ padding: '30px', maxWidth: '500px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <h3 style={styles.cardTitle}>Change Admin Password</h3>
-            
-            {settingsMessage.text && (
-              <div style={{
-                ...styles.statusAlert,
-                ...(settingsMessage.type === 'success' ? styles.statusSuccess : styles.statusDanger),
-                marginBottom: '10px'
-              }}>
-                {settingsMessage.text}
-              </div>
-            )}
+          <div style={styles.tabPanel}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(380px, 1fr))', gap: '24px', maxWidth: '1000px', margin: '0 auto', width: '100%' }}>
+              
+              {/* CARD 1: UPDATE PROFILE DETAILS */}
+              <div className="glass-panel" style={{ padding: '30px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '14px' }}>
+                  <div style={{ background: 'rgba(59, 130, 246, 0.15)', padding: '10px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <User size={24} color="#3b82f6" />
+                  </div>
+                  <div>
+                    <h3 style={{ ...styles.cardTitle, margin: 0 }}>Admin Profile</h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0, marginTop: '4px' }}>Update account identity and details</p>
+                  </div>
+                </div>
 
-            <form onSubmit={handleChangeAdminPassword} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Current Password</label>
-                <input
-                  type="password"
-                  className="glass-input"
-                  placeholder="Enter current password"
-                  value={changePasswordForm.currentPassword}
-                  onChange={(e) => setChangePasswordForm({ ...changePasswordForm, currentPassword: e.target.value })}
-                  required
-                />
+                {profileMessage.text && (
+                  <div style={{
+                    ...styles.statusAlert,
+                    ...(profileMessage.type === 'success' ? styles.statusSuccess : styles.statusDanger),
+                    marginBottom: '5px'
+                  }}>
+                    {profileMessage.text}
+                  </div>
+                )}
+
+                <form onSubmit={handleUpdateProfile} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div style={styles.formGroup}>
+                    <label style={styles.formLabel}>Role & Status</label>
+                    <div>
+                      <span className="status-badge success" style={{ fontSize: '0.85rem', padding: '6px 12px', display: 'inline-block', fontWeight: 'bold' }}>
+                        Administrator (Active)
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={styles.formGroup}>
+                    <label style={styles.formLabel}>Full Name</label>
+                    <input
+                      type="text"
+                      className="glass-input"
+                      placeholder="Enter Admin Name"
+                      value={profileForm.name}
+                      onChange={(e) => setProfileForm({ ...profileForm, name: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <div style={styles.formGroup}>
+                    <label style={styles.formLabel}>Email Address</label>
+                    <input
+                      type="email"
+                      className="glass-input"
+                      placeholder="Enter Admin Email Address"
+                      value={profileForm.email}
+                      onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '10px' }} disabled={profileLoading}>
+                    {profileLoading ? 'Saving Changes...' : 'Save Profile Details'}
+                  </button>
+                </form>
               </div>
 
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>New Password</label>
-                <input
-                  type="password"
-                  className="glass-input"
-                  placeholder="Enter new password"
-                  value={changePasswordForm.newPassword}
-                  onChange={(e) => setChangePasswordForm({ ...changePasswordForm, newPassword: e.target.value })}
-                  required
-                />
+              {/* CARD 2: CHANGE PASSWORD */}
+              <div className="glass-panel" style={{ padding: '30px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '14px' }}>
+                  <div style={{ background: 'rgba(147, 51, 234, 0.15)', padding: '10px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <KeyRound size={24} color="#9333ea" />
+                  </div>
+                  <div>
+                    <h3 style={{ ...styles.cardTitle, margin: 0 }}>Change Password</h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0, marginTop: '4px' }}>Manage security and credentials</p>
+                  </div>
+                </div>
+                
+                {settingsMessage.text && (
+                  <div style={{
+                    ...styles.statusAlert,
+                    ...(settingsMessage.type === 'success' ? styles.statusSuccess : styles.statusDanger),
+                    marginBottom: '5px'
+                  }}>
+                    {settingsMessage.text}
+                  </div>
+                )}
+
+                <form onSubmit={handleChangeAdminPassword} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                  <div style={styles.formGroup}>
+                    <label style={styles.formLabel}>Current Password</label>
+                    <input
+                      type="password"
+                      className="glass-input"
+                      placeholder="Enter current password"
+                      value={changePasswordForm.currentPassword}
+                      onChange={(e) => setChangePasswordForm({ ...changePasswordForm, currentPassword: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <div style={styles.formGroup}>
+                    <label style={styles.formLabel}>New Password</label>
+                    <input
+                      type="password"
+                      className="glass-input"
+                      placeholder="Enter new password"
+                      value={changePasswordForm.newPassword}
+                      onChange={(e) => setChangePasswordForm({ ...changePasswordForm, newPassword: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <div style={styles.formGroup}>
+                    <label style={styles.formLabel}>Confirm New Password</label>
+                    <input
+                      type="password"
+                      className="glass-input"
+                      placeholder="Confirm new password"
+                      value={changePasswordForm.confirmPassword}
+                      onChange={(e) => setChangePasswordForm({ ...changePasswordForm, confirmPassword: e.target.value })}
+                      required
+                    />
+                  </div>
+
+                  <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '10px' }} disabled={settingsLoading}>
+                    {settingsLoading ? 'Updating...' : 'Update Password'}
+                  </button>
+                </form>
               </div>
 
-              <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Confirm New Password</label>
-                <input
-                  type="password"
-                  className="glass-input"
-                  placeholder="Confirm new password"
-                  value={changePasswordForm.confirmPassword}
-                  onChange={(e) => setChangePasswordForm({ ...changePasswordForm, confirmPassword: e.target.value })}
-                  required
-                />
-              </div>
-
-              <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '10px' }} disabled={settingsLoading}>
-                {settingsLoading ? 'Updating...' : 'Update Password'}
-              </button>
-            </form>
+            </div>
           </div>
         )}
 

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
-const { dbQuery } = require('../db');
+const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
 
 // Middleware to restrict to admins or faculty
@@ -33,7 +33,7 @@ function getLocalDateString() {
 // GET the global QR generation settings
 router.get('/settings', authenticateJWT, async (req, res) => {
   try {
-    const qrSetting = await dbQuery.get("SELECT value FROM settings WHERE key = 'qr_generation_enabled'");
+    const { data: qrSetting } = await supabase.from('settings').select('value').eq('key', 'qr_generation_enabled').maybeSingle();
     res.json({ enabled: qrSetting ? qrSetting.value === 'true' : true });
   } catch (err) {
     console.error('Error fetching settings:', err);
@@ -48,10 +48,7 @@ router.post('/toggle-settings', authenticateJWT, async (req, res) => {
   }
   const { enabled } = req.body;
   try {
-    await dbQuery.run(
-      "INSERT OR REPLACE INTO settings (key, value) VALUES ('qr_generation_enabled', ?)",
-      [enabled ? 'true' : 'false']
-    );
+    await supabase.from('settings').upsert({ key: 'qr_generation_enabled', value: enabled ? 'true' : 'false' });
     res.json({ success: true, enabled });
   } catch (err) {
     console.error('Error toggling settings:', err);
@@ -65,17 +62,17 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
   const today = getLocalDateString();
   try {
     // 1. Check if global QR generation is enabled by Admin
-    const qrSetting = await dbQuery.get("SELECT value FROM settings WHERE key = 'qr_generation_enabled'");
+    const { data: qrSetting } = await supabase.from('settings').select('value').eq('key', 'qr_generation_enabled').maybeSingle();
     if (qrSetting && qrSetting.value !== 'true') {
       return res.status(403).json({ error: 'QR Attendance session generation is currently disabled by Admin.' });
     }
 
     // 2. Check if this specific faculty member has already generated 5 sessions today
-    const countRow = await dbQuery.get(
-      "SELECT COUNT(*) as count FROM qr_sessions WHERE created_by_faculty_id = ? AND date = ?",
-      [req.user.id, today]
-    );
-    if (countRow && countRow.count >= 5) {
+    const { count } = await supabase.from('qr_sessions').select('*', { count: 'exact', head: true })
+      .eq('created_by_faculty_id', req.user.id)
+      .eq('date', today);
+
+    if (count !== null && count >= 5) {
       return res.status(403).json({ error: 'Daily limit reached. You can generate a maximum of 5 QR sessions per day.' });
     }
 
@@ -89,10 +86,16 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
     const createdAt = now.toISOString();
     const expiresAt = new Date(now.getTime() + 2 * 60 * 1000).toISOString(); // 2 minutes
 
-    const result = await dbQuery.run(
-      'INSERT INTO qr_sessions (created_at, expires_at, created_by_faculty_id, date, tokens, semester) VALUES (?, ?, ?, ?, ?, ?)',
-      [createdAt, expiresAt, req.user.id, today, JSON.stringify(tokens), semester ? parseInt(semester) : null]
-    );
+    const { data: result, error } = await supabase.from('qr_sessions').insert([{
+      created_at: createdAt,
+      expires_at: expiresAt,
+      created_by_faculty_id: req.user.id,
+      date: today,
+      tokens: JSON.stringify(tokens),
+      semester: semester ? parseInt(semester) : null
+    }]).select().single();
+    
+    if (error) throw error;
 
     res.status(201).json({
       message: 'QR session started successfully',
@@ -114,12 +117,11 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
 router.get('/active', authenticateJWT, async (req, res) => {
   try {
     // Find the latest generated session
-    const latestSession = await dbQuery.get(
-      `SELECT q.*, f.name as faculty_name 
-       FROM qr_sessions q 
-       LEFT JOIN faculty f ON q.created_by_faculty_id = f.id 
-       ORDER BY q.id DESC LIMIT 1`
-    );
+    const { data: latestSession } = await supabase.from('qr_sessions')
+      .select('*, faculty:created_by_faculty_id(name)')
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
     if (!latestSession) {
       return res.json({ active: false });
@@ -136,7 +138,7 @@ router.get('/active', authenticateJWT, async (req, res) => {
           createdAt: latestSession.created_at,
           expiresAt: latestSession.expires_at,
           tokens: JSON.parse(latestSession.tokens),
-          facultyName: latestSession.faculty_name || 'Admin'
+          facultyName: latestSession.faculty?.name || 'Admin'
         },
         secondsLeft: Math.max(0, Math.floor((expireTime - now) / 1000))
       });
@@ -153,24 +155,29 @@ router.get('/active', authenticateJWT, async (req, res) => {
 router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) => {
   const today = getLocalDateString();
   try {
-    const sessions = await dbQuery.all(
-      `SELECT q.id, q.created_at, q.expires_at, q.date, f.name as faculty_name 
-       FROM qr_sessions q
-       LEFT JOIN faculty f ON q.created_by_faculty_id = f.id
-       WHERE q.date = ? 
-       ORDER BY q.id DESC`,
-      [today]
-    );
+    const { data: sessions, error } = await supabase.from('qr_sessions')
+      .select('id, created_at, expires_at, date, faculty:created_by_faculty_id(name)')
+      .eq('date', today)
+      .order('id', { ascending: false });
+
+    if (error) throw error;
+    
+    const safeSessions = sessions || [];
 
     // Get count of checkins for each session
-    const sessionsWithCount = await Promise.all(sessions.map(async (sess) => {
-      const checkins = await dbQuery.get(
-        "SELECT COUNT(*) as count FROM attendance WHERE qr_session_id = ? AND status = 'Success'",
-        [sess.id]
-      );
+    const sessionsWithCount = await Promise.all(safeSessions.map(async (sess) => {
+      const { count } = await supabase.from('attendance')
+        .select('*', { count: 'exact', head: true })
+        .eq('qr_session_id', sess.id)
+        .eq('status', 'Success');
+
       return {
-        ...sess,
-        presentCount: checkins.count
+        id: sess.id,
+        created_at: sess.created_at,
+        expires_at: sess.expires_at,
+        date: sess.date,
+        faculty_name: sess.faculty?.name || 'Admin',
+        presentCount: count || 0
       };
     }));
 

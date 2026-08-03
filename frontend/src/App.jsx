@@ -43,10 +43,19 @@ export default function App() {
     setToken(userToken);
   };
 
+  const handleUpdateUser = (updatedUser, updatedToken) => {
+    setUser(updatedUser);
+    localStorage.setItem('attendance_user', JSON.stringify(updatedUser));
+    if (updatedToken) {
+      setToken(updatedToken);
+      localStorage.setItem('attendance_token', updatedToken);
+    }
+  };
+
   const handleLogout = async () => {
     if (user && user.role === 'student' && token) {
       try {
-        await fetch('http://localhost:5000/api/auth/student/lock', {
+        await fetch('/api/auth/student/lock', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -81,11 +90,11 @@ export default function App() {
           <Login onLoginSuccess={handleLoginSuccess} onBack={() => setShowLogin(false)} />
         )
       ) : user.role === 'admin' ? (
-        <AdminDashboard user={user} token={token} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
+        <AdminDashboard user={user} token={token} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} onUpdateUser={handleUpdateUser} />
       ) : user.role === 'faculty' ? (
-        <FacultyDashboard user={user} token={token} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
+        <FacultyDashboard user={user} token={token} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} onUpdateUser={handleUpdateUser} />
       ) : (
-        <StudentDashboard user={user} token={token} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} />
+        <StudentDashboard user={user} token={token} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} onUpdateUser={handleUpdateUser} />
       )}
       <PwaInstallPrompt />
     </div>

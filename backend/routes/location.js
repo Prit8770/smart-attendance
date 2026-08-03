@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { dbQuery } = require('../db');
+const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
 
 // Middleware to restrict to admins
@@ -15,7 +15,7 @@ const requireAdmin = (req, res, next) => {
 // GET college location details
 router.get('/', authenticateJWT, async (req, res) => {
   try {
-    const loc = await dbQuery.get('SELECT * FROM college_location LIMIT 1');
+    const { data: loc } = await supabase.from('college_location').select('*').limit(1).maybeSingle();
     if (!loc) {
       return res.status(404).json({ error: 'College location not configured.' });
     }
@@ -35,19 +35,25 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
   }
 
   try {
-    const existing = await dbQuery.get('SELECT id FROM college_location LIMIT 1');
+    const { data: existing } = await supabase.from('college_location').select('id').limit(1).maybeSingle();
 
     if (existing) {
-      await dbQuery.run(
-        'UPDATE college_location SET latitude = ?, longitude = ?, radius = ? WHERE id = ?',
-        [parseFloat(latitude), parseFloat(longitude), parseFloat(radius), existing.id]
-      );
+      await supabase.from('college_location').update({
+        latitude: parseFloat(latitude),
+        longitude: parseFloat(longitude),
+        radius: parseFloat(radius)
+      }).eq('id', existing.id);
+      
       res.json({ message: 'College location updated successfully.', location: { latitude, longitude, radius } });
     } else {
-      const result = await dbQuery.run(
-        'INSERT INTO college_location (latitude, longitude, radius) VALUES (?, ?, ?)',
-        [parseFloat(latitude), parseFloat(longitude), parseFloat(radius)]
-      );
+      const { data: result, error } = await supabase.from('college_location').insert([{
+        latitude: parseFloat(latitude),
+        longitude: parseFloat(longitude),
+        radius: parseFloat(radius)
+      }]).select().single();
+      
+      if (error) throw error;
+      
       res.status(201).json({
         message: 'College location configured successfully.',
         location: { id: result.id, latitude, longitude, radius }

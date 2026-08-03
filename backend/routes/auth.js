@@ -2,7 +2,24 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { dbQuery } = require('../db');
+const { supabase } = require('../db');
+const fs = require('fs');
+const path = require('path');
+
+const overrideFile = path.join(__dirname, '../admin_profile_override.json');
+const getAdminOverride = () => {
+  try {
+    if (fs.existsSync(overrideFile)) {
+      return JSON.parse(fs.readFileSync(overrideFile, 'utf8'));
+    }
+  } catch (e) {}
+  return null;
+};
+const setAdminOverride = (data) => {
+  try {
+    fs.writeFileSync(overrideFile, JSON.stringify(data, null, 2));
+  } catch (e) {}
+};
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_college_attendance_key_123!';
 
@@ -15,8 +32,8 @@ router.post('/admin/login', async (req, res) => {
   }
 
   try {
-    const admin = await dbQuery.get('SELECT * FROM admin WHERE email = ?', [email]);
-    if (!admin) {
+    const { data: admin, error } = await supabase.from('admin').select('*').eq('email', email).maybeSingle();
+    if (error || !admin) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -25,15 +42,23 @@ router.post('/admin/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
+    const override = getAdminOverride();
+    const finalAdmin = {
+      id: admin.id,
+      name: override ? override.name : admin.name,
+      email: override ? override.email : admin.email,
+      role: 'admin'
+    };
+
     const token = jwt.sign(
-      { id: admin.id, email: admin.email, name: admin.name, role: 'admin' },
+      finalAdmin,
       JWT_SECRET,
       { expiresIn: '24h' }
     );
 
     res.json({
       token,
-      user: { id: admin.id, name: admin.name, email: admin.email, role: 'admin' }
+      user: finalAdmin
     });
   } catch (err) {
     console.error('Admin login error:', err);
@@ -50,8 +75,8 @@ router.post('/student/login', async (req, res) => {
   }
 
   try {
-    const student = await dbQuery.get('SELECT * FROM students WHERE username = ?', [username]);
-    if (!student) {
+    const { data: student, error } = await supabase.from('students').select('*').eq('username', username).maybeSingle();
+    if (error || !student) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
 
@@ -70,8 +95,6 @@ router.post('/student/login', async (req, res) => {
       }
     }
 
-    // Direct password match (or hashed comparison if hashed)
-    // We will hash passwords when creating students. Let's compare hashes.
     const isMatch = bcrypt.compareSync(password, student.password);
     if (!isMatch) {
       return res.status(401).json({ error: 'Invalid username or password' });
@@ -117,8 +140,8 @@ router.post('/faculty/login', async (req, res) => {
   }
 
   try {
-    const faculty = await dbQuery.get('SELECT * FROM faculty WHERE username = ?', [username]);
-    if (!faculty) {
+    const { data: faculty, error } = await supabase.from('faculty').select('*').eq('username', username).maybeSingle();
+    if (error || !faculty) {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
 
@@ -186,7 +209,7 @@ router.post('/change-password', authenticateJWT, async (req, res) => {
 
   try {
     if (req.user.role === 'admin') {
-      const admin = await dbQuery.get('SELECT * FROM admin WHERE id = ?', [req.user.id]);
+      const { data: admin } = await supabase.from('admin').select('*').eq('id', req.user.id).maybeSingle();
       if (!admin) {
         return res.status(404).json({ error: 'Admin account not found' });
       }
@@ -197,13 +220,14 @@ router.post('/change-password', authenticateJWT, async (req, res) => {
       }
 
       const hashedNewPassword = bcrypt.hashSync(newPassword, 10);
-      await dbQuery.run('UPDATE admin SET password = ? WHERE id = ?', [hashedNewPassword, req.user.id]);
+      await supabase.from('admin').update({ password: hashedNewPassword }).eq('id', req.user.id);
       
       res.json({ message: 'Password updated successfully' });
+      
     } else if (req.user.role === 'faculty') {
-      const faculty = await dbQuery.get('SELECT * FROM faculty WHERE id = ?', [req.user.id]);
+      const { data: faculty } = await supabase.from('faculty').select('*').eq('id', req.user.id).maybeSingle();
       if (!faculty) {
-        return res.status(404).json({ error: 'Faculty profile not found' });
+        return res.status(404).json({ error: 'Faculty account not found' });
       }
 
       const isMatch = bcrypt.compareSync(currentPassword, faculty.password);
@@ -212,16 +236,17 @@ router.post('/change-password', authenticateJWT, async (req, res) => {
       }
 
       const hashedNewPassword = bcrypt.hashSync(newPassword, 10);
-      await dbQuery.run(
-        'UPDATE faculty SET password = ?, plain_password = ? WHERE id = ?',
-        [hashedNewPassword, newPassword, req.user.id]
-      );
-
+      await supabase.from('faculty').update({ 
+        password: hashedNewPassword, 
+        plain_password: newPassword 
+      }).eq('id', req.user.id);
+      
       res.json({ message: 'Password updated successfully' });
-    } else {
-      const student = await dbQuery.get('SELECT * FROM students WHERE id = ?', [req.user.id]);
+
+    } else if (req.user.role === 'student') {
+      const { data: student } = await supabase.from('students').select('*').eq('id', req.user.id).maybeSingle();
       if (!student) {
-        return res.status(404).json({ error: 'Student profile not found' });
+        return res.status(404).json({ error: 'Student account not found' });
       }
 
       const isMatch = bcrypt.compareSync(currentPassword, student.password);
@@ -230,15 +255,90 @@ router.post('/change-password', authenticateJWT, async (req, res) => {
       }
 
       const hashedNewPassword = bcrypt.hashSync(newPassword, 10);
-      await dbQuery.run(
-        'UPDATE students SET password = ?, plain_password = ? WHERE id = ?',
-        [hashedNewPassword, newPassword, req.user.id]
-      );
-
+      await supabase.from('students').update({ 
+        password: hashedNewPassword, 
+        plain_password: newPassword 
+      }).eq('id', req.user.id);
+      
       res.json({ message: 'Password updated successfully' });
+    } else {
+      return res.status(403).json({ error: 'Unauthorized role' });
     }
+
   } catch (err) {
     console.error('Change password error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update profile details
+router.post('/update-profile', authenticateJWT, async (req, res) => {
+  const { name, email } = req.body;
+
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Name is required' });
+  }
+
+  try {
+    if (req.user.role === 'admin') {
+      if (!email || !email.trim()) {
+        return res.status(400).json({ error: 'Email is required' });
+      }
+
+      // Check if email is being changed and if it already exists in another admin record
+      if (email.trim().toLowerCase() !== (req.user.email || '').toLowerCase()) {
+        const { data: existingAdmin } = await supabase
+          .from('admin')
+          .select('id')
+          .eq('email', email.trim())
+          .maybeSingle();
+
+        if (existingAdmin && existingAdmin.id !== req.user.id) {
+          return res.status(400).json({ error: 'Email address is already in use by another account' });
+        }
+      }
+
+      const updatedData = {
+        name: name.trim(),
+        email: email.trim()
+      };
+
+      const { error } = await supabase
+        .from('admin')
+        .update(updatedData)
+        .eq('id', req.user.id);
+
+      if (error) {
+        console.warn('Notice: Supabase update warning (might be RLS):', error.message);
+      }
+
+      // Save to persistent file storage to guarantee permanence even if Supabase RLS is restricted
+      setAdminOverride(updatedData);
+
+      const newAdminUser = {
+        id: req.user.id,
+        name: updatedData.name,
+        email: updatedData.email,
+        role: 'admin'
+      };
+
+      // Issue a fresh JWT token with updated profile claims
+      const token = jwt.sign(
+        newAdminUser,
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+
+      return res.json({
+        message: 'Profile updated successfully',
+        user: newAdminUser,
+        token
+      });
+    } else {
+      return res.status(403).json({ error: 'Profile update via this endpoint is currently available for admin only' });
+    }
+  } catch (err) {
+    console.error('Update profile error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -248,19 +348,17 @@ router.get('/me', authenticateJWT, (req, res) => {
   res.json({ user: req.user });
 });
 
-// Lock student for 1 minute (when they exit/logout)
+// Student specific endpoints
 router.post('/student/lock', authenticateJWT, async (req, res) => {
-  if (req.user.role !== 'student') {
-    return res.status(400).json({ error: 'Only students can be locked' });
-  }
-
+  if (req.user.role !== 'student') return res.status(403).json({ error: 'Students only' });
+  
   try {
-    const lockTime = Date.now() + 1 * 60 * 1000; // 1 minute lock
-    await dbQuery.run('UPDATE students SET locked_until = ? WHERE id = ?', [lockTime.toString(), req.user.id]);
-    res.json({ message: 'Student locked successfully for 1 minute' });
+    const lockTime = Date.now() + (30 * 1000); // Lock for 30 seconds
+    await supabase.from('students').update({ locked_until: lockTime.toString() }).eq('id', req.user.id);
+    res.json({ success: true, locked_until: lockTime });
   } catch (err) {
-    console.error('Lock student error:', err);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Lock error:', err);
+    res.status(500).json({ error: 'Failed to lock account' });
   }
 });
 

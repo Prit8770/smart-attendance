@@ -36,7 +36,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
   const fetchQrSettings = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/qr/settings', {
+      const res = await fetch('/api/qr/settings', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -80,7 +80,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   // Fetch Dashboard Statistics
   const fetchStats = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/attendance/stats', {
+      const res = await fetch('/api/attendance/stats', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -98,7 +98,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   const fetchActiveSessions = async () => {
     try {
       // 1. Fetch active QR session
-      const resActiveQr = await fetch('http://localhost:5000/api/qr/active', {
+      const resActiveQr = await fetch('/api/qr/active', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (resActiveQr.ok) {
@@ -113,7 +113,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       }
 
       // 2. Fetch active OTP session
-      const resActiveOtp = await fetch('http://localhost:5000/api/otp/active', {
+      const resActiveOtp = await fetch('/api/otp/active', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (resActiveOtp.ok) {
@@ -131,7 +131,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       }
 
       // 3. Fetch OTP history/counts for limit check
-      const resOtpToday = await fetch('http://localhost:5000/api/otp/today', {
+      const resOtpToday = await fetch('/api/otp/today', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (resOtpToday.ok) {
@@ -146,7 +146,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   // Fetch Live Logs (Monitor)
   const fetchLiveLogs = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/attendance/monitor', {
+      const res = await fetch('/api/attendance/monitor', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -161,7 +161,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   // Fetch students for report filtering
   const fetchStudents = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/students', {
+      const res = await fetch('/api/students', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -194,7 +194,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
     }
 
     try {
-      const res = await fetch(`http://localhost:5000/api/attendance/reports${query}`, {
+      const res = await fetch(`/api/attendance/reports${query}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -290,7 +290,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   // Actions
   const handleStartQrSession = async (sem) => {
     try {
-      const res = await fetch('http://localhost:5000/api/qr/start-session', {
+      const res = await fetch('/api/qr/start-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ semester: sem })
@@ -313,7 +313,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
   const handleGenerateOtp = async (sem) => {
     try {
-      const res = await fetch('http://localhost:5000/api/otp/generate', {
+      const res = await fetch('/api/otp/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ semester: sem })
@@ -362,7 +362,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
     }
 
     try {
-      const res = await fetch('http://localhost:5000/api/auth/change-password', {
+      const res = await fetch('/api/auth/change-password', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1032,7 +1032,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   </div>
                 ) : activeOtpDetails ? (
                   <div style={styles.qrDisplayBox}>
-                    <div style={styles.qrBadge} style={{ background: 'rgba(37, 99, 235, 0.2)', border: '1px solid rgba(37, 99, 235, 0.4)', color: '#60a5fa' }}>
+                    <div style={{ ...styles.qrBadge, background: 'rgba(37, 99, 235, 0.2)', border: '1px solid rgba(37, 99, 235, 0.4)', color: '#60a5fa' }}>
                       STATIC OTP CODE
                     </div>
 

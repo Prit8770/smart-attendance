@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
-const { dbQuery } = require('../db');
+const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
 
 // Helper to generate a random 8-character alphanumeric password
@@ -29,8 +29,9 @@ router.get('/', authenticateJWT, async (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
   try {
-    const students = await dbQuery.all('SELECT id, enrollment_no, name, course, semester, mobile, username, plain_password FROM students');
-    res.json(students);
+    const { data: students, error } = await supabase.from('students').select('id, enrollment_no, name, course, semester, mobile, username, plain_password');
+    if (error) throw error;
+    res.json(students || []);
   } catch (err) {
     console.error('Error fetching students:', err);
     res.status(500).json({ error: 'Failed to fetch students' });
@@ -52,20 +53,20 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
 
   try {
     // Check if enrollment number or username already exists
-    const existing = await dbQuery.get(
-      'SELECT id FROM students WHERE enrollment_no = ? OR username = ?',
-      [enrollment_no, username]
-    );
+    const { data: existing } = await supabase.from('students')
+      .select('id')
+      .or(`enrollment_no.eq.${enrollment_no},username.eq.${username}`)
+      .maybeSingle();
 
     if (existing) {
-      return res.status(400).json({ error: 'Student with this enrollment number already exists' });
+      return res.status(400).json({ error: 'Student with this enrollment number or username already exists' });
     }
 
-    const result = await dbQuery.run(
-      `INSERT INTO students (enrollment_no, name, course, semester, mobile, username, password, plain_password) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [enrollment_no, name, course, semester, mobile, username, hashedPassword, rawPassword]
-    );
+    const { data: result, error } = await supabase.from('students').insert([{
+      enrollment_no, name, course, semester, mobile, username, password: hashedPassword, plain_password: rawPassword
+    }]).select().single();
+    
+    if (error) throw error;
 
     res.status(201).json({
       message: 'Student added successfully',
@@ -97,31 +98,28 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   }
 
   try {
-    const student = await dbQuery.get('SELECT * FROM students WHERE id = ?', [id]);
+    const { data: student } = await supabase.from('students').select('*').eq('id', id).maybeSingle();
     if (!student) {
       return res.status(404).json({ error: 'Student not found' });
     }
 
-    let query = `UPDATE students SET name = ?, course = ?, semester = ?, mobile = ?`;
-    let params = [name, course, semester, mobile];
+    let updateObj = { name, course, semester, mobile };
     let newPassword = null;
 
     if (password && password.trim() !== '') {
       newPassword = password.trim();
       const hashedPassword = bcrypt.hashSync(newPassword, 10);
-      query += `, password = ?, plain_password = ?`;
-      params.push(hashedPassword, newPassword);
+      updateObj.password = hashedPassword;
+      updateObj.plain_password = newPassword;
     } else if (resetPassword) {
       newPassword = generatePassword();
       const hashedPassword = bcrypt.hashSync(newPassword, 10);
-      query += `, password = ?, plain_password = ?`;
-      params.push(hashedPassword, newPassword);
+      updateObj.password = hashedPassword;
+      updateObj.plain_password = newPassword;
     }
 
-    query += ` WHERE id = ?`;
-    params.push(id);
-
-    await dbQuery.run(query, params);
+    const { error } = await supabase.from('students').update(updateObj).eq('id', id);
+    if (error) throw error;
 
     res.json({
       message: 'Student updated successfully',
@@ -166,7 +164,7 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
     const username = enrollment_no.toString().toLowerCase().trim();
 
     try {
-      const existing = await dbQuery.get('SELECT id FROM students WHERE enrollment_no = ?', [enrollment_no]);
+      const { data: existing } = await supabase.from('students').select('id').eq('enrollment_no', enrollment_no).maybeSingle();
       if (existing) {
         results.errors.push(`Row ${i + 1}: Enrollment No ${enrollment_no} already exists.`);
         continue;
@@ -175,20 +173,18 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
       const rawPassword = (password && password.toString().trim() !== '') ? password.toString().trim() : generatePassword();
       const hashedPassword = bcrypt.hashSync(rawPassword, 10);
 
-      await dbQuery.run(
-        `INSERT INTO students (enrollment_no, name, course, semester, mobile, username, password, plain_password) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          enrollment_no.toString().trim(),
-          name.trim(),
-          course.trim(),
-          semester.toString().trim(),
-          mobile.toString().trim(),
-          username,
-          hashedPassword,
-          rawPassword
-        ]
-      );
+      const { error } = await supabase.from('students').insert([{
+        enrollment_no: enrollment_no.toString().trim(),
+        name: name.trim(),
+        course: course.trim(),
+        semester: semester.toString().trim(),
+        mobile: mobile.toString().trim(),
+        username,
+        password: hashedPassword,
+        plain_password: rawPassword
+      }]);
+      
+      if (error) throw error;
 
       results.successCount++;
     } catch (err) {
@@ -205,14 +201,15 @@ router.delete('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
 
   try {
-    const student = await dbQuery.get('SELECT id FROM students WHERE id = ?', [id]);
+    const { data: student } = await supabase.from('students').select('id').eq('id', id).maybeSingle();
     if (!student) {
       return res.status(404).json({ error: 'Student not found' });
     }
 
     // Optional: Delete this student's attendance records first to avoid orphan rows
-    await dbQuery.run('DELETE FROM attendance WHERE student_id = ?', [id]);
-    await dbQuery.run('DELETE FROM students WHERE id = ?', [id]);
+    await supabase.from('attendance').delete().eq('student_id', id);
+    const { error } = await supabase.from('students').delete().eq('id', id);
+    if (error) throw error;
 
     res.json({ message: 'Student and their attendance history deleted successfully' });
   } catch (err) {

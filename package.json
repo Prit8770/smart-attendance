@@ -1,0 +1,13 @@
+{
+  "name": "smart-attendance-system",
+  "version": "1.0.0",
+  "description": "Full Stack Smart Attendance System with Supabase",
+  "scripts": {
+    "start": "node backend/server.js",
+    "build": "npm install --prefix backend && npm install --prefix frontend && npm run build --prefix frontend",
+    "dev": "node backend/server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { dbQuery } = require('../db');
+const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
 
 // Middleware to restrict to admins or faculty
@@ -25,17 +25,20 @@ function getLocalDateString() {
 router.get('/today', authenticateJWT, requireAdmin, async (req, res) => {
   const today = getLocalDateString();
   try {
-    const otps = await dbQuery.all(
-      'SELECT id, otp, generated_time, expire_time, date FROM otp WHERE date = ? ORDER BY id DESC',
-      [today]
-    );
+    const { data: otps, error } = await supabase.from('otp')
+      .select('id, otp, generated_time, expire_time, date')
+      .eq('date', today)
+      .order('id', { ascending: false });
 
-    const remaining = Math.max(0, 5 - otps.length);
+    if (error) throw error;
+    
+    const safeOtps = otps || [];
+    const remaining = Math.max(0, 5 - safeOtps.length);
 
     res.json({
-      otps,
+      otps: safeOtps,
       remaining,
-      totalToday: otps.length
+      totalToday: safeOtps.length
     });
   } catch (err) {
     console.error('Error fetching OTP history:', err);
@@ -47,7 +50,11 @@ router.get('/today', authenticateJWT, requireAdmin, async (req, res) => {
 router.get('/active', authenticateJWT, async (req, res) => {
   try {
     // Find the latest generated OTP
-    const latestOtp = await dbQuery.get('SELECT * FROM otp ORDER BY id DESC LIMIT 1');
+    const { data: latestOtp } = await supabase.from('otp')
+      .select('*')
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
     if (!latestOtp) {
       return res.json({ active: false, otp: null });
@@ -80,8 +87,9 @@ router.post('/generate', authenticateJWT, requireAdmin, async (req, res) => {
 
   try {
     // 1. Check daily limit (Max 5 OTPs per day)
-    const otpsToday = await dbQuery.all('SELECT id FROM otp WHERE date = ?', [today]);
-    if (otpsToday.length >= 5) {
+    const { data: otpsToday } = await supabase.from('otp').select('id').eq('date', today);
+    const safeOtpsToday = otpsToday || [];
+    if (safeOtpsToday.length >= 5) {
       return res.status(400).json({ error: 'Maximum limit of 5 OTPs per day has been reached.' });
     }
 
@@ -93,10 +101,16 @@ router.post('/generate', authenticateJWT, requireAdmin, async (req, res) => {
     const generatedTime = now.toISOString();
     const expireTime = new Date(now.getTime() + 2 * 60 * 1000).toISOString();
 
-    const result = await dbQuery.run(
-      'INSERT INTO otp (otp, generated_time, expire_time, generated_by, date, semester) VALUES (?, ?, ?, ?, ?, ?)',
-      [otpCode, generatedTime, expireTime, req.user.id, today, semester ? parseInt(semester) : null]
-    );
+    const { data: result, error } = await supabase.from('otp').insert([{
+      otp: otpCode,
+      generated_time: generatedTime,
+      expire_time: expireTime,
+      generated_by: req.user.id,
+      date: today,
+      semester: semester ? parseInt(semester) : null
+    }]).select().single();
+    
+    if (error) throw error;
 
     res.status(201).json({
       message: 'OTP generated successfully',

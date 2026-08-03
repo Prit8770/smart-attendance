@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
-const { dbQuery } = require('../db');
+const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
 
 // Helper to generate a random 8-character alphanumeric password
@@ -26,8 +26,9 @@ const requireAdmin = (req, res, next) => {
 // GET all faculty
 router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
   try {
-    const faculty = await dbQuery.all('SELECT id, employee_no, name, department, mobile, username, plain_password FROM faculty');
-    res.json(faculty);
+    const { data: faculty, error } = await supabase.from('faculty').select('id, employee_no, name, department, mobile, username, plain_password');
+    if (error) throw error;
+    res.json(faculty || []);
   } catch (err) {
     console.error('Error fetching faculty:', err);
     res.status(500).json({ error: 'Failed to fetch faculty members' });
@@ -49,20 +50,20 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
 
   try {
     // Check if employee number or username already exists
-    const existing = await dbQuery.get(
-      'SELECT id FROM faculty WHERE employee_no = ? OR username = ?',
-      [employee_no, username]
-    );
+    const { data: existing } = await supabase.from('faculty')
+      .select('id')
+      .or(`employee_no.eq.${employee_no},username.eq.${username}`)
+      .maybeSingle();
 
     if (existing) {
-      return res.status(400).json({ error: 'Faculty with this Employee ID already exists' });
+      return res.status(400).json({ error: 'Faculty with this Employee ID or username already exists' });
     }
 
-    const result = await dbQuery.run(
-      `INSERT INTO faculty (employee_no, name, department, mobile, username, password, plain_password) 
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [employee_no, name, department, mobile, username, hashedPassword, rawPassword]
-    );
+    const { data: result, error } = await supabase.from('faculty').insert([{
+      employee_no, name, department, mobile, username, password: hashedPassword, plain_password: rawPassword
+    }]).select().single();
+    
+    if (error) throw error;
 
     res.status(201).json({
       message: 'Faculty added successfully',
@@ -93,31 +94,28 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   }
 
   try {
-    const faculty = await dbQuery.get('SELECT * FROM faculty WHERE id = ?', [id]);
+    const { data: faculty } = await supabase.from('faculty').select('*').eq('id', id).maybeSingle();
     if (!faculty) {
       return res.status(404).json({ error: 'Faculty member not found' });
     }
 
-    let query = `UPDATE faculty SET name = ?, department = ?, mobile = ?`;
-    let params = [name, department, mobile];
+    let updateObj = { name, department, mobile };
     let newPassword = null;
 
     if (password && password.trim() !== '') {
       newPassword = password.trim();
       const hashedPassword = bcrypt.hashSync(newPassword, 10);
-      query += `, password = ?, plain_password = ?`;
-      params.push(hashedPassword, newPassword);
+      updateObj.password = hashedPassword;
+      updateObj.plain_password = newPassword;
     } else if (resetPassword) {
       newPassword = generatePassword();
       const hashedPassword = bcrypt.hashSync(newPassword, 10);
-      query += `, password = ?, plain_password = ?`;
-      params.push(hashedPassword, newPassword);
+      updateObj.password = hashedPassword;
+      updateObj.plain_password = newPassword;
     }
 
-    query += ` WHERE id = ?`;
-    params.push(id);
-
-    await dbQuery.run(query, params);
+    const { error } = await supabase.from('faculty').update(updateObj).eq('id', id);
+    if (error) throw error;
 
     res.json({
       message: 'Faculty updated successfully',
@@ -141,12 +139,13 @@ router.delete('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
 
   try {
-    const faculty = await dbQuery.get('SELECT id FROM faculty WHERE id = ?', [id]);
+    const { data: faculty } = await supabase.from('faculty').select('id').eq('id', id).maybeSingle();
     if (!faculty) {
       return res.status(404).json({ error: 'Faculty member not found' });
     }
 
-    await dbQuery.run('DELETE FROM faculty WHERE id = ?', [id]);
+    const { error } = await supabase.from('faculty').delete().eq('id', id);
+    if (error) throw error;
 
     res.json({ message: 'Faculty member deleted successfully' });
   } catch (err) {
