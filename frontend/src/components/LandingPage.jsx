@@ -21,12 +21,12 @@ const LandingPage = ({ onGetStarted }) => {
 
   return (
     <div style={styles.container}>
-      {/* Background Decorators */}
-      <div style={styles.abstractBlob1}></div>
-      <div style={styles.abstractBlob2}></div>
+      {/* Background Decorators with Morphing Animations */}
+      <div style={styles.abstractBlob1} className="animate-orb-pulse"></div>
+      <div style={styles.abstractBlob2} className="animate-orb-pulse delay-2"></div>
 
       {/* Navbar/Header */}
-      <header style={styles.header}>
+      <header style={styles.header} className="animate-fade-in-up">
         <div style={styles.logoContainer}>
           <div style={styles.logoIcon}>
             <img src="/logo.png" alt="LJCCA" style={{ width: '48px', height: '48px', objectFit: 'contain' }} />
@@ -57,9 +57,9 @@ const LandingPage = ({ onGetStarted }) => {
         <div className="hero-layout" style={styles.heroLayoutBase}>
           
           {/* Left Text Content */}
-          <div style={styles.heroTextContent}>
-            <div style={styles.badge} className="glass-panel">
-              <Zap size={16} color="var(--accent)" />
+          <div style={styles.heroTextContent} className="animate-fade-in-up delay-1">
+            <div style={styles.badge} className="glass-panel shimmer-wrapper">
+              <Zap size={16} color="var(--accent)" className="spin-slow" />
               <span>Next-Gen College Attendance System</span>
             </div>
             
@@ -85,11 +85,16 @@ const LandingPage = ({ onGetStarted }) => {
             </div>
           </div>
 
-          {/* Right Visual Element */}
-          <div style={styles.heroVisualContent}>
-            <div className="glass-panel animate-float" style={styles.floatingCard1}>
+          {/* Right Visual Element with Floating Cards & Live Animations */}
+          <div style={styles.heroVisualContent} className="animate-fade-in-up delay-2">
+            <div className="glass-panel animate-float shimmer-wrapper" style={styles.floatingCard1}>
               <div style={styles.cardMiniHeader}>
-                <Smartphone size={16} color="var(--primary)"/> Active Session
+                <Smartphone size={16} color="var(--primary)"/> 
+                <span>Active Session</span>
+                <span className="live-ping-container" style={{ marginLeft: 'auto' }}>
+                  <span className="live-ping-ring"></span>
+                  <span className="live-ping-dot"></span>
+                </span>
               </div>
               <div style={styles.cardMiniTitle}>Operating Systems - CS301</div>
               <div style={styles.cardMiniData}>
@@ -98,9 +103,14 @@ const LandingPage = ({ onGetStarted }) => {
               </div>
             </div>
 
-            <div className="glass-panel animate-float-delayed" style={styles.floatingCard2}>
+            <div className="glass-panel animate-float-delayed shimmer-wrapper" style={styles.floatingCard2}>
               <div style={styles.cardMiniHeader}>
-                <MapPin size={16} color="var(--success)"/> GPS Verification
+                <MapPin size={16} color="var(--success)"/> 
+                <span>GPS Verification</span>
+                <span className="live-ping-container" style={{ marginLeft: 'auto' }}>
+                  <span className="live-ping-ring" style={{ backgroundColor: '#10b981' }}></span>
+                  <span className="live-ping-dot" style={{ backgroundColor: '#10b981' }}></span>
+                </span>
               </div>
               <div style={styles.cardMiniTitle}>Location Locked</div>
               <div style={styles.cardMiniData}>
@@ -108,31 +118,42 @@ const LandingPage = ({ onGetStarted }) => {
                 <span style={{...styles.dataValue, color: 'var(--success)'}}>12m (In Range)</span>
               </div>
             </div>
+
+            <div className="glass-panel animate-float-reverse shimmer-wrapper" style={styles.floatingCard3}>
+              <div style={styles.cardMiniHeader}>
+                <ShieldCheck size={16} color="var(--accent)"/> Dynamic OTP
+              </div>
+              <div style={styles.cardMiniTitle}>3-Way Verification</div>
+              <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                <span style={styles.miniBadge}>Live Scan</span>
+                <span style={styles.miniBadgeSuccess}>Verified</span>
+              </div>
+            </div>
             
-            <div style={styles.glowingOrb}></div>
+            <div style={styles.glowingOrb} className="animate-orb-pulse"></div>
           </div>
         </div>
 
         {/* Stats Banner */}
-        <div className="glass-panel" style={styles.statsBanner}>
-          <div style={styles.statBox}>
-            <div style={styles.statNum}>100%</div>
+        <div className="glass-panel shimmer-wrapper animate-fade-in-up delay-3" style={styles.statsBanner}>
+          <div style={styles.statBox} className="stat-box-hover">
+            <div style={styles.statNum} className="stat-num-glow">100%</div>
             <div style={styles.statDesc}>Proxy Prevention</div>
           </div>
           <div style={styles.statDivider}></div>
-          <div style={styles.statBox}>
-            <div style={styles.statNum}>&lt; 5s</div>
+          <div style={styles.statBox} className="stat-box-hover">
+            <div style={styles.statNum} className="stat-num-glow">&lt; 5s</div>
             <div style={styles.statDesc}>Average Scan Time</div>
           </div>
           <div style={styles.statDivider}></div>
-          <div style={styles.statBox}>
-            <div style={styles.statNum}>Zero</div>
+          <div style={styles.statBox} className="stat-box-hover">
+            <div style={styles.statNum} className="stat-num-glow">Zero</div>
             <div style={styles.statDesc}>Hardware Cost</div>
           </div>
         </div>
 
         {/* How it Works Section */}
-        <section id="how-it-works" style={styles.howItWorksSection}>
+        <section id="how-it-works" style={styles.howItWorksSection} className="animate-fade-in-up delay-4">
           <div style={styles.sectionHeader}>
             <h3 style={styles.sectionTitle}>3 Simple Steps</h3>
             <p style={styles.sectionSubtitle}>No biometric scanners or ID cards required. Just your smartphone.</p>
@@ -140,19 +161,19 @@ const LandingPage = ({ onGetStarted }) => {
           
           <div className="steps-grid" style={styles.stepsGridBase}>
             <div style={styles.stepItem}>
-              <div style={styles.stepIconWrapper}>1</div>
+              <div style={styles.stepIconWrapper} className="step-icon-glow">1</div>
               <h4 style={styles.stepTitle}>Faculty Starts Session</h4>
               <p style={styles.stepDesc}>Instructor generates a live QR code and dynamic OTP from their dashboard.</p>
             </div>
             <div style={styles.stepConnector}></div>
             <div style={styles.stepItem}>
-              <div style={styles.stepIconWrapper}>2</div>
+              <div style={styles.stepIconWrapper} className="step-icon-glow" style={{ animationDelay: '1s' }}>2</div>
               <h4 style={styles.stepTitle}>Student Scans QR</h4>
               <p style={styles.stepDesc}>Students scan the code or enter the OTP via the student portal on their phones.</p>
             </div>
             <div style={styles.stepConnector}></div>
             <div style={styles.stepItem}>
-              <div style={styles.stepIconWrapper}>3</div>
+              <div style={styles.stepIconWrapper} className="step-icon-glow" style={{ animationDelay: '2s' }}>3</div>
               <h4 style={styles.stepTitle}>GPS Validates</h4>
               <p style={styles.stepDesc}>The system cross-checks the student's location. If they are in class, attendance is marked.</p>
             </div>
@@ -164,24 +185,24 @@ const LandingPage = ({ onGetStarted }) => {
           <h3 style={styles.sectionTitle}>Why SmartAttend?</h3>
         </div>
         <div style={styles.featuresGrid}>
-          <div className="glass-panel feature-card-hover" style={styles.featureCard}>
-            <div style={{...styles.iconWrapper, background: 'rgba(147, 51, 234, 0.15)', color: 'var(--primary)'}}>
+          <div className="glass-panel feature-card-hover shimmer-wrapper" style={styles.featureCard}>
+            <div style={{...styles.iconWrapper, background: 'rgba(147, 51, 234, 0.15)', color: 'var(--primary)'}} className="feature-icon-wrapper">
               <MapPin size={28} />
             </div>
             <h3 style={styles.featureTitle}>Geofencing Validation</h3>
             <p style={styles.featureDesc}>Ensures students are physically present in the classroom radius before marking attendance. Uses high-accuracy browser geolocation APIs.</p>
           </div>
 
-          <div className="glass-panel feature-card-hover" style={styles.featureCard}>
-            <div style={{...styles.iconWrapper, background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success)'}}>
+          <div className="glass-panel feature-card-hover shimmer-wrapper" style={styles.featureCard}>
+            <div style={{...styles.iconWrapper, background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success)'}} className="feature-icon-wrapper">
               <Lock size={28} />
             </div>
             <h3 style={styles.featureTitle}>Dynamic Rolling OTPs</h3>
             <p style={styles.featureDesc}>Faculty generates a time-sensitive OTP that expires and refreshes quickly, preventing attendance fraud from remote locations.</p>
           </div>
 
-          <div className="glass-panel feature-card-hover" style={styles.featureCard}>
-            <div style={{...styles.iconWrapper, background: 'rgba(14, 165, 233, 0.15)', color: 'var(--accent)'}}>
+          <div className="glass-panel feature-card-hover shimmer-wrapper" style={styles.featureCard}>
+            <div style={{...styles.iconWrapper, background: 'rgba(14, 165, 233, 0.15)', color: 'var(--accent)'}} className="feature-icon-wrapper">
               <TrendingUp size={28} />
             </div>
             <h3 style={styles.featureTitle}>Real-time Analytics</h3>
@@ -190,7 +211,7 @@ const LandingPage = ({ onGetStarted }) => {
         </div>
         
         {/* Bottom CTA */}
-        <div className="glass-panel" style={styles.ctaBanner}>
+        <div className="glass-panel shimmer-wrapper" style={styles.ctaBanner}>
           <div style={styles.ctaContent}>
             <h3 style={styles.ctaTitle}>Ready to modernize your classroom?</h3>
             <p style={styles.ctaDesc}>Join the portal now and experience seamless attendance tracking.</p>
@@ -200,6 +221,7 @@ const LandingPage = ({ onGetStarted }) => {
           </button>
         </div>
       </main>
+
       
       {/* Footer */}
       <footer style={styles.footer}>
@@ -376,6 +398,34 @@ const styles = {
     background: 'var(--panel-bg)',
     border: '1px solid rgba(16, 185, 129, 0.3)',
     boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+  },
+  floatingCard3: {
+    position: 'absolute',
+    top: '48%',
+    left: '52%',
+    transform: 'translate(-50%, -50%)',
+    width: '220px',
+    padding: '16px 20px',
+    zIndex: 4,
+    background: 'var(--panel-bg)',
+    border: '1px solid rgba(14, 165, 233, 0.4)',
+    boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+  },
+  miniBadge: {
+    padding: '3px 8px',
+    borderRadius: '6px',
+    fontSize: '0.75rem',
+    background: 'rgba(14, 165, 233, 0.15)',
+    color: 'var(--accent)',
+    fontWeight: '600'
+  },
+  miniBadgeSuccess: {
+    padding: '3px 8px',
+    borderRadius: '6px',
+    fontSize: '0.75rem',
+    background: 'rgba(16, 185, 129, 0.15)',
+    color: 'var(--success)',
+    fontWeight: '600'
   },
   cardMiniHeader: {
     display: 'flex',

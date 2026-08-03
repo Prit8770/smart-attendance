@@ -12,9 +12,9 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
   const a =
     Math.sin(deltaPhi / 2) * Math.sin(deltaPhi / 2) +
     Math.cos(phi1) *
-      Math.cos(phi2) *
-      Math.sin(deltaLambda / 2) *
-      Math.sin(deltaLambda / 2);
+    Math.cos(phi2) *
+    Math.sin(deltaLambda / 2) *
+    Math.sin(deltaLambda / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
   return R * c; // Distance in meters
@@ -75,7 +75,7 @@ async function runTests() {
     console.log('\nTesting OTP Generation Daily Limits...');
     // Create test OTPs in the DB to test the daily maximum limit
     const today = new Date().toISOString().split('T')[0];
-    
+
     // Clear any previous test OTPs for clean state
     await dbQuery.run('DELETE FROM otp WHERE date = ?', [today]);
 
@@ -238,7 +238,7 @@ async function runTests() {
     console.log('\n=================================================');
     console.log(` Verification Completed: Passed ${passedTestsCount}/${totalTestsCount} tests.`);
     console.log('=================================================');
-    
+
     // Exit with appropriate status
     process.exit(passedTestsCount === totalTestsCount ? 0 : 1);
 
