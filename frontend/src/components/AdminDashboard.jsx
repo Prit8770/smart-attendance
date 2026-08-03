@@ -1251,8 +1251,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             <span style={styles.welcomeText}>Welcome, <strong style={{ color: 'var(--primary)', fontWeight: '700' }}>{user?.name || 'Admin'}</strong></span>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{user?.email || 'Administrator'}</span>
           </div>
-          <button className="btn btn-secondary" onClick={toggleTheme} style={{ padding: '8px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Toggle Light/Dark Mode">
-            {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+          <button className="btn btn-secondary icon-btn-circle theme-toggle-btn" onClick={toggleTheme} title="Toggle Light/Dark Mode">
+            {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
           </button>
           <button className="btn btn-secondary" onClick={onLogout} style={styles.logoutBtn}>
             <LogOut size={16} />

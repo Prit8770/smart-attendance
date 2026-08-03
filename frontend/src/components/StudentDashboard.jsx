@@ -555,8 +555,8 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
         </div>
         <div style={styles.headerActions}>
           <span style={styles.welcomeText}>Welcome, <strong>{user.name}</strong></span>
-          <button className="btn btn-secondary" onClick={toggleTheme} style={{ padding: '8px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Toggle Light/Dark Mode">
-            {theme === 'light' ? <Moon size={16} /> : <Sun size={16} />}
+          <button className="btn btn-secondary icon-btn-circle theme-toggle-btn" onClick={toggleTheme} title="Toggle Light/Dark Mode">
+            {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
           </button>
           <button className="btn btn-secondary" onClick={onLogout} style={styles.logoutBtn}>
             <LogOut size={16} />

@@ -966,9 +966,25 @@ body {
     font-size: 1.4rem !important;
   }
 
-  .btn {
+  .btn:not(.icon-btn-circle):not(.theme-toggle-btn) {
     width: 100% !important;
     justify-content: center !important;
+  }
+
+  .icon-btn-circle,
+  .theme-toggle-btn {
+    width: 40px !important;
+    height: 40px !important;
+    min-width: 40px !important;
+    max-width: 40px !important;
+    min-height: 40px !important;
+    max-height: 40px !important;
+    border-radius: 50% !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-shrink: 0 !important;
   }
 
   div[style*="headerActions"] {

@@ -687,10 +687,10 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
         <div style={styles.navRight}>
           <button
             onClick={toggleTheme}
-            style={styles.iconButton}
+            className="btn btn-secondary icon-btn-circle theme-toggle-btn"
             title={theme === 'dark' ? "Switch to Light Mode" : "Switch to Dark Mode"}
           >
-            {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </button>
           <button onClick={onLogout} style={styles.logoutBtn} className="btn">
             <LogOut size={16} />

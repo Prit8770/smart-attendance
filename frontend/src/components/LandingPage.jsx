@@ -362,12 +362,7 @@ const styles = {
     gap: '6px'
   },
   heroVisualContent: {
-    position: 'relative',
-    height: '400px',
-    width: '100%',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center'
+    width: '100%'
   },
   glowingOrb: {
     position: 'absolute',
@@ -378,35 +373,16 @@ const styles = {
     zIndex: 0
   },
   floatingCard1: {
-    position: 'absolute',
-    top: '15%',
-    left: '10%',
-    width: '240px',
-    padding: '20px',
-    zIndex: 2,
     background: 'var(--panel-bg)',
     border: '1px solid rgba(147, 51, 234, 0.3)',
     boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
   },
   floatingCard2: {
-    position: 'absolute',
-    bottom: '15%',
-    right: '5%',
-    width: '260px',
-    padding: '20px',
-    zIndex: 3,
     background: 'var(--panel-bg)',
     border: '1px solid rgba(16, 185, 129, 0.3)',
     boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
   },
   floatingCard3: {
-    position: 'absolute',
-    top: '48%',
-    left: '52%',
-    transform: 'translate(-50%, -50%)',
-    width: '220px',
-    padding: '16px 20px',
-    zIndex: 4,
     background: 'var(--panel-bg)',
     border: '1px solid rgba(14, 165, 233, 0.4)',
     boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
