@@ -879,8 +879,6 @@ const styles = {
     boxShadow: '0 0 10px var(--primary-glow)'
   },
   profileDetails: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, 1fr)',
     gap: '16px',
     width: '100%',
     boxSizing: 'border-box'

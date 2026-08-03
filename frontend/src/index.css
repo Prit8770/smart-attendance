@@ -877,6 +877,45 @@ body {
     max-width: 100% !important;
   }
 
+/* Student Profile Card Layout (Desktop default) */
+.student-profile-details {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+  /* Hero Visual Element Mobile Stack */
+  .hero-visual-content {
+    height: auto !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 16px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    position: relative !important;
+    margin-top: 20px !important;
+    padding: 0 !important;
+  }
+
+  .hero-floating-card,
+  .hero-card-1,
+  .hero-card-2,
+  .hero-card-3 {
+    position: relative !important;
+    top: auto !important;
+    bottom: auto !important;
+    left: auto !important;
+    right: auto !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+  }
+
   /* Student Profile Card Responsive Layout */
   .student-profile-details {
     display: grid !important;

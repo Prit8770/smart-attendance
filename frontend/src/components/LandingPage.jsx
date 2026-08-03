@@ -86,8 +86,8 @@ const LandingPage = ({ onGetStarted }) => {
           </div>
 
           {/* Right Visual Element with Floating Cards & Live Animations */}
-          <div style={styles.heroVisualContent} className="animate-fade-in-up delay-2">
-            <div className="glass-panel animate-float shimmer-wrapper" style={styles.floatingCard1}>
+          <div style={styles.heroVisualContent} className="hero-visual-content animate-fade-in-up delay-2">
+            <div className="glass-panel animate-float shimmer-wrapper hero-floating-card hero-card-1" style={styles.floatingCard1}>
               <div style={styles.cardMiniHeader}>
                 <Smartphone size={16} color="var(--primary)"/> 
                 <span>Active Session</span>
@@ -103,7 +103,7 @@ const LandingPage = ({ onGetStarted }) => {
               </div>
             </div>
 
-            <div className="glass-panel animate-float-delayed shimmer-wrapper" style={styles.floatingCard2}>
+            <div className="glass-panel animate-float-delayed shimmer-wrapper hero-floating-card hero-card-2" style={styles.floatingCard2}>
               <div style={styles.cardMiniHeader}>
                 <MapPin size={16} color="var(--success)"/> 
                 <span>GPS Verification</span>
@@ -119,7 +119,7 @@ const LandingPage = ({ onGetStarted }) => {
               </div>
             </div>
 
-            <div className="glass-panel animate-float-reverse shimmer-wrapper" style={styles.floatingCard3}>
+            <div className="glass-panel animate-float-reverse shimmer-wrapper hero-floating-card hero-card-3" style={styles.floatingCard3}>
               <div style={styles.cardMiniHeader}>
                 <ShieldCheck size={16} color="var(--accent)"/> Dynamic OTP
               </div>
