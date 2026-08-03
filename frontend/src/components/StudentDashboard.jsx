@@ -216,6 +216,13 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
 
     mapRef.current = map;
 
+    // Ensure Leaflet map correctly calculates width and mobile container size
+    setTimeout(() => {
+      if (mapRef.current) {
+        mapRef.current.invalidateSize();
+      }
+    }, 300);
+
     window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© OpenStreetMap contributors'
     }).addTo(map);
@@ -271,7 +278,12 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           [collegeLoc.latitude, collegeLoc.longitude],
           [studentLat, studentLon]
         ]);
-        mapRef.current.fitBounds(bounds, { padding: [40, 40] });
+        mapRef.current.fitBounds(bounds, { padding: [15, 15] });
+        setTimeout(() => {
+          if (mapRef.current) {
+            mapRef.current.invalidateSize();
+          }
+        }, 200);
       } catch (e) {}
     }
   }, [location, collegeLoc]);
@@ -431,7 +443,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     const strokeDashoffset = circumference - (pct / 100) * circumference;
 
     return (
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: '160px' }}>
+      <div className="student-radial-gauge" style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: '160px', flexWrap: 'wrap', boxSizing: 'border-box' }}>
         <div style={{ position: 'relative', width: '90px', height: '90px' }}>
           <svg height="90" width="90" style={{ transform: 'rotate(-90deg)' }}>
             <circle
@@ -509,7 +521,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     }
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, minWidth: '280px' }}>
+      <div className="student-trend-graph" style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, minWidth: '280px', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
           <span>Attendance Trend</span>
           <span>Lectures (OTPs) →</span>
@@ -546,22 +558,24 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   };
 
   return (
-    <div style={styles.container}>
+    <div style={styles.container} className="student-portal-container">
       {/* Top Header */}
-      <header className="glass-panel" style={styles.header}>
+      <header className="glass-panel student-portal-header" style={styles.header}>
         <div style={styles.logoGroup}>
           <Smartphone size={24} color="#9333ea" />
-          <h1 style={styles.headerTitle}>Student Portal</h1>
+          <h1 style={styles.headerTitle} className="student-portal-title">Student Portal</h1>
         </div>
-        <div style={styles.headerActions}>
-          <span style={styles.welcomeText}>Welcome, <strong>{user.name}</strong></span>
-          <button className="btn btn-secondary icon-btn-circle theme-toggle-btn" onClick={toggleTheme} title="Toggle Light/Dark Mode">
-            {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
-          </button>
-          <button className="btn btn-secondary" onClick={onLogout} style={styles.logoutBtn}>
-            <LogOut size={16} />
-            Logout
-          </button>
+        <div style={styles.headerActions} className="student-portal-header-actions">
+          <span style={styles.welcomeText} className="student-welcome-text">Welcome, <strong>{user.name}</strong></span>
+          <div className="student-header-buttons" style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <button className="btn btn-secondary icon-btn-circle theme-toggle-btn" onClick={toggleTheme} title="Toggle Light/Dark Mode">
+              {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
+            </button>
+            <button className="btn btn-secondary student-logout-btn" onClick={onLogout} style={styles.logoutBtn}>
+              <LogOut size={16} />
+              Logout
+            </button>
+          </div>
         </div>
       </header>
 
@@ -648,11 +662,11 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
 
               {/* GPS Field */}
               <div style={styles.formGroup}>
-                <div className="mobile-stack-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="mobile-stack-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
                   <label style={styles.formLabel}>GPS Location Verification</label>
                   <button
                     type="button"
-                    className="btn btn-secondary"
+                    className="btn btn-secondary gps-refresh-btn"
                     onClick={handleGetLocation}
                     disabled={locLoading}
                     style={{ padding: '4px 8px', fontSize: '0.75rem', gap: '4px' }}
@@ -702,11 +716,12 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
 
               {/* Leaflet Live Map Display */}
               {collegeLoc && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
+                <div className="student-map-wrapper" style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px', width: '100%', maxWidth: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
                   <label style={styles.formLabel}>Campus Verification Map (Read-Only)</label>
                   <div 
                     ref={mapContainerRef} 
-                    style={{ width: '100%', height: '220px', minHeight: '220px', borderRadius: '10px', zIndex: 0 }}
+                    className="student-verification-map"
+                    style={{ width: '100%', height: '220px', minHeight: '220px', borderRadius: '10px', zIndex: 0, boxSizing: 'border-box', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)' }}
                   >
                     {!window.L && <div style={{ textAlign: 'center', padding: '50px 0', color: 'var(--text-muted)' }}>Loading verification map...</div>}
                   </div>
@@ -719,25 +734,25 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
         {/* Right Side: History logs & Analytics */}
         <div style={styles.rightCol}>
           {/* Attendance Analytics Gauge and Graph */}
-          <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div className="glass-panel student-analytics-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
             <h2 style={styles.sectionTitle}>Attendance Analytics</h2>
             {trendLoading ? (
               <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>Loading analytics...</div>
             ) : (
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '24px', alignItems: 'center' }}>
+              <div className="student-analytics-flex" style={{ display: 'flex', flexWrap: 'wrap', gap: '24px', alignItems: 'center', width: '100%', boxSizing: 'border-box' }}>
                 {renderRadialGauge()}
                 {renderTrendGraph()}
               </div>
             )}
           </div>
 
-          <div className="glass-panel" style={styles.historyCard}>
+          <div className="glass-panel student-history-card" style={styles.historyCard}>
             <div className="mobile-stack-header" style={styles.historyHeader}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <History size={20} color="#9333ea" />
                 <h2 style={styles.sectionTitle}>Attendance History</h2>
               </div>
-              <button className="btn btn-secondary" onClick={fetchHistory} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
+              <button className="btn btn-secondary student-refresh-history-btn" onClick={fetchHistory} style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
                 Refresh
               </button>
             </div>

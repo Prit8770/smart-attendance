@@ -953,6 +953,114 @@ body {
     padding: 24px 16px !important;
     width: 94vw !important;
   }
+
+  /* =========================================
+     Student Portal Responsive & Mobile Friendly
+     ========================================= */
+  .student-portal-container {
+    padding: 12px 10px !important;
+    gap: 16px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    overflow-x: hidden !important;
+  }
+
+  .student-portal-header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+    padding: 14px 14px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .student-portal-header-actions {
+    width: 100% !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    flex-wrap: wrap !important;
+    gap: 10px !important;
+  }
+
+  .student-welcome-text {
+    font-size: 0.88rem !important;
+  }
+
+  .student-logout-btn {
+    width: auto !important;
+    padding: 8px 14px !important;
+    margin: 0 !important;
+    flex: 0 0 auto !important;
+    font-size: 0.85rem !important;
+  }
+
+  /* Reduced map width in mobile view so the entire map shows cleanly without clipping */
+  .student-map-wrapper {
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin-top: 14px !important;
+    box-sizing: border-box !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+  }
+
+  .student-verification-map,
+  .student-map-wrapper .leaflet-container {
+    width: 92% !important;
+    max-width: 92% !important;
+    height: 220px !important;
+    min-height: 220px !important;
+    margin: 0 auto !important;
+    border-radius: 12px !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+  }
+
+  .student-analytics-flex {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 20px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .student-radial-gauge {
+    width: 100% !important;
+    min-width: 0 !important;
+    justify-content: flex-start !important;
+    box-sizing: border-box !important;
+  }
+
+  .student-trend-graph {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+  }
+
+  .student-history-card,
+  .student-analytics-card {
+    padding: 16px 12px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+  }
+
+  .gps-refresh-btn,
+  .student-refresh-history-btn {
+    width: auto !important;
+    padding: 6px 12px !important;
+    font-size: 0.8rem !important;
+    flex: 0 0 auto !important;
+  }
 }
 
 @media (max-width: 480px) {
@@ -966,7 +1074,7 @@ body {
     font-size: 1.4rem !important;
   }
 
-  .btn:not(.icon-btn-circle):not(.theme-toggle-btn) {
+  .btn:not(.icon-btn-circle):not(.theme-toggle-btn):not(.student-logout-btn):not(.gps-refresh-btn):not(.student-refresh-history-btn) {
     width: 100% !important;
     justify-content: center !important;
   }
