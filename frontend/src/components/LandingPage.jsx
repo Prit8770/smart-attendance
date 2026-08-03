@@ -167,13 +167,13 @@ const LandingPage = ({ onGetStarted }) => {
             </div>
             <div style={styles.stepConnector}></div>
             <div style={styles.stepItem}>
-              <div style={styles.stepIconWrapper} className="step-icon-glow" style={{ animationDelay: '1s' }}>2</div>
+              <div style={{ ...styles.stepIconWrapper, animationDelay: '1s' }} className="step-icon-glow">2</div>
               <h4 style={styles.stepTitle}>Student Scans QR</h4>
               <p style={styles.stepDesc}>Students scan the code or enter the OTP via the student portal on their phones.</p>
             </div>
             <div style={styles.stepConnector}></div>
             <div style={styles.stepItem}>
-              <div style={styles.stepIconWrapper} className="step-icon-glow" style={{ animationDelay: '2s' }}>3</div>
+              <div style={{ ...styles.stepIconWrapper, animationDelay: '2s' }} className="step-icon-glow">3</div>
               <h4 style={styles.stepTitle}>GPS Validates</h4>
               <p style={styles.stepDesc}>The system cross-checks the student's location. If they are in class, attendance is marked.</p>
             </div>
