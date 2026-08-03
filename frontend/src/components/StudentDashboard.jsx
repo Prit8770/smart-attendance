@@ -640,17 +640,17 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                 {locError && <div style={styles.gpsError}>{locError}</div>}
 
                 {location && (
-                  <div style={styles.locationGrid}>
+                  <div className="student-location-grid">
                     <div style={styles.locationStat}>
                       <span>Latitude</span>
-                      <strong>{location.latitude.toFixed(6)}</strong>
+                      <strong style={{ wordBreak: 'break-all', fontSize: '0.85rem' }}>{location.latitude.toFixed(6)}</strong>
                     </div>
                     <div style={styles.locationStat}>
                       <span>Longitude</span>
-                      <strong>{location.longitude.toFixed(6)}</strong>
+                      <strong style={{ wordBreak: 'break-all', fontSize: '0.85rem' }}>{location.longitude.toFixed(6)}</strong>
                     </div>
                     {distance !== null && (
-                      <div style={{
+                      <div className="student-location-stat-full" style={{
                         ...styles.locationStat,
                         gridColumn: 'span 2',
                         background: distance <= (collegeLoc?.radius || 200.0) ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
@@ -661,10 +661,13 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                           color: distance <= (collegeLoc?.radius || 200.0) ? '#34d399' : '#f87171',
                           display: 'flex',
                           alignItems: 'center',
-                          gap: '6px'
+                          flexWrap: 'wrap',
+                          gap: '6px',
+                          wordBreak: 'break-word',
+                          fontSize: '0.88rem'
                         }}>
-                          <Navigation size={14} />
-                          {distance.toFixed(1)} meters ({distance <= (collegeLoc?.radius || 200.0) ? 'Within Range' : 'Out of Range'})
+                          <Navigation size={14} style={{ flexShrink: 0 }} />
+                          <span>{distance.toFixed(1)} meters ({distance <= (collegeLoc?.radius || 200.0) ? 'Within Range' : 'Out of Range'})</span>
                         </strong>
                       </div>
                     )}
@@ -767,20 +770,24 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
 
 const styles = {
   container: {
+    width: '100%',
     maxWidth: '1200px',
     margin: '0 auto',
-    padding: '24px 20px',
+    padding: '20px 14px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '24px'
+    gap: '20px',
+    boxSizing: 'border-box'
   },
   header: {
-    padding: '16px 24px',
+    padding: '16px 20px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     flexWrap: 'wrap',
-    gap: '12px'
+    gap: '12px',
+    width: '100%',
+    boxSizing: 'border-box'
   },
   logoGroup: {
     display: 'flex',
@@ -797,7 +804,8 @@ const styles = {
   headerActions: {
     display: 'flex',
     alignItems: 'center',
-    gap: '20px'
+    gap: '16px',
+    flexWrap: 'wrap'
   },
   welcomeText: {
     fontSize: '0.9rem',
@@ -808,19 +816,24 @@ const styles = {
     fontSize: '0.85rem'
   },
   // Layouts
-  // We'll update mainGrid with media queries. For React inline style, a desktop fallback:
   leftCol: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '24px'
+    gap: '20px',
+    width: '100%',
+    boxSizing: 'border-box'
   },
   rightCol: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '24px'
+    gap: '20px',
+    width: '100%',
+    boxSizing: 'border-box'
   },
   profileCard: {
-    padding: '20px'
+    padding: '20px',
+    width: '100%',
+    boxSizing: 'border-box'
   },
   profileHeader: {
     display: 'flex',

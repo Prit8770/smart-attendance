@@ -900,6 +900,28 @@ body {
   .dashboard-grid {
     grid-template-columns: 1fr !important;
   }
+
+  /* Student Dashboard Location Grid Fixes */
+  .student-location-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    margin-top: 12px;
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  @media (max-width: 520px) {
+    .student-location-grid {
+      grid-template-columns: 1fr !important;
+    }
+    .student-location-stat-full {
+      grid-column: span 1 !important;
+    }
+    .glass-panel {
+      padding: 16px 12px !important;
+    }
+  }
 }
 
 img[src="/logo.png"] {
