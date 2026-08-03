@@ -79,12 +79,18 @@
   padding: 0;
 }
 
+html, body, #root {
+  max-width: 100vw;
+  width: 100%;
+  overflow-x: hidden;
+  position: relative;
+}
+
 body {
   font-family: var(--font-sans);
   background: var(--bg-gradient);
   color: var(--text-primary);
   min-height: 100vh;
-  overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -770,12 +776,15 @@ body {
     overflow-x: auto !important;
     -webkit-overflow-scrolling: touch !important;
     width: 100% !important;
+    max-width: 100% !important;
+    display: block !important;
     border-radius: 12px;
+    box-sizing: border-box !important;
   }
 
   .custom-table,
   table {
-    min-width: 600px !important; /* Ensures table columns don't compress into unreadable text */
+    min-width: 500px !important; /* Ensures table columns don't compress into unreadable text */
   }
 
   .custom-table th,
@@ -807,6 +816,8 @@ body {
     padding: 8px 10px !important;
     gap: 8px !important;
     width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
     scrollbar-width: none !important;
   }
 
@@ -830,6 +841,9 @@ body {
     align-items: flex-start !important;
     gap: 12px !important;
     padding: 16px 14px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
   }
 
   header > div {
@@ -837,12 +851,6 @@ body {
     justify-content: space-between !important;
     flex-wrap: wrap !important;
     gap: 8px !important;
-  }
-
-  /* Search & Filter bar responsiveness in Admin / Faculty / Reports */
-  div[style*="display: 'flex'"][style*="gap"],
-  div[style*="display: flex"][style*="gap"] {
-    flex-wrap: wrap !important;
   }
 
   /* Input fields and selects full width on mobile */
@@ -864,8 +872,27 @@ body {
 
   /* Map container height for mobile */
   .leaflet-container {
-    height: 250px !important;
-    min-height: 250px !important;
+    height: 240px !important;
+    min-height: 240px !important;
+    max-width: 100% !important;
+  }
+
+  /* Student Dashboard Location Grid Fixes */
+  .student-location-grid {
+    grid-template-columns: 1fr !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .student-location-stat-full {
+    grid-column: span 1 !important;
+  }
+
+  .glass-panel {
+    padding: 16px 12px !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
   }
 
   /* Login card sizing */
@@ -899,28 +926,6 @@ body {
   /* Stat grid layout on ultra small devices */
   .dashboard-grid {
     grid-template-columns: 1fr !important;
-  }
-
-  /* Student Dashboard Location Grid Fixes */
-  .student-location-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-    margin-top: 12px;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  @media (max-width: 520px) {
-    .student-location-grid {
-      grid-template-columns: 1fr !important;
-    }
-    .student-location-stat-full {
-      grid-column: span 1 !important;
-    }
-    .glass-panel {
-      padding: 16px 12px !important;
-    }
   }
 }
 
