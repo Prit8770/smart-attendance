@@ -32,6 +32,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
 
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
+  const studentMarkerRef = useRef(null);
 
   // Haversine formula to compute distance in meters on client side for display
   function calculateDistance(lat1, lon1, lat2, lon2) {
@@ -190,66 +191,90 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     };
   }, [token, onLogout]);
 
-  // Initialize and Sync Student Map (Read-Only)
+  // Initialize Student Map ONCE when college location is loaded
   useEffect(() => {
-    if (collegeLoc && mapContainerRef.current) {
-      if (mapRef.current) {
+    if (!collegeLoc || !mapContainerRef.current || !window.L) return;
+
+    if (mapRef.current) {
+      try {
+        mapRef.current.off();
         mapRef.current.remove();
-        mapRef.current = null;
-      }
-
-      if (window.L) {
-        const centerLat = collegeLoc.latitude;
-        const centerLon = collegeLoc.longitude;
-        const radius = collegeLoc.radius || 200;
-
-        mapRef.current = window.L.map(mapContainerRef.current, {
-          dragging: true,
-          zoomControl: true,
-          scrollWheelZoom: false
-        }).setView([centerLat, centerLon], 16);
-
-        window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          attribution: '© OpenStreetMap contributors'
-        }).addTo(mapRef.current);
-
-        const collegeMarker = window.L.marker([centerLat, centerLon], {
-          title: "College Campus Center"
-        }).addTo(mapRef.current);
-        collegeMarker.bindPopup("<b>College Campus Center</b>");
-
-        window.L.circle([centerLat, centerLon], {
-          color: '#9333ea',
-          fillColor: '#9333ea',
-          fillOpacity: 0.12,
-          radius: radius
-        }).addTo(mapRef.current);
-
-        if (location) {
-          const studentLat = location.latitude;
-          const studentLon = location.longitude;
-
-          const studentMarker = window.L.circleMarker([studentLat, studentLon], {
-            radius: 8,
-            fillColor: '#2563eb',
-            color: 'var(--text-primary)',
-            weight: 2,
-            opacity: 1,
-            fillOpacity: 0.8
-          }).addTo(mapRef.current);
-          studentMarker.bindPopup("<b>Your GPS Position</b>").openPopup();
-
-          const bounds = window.L.latLngBounds([
-            [centerLat, centerLon],
-            [studentLat, studentLon]
-          ]);
-          mapRef.current.fitBounds(bounds, { padding: [40, 40] });
-        } else {
-          collegeMarker.openPopup();
-        }
-      }
+      } catch (e) {}
+      mapRef.current = null;
+      studentMarkerRef.current = null;
     }
-  }, [collegeLoc, location]);
+
+    const centerLat = collegeLoc.latitude;
+    const centerLon = collegeLoc.longitude;
+    const radius = collegeLoc.radius || 200;
+
+    const map = window.L.map(mapContainerRef.current, {
+      dragging: true,
+      zoomControl: true,
+      scrollWheelZoom: false
+    }).setView([centerLat, centerLon], 16);
+
+    mapRef.current = map;
+
+    window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    const collegeMarker = window.L.marker([centerLat, centerLon], {
+      title: "College Campus Center"
+    }).addTo(map);
+    collegeMarker.bindPopup("<b>College Campus Center</b>");
+
+    window.L.circle([centerLat, centerLon], {
+      color: '#9333ea',
+      fillColor: '#9333ea',
+      fillOpacity: 0.12,
+      radius: radius
+    }).addTo(map);
+
+    return () => {
+      if (mapRef.current) {
+        try {
+          mapRef.current.off();
+          mapRef.current.remove();
+        } catch (e) {}
+        mapRef.current = null;
+        studentMarkerRef.current = null;
+      }
+    };
+  }, [collegeLoc]);
+
+  // Dynamically update ONLY student position marker without destroying the map
+  useEffect(() => {
+    if (!mapRef.current || !location || !window.L) return;
+
+    const studentLat = location.latitude;
+    const studentLon = location.longitude;
+
+    if (studentMarkerRef.current) {
+      studentMarkerRef.current.setLatLng([studentLat, studentLon]);
+    } else {
+      studentMarkerRef.current = window.L.circleMarker([studentLat, studentLon], {
+        radius: 8,
+        fillColor: '#2563eb',
+        color: 'var(--text-primary)',
+        weight: 2,
+        opacity: 1,
+        fillOpacity: 0.8
+      }).addTo(mapRef.current);
+      studentMarkerRef.current.bindPopup("<b>Your GPS Position</b>");
+    }
+
+    if (collegeLoc) {
+      try {
+        const bounds = window.L.latLngBounds([
+          [collegeLoc.latitude, collegeLoc.longitude],
+          [studentLat, studentLon]
+        ]);
+        mapRef.current.fitBounds(bounds, { padding: [40, 40] });
+      } catch (e) {}
+    }
+  }, [location, collegeLoc]);
 
   // Request browser Geolocation manual refresh
   const handleGetLocation = () => {

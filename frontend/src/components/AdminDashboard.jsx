@@ -403,7 +403,10 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     if (activeTab === 'location' && mapContainerRef.current) {
       // Destroy existing map if initialized
       if (mapRef.current) {
-        mapRef.current.remove();
+        try {
+          mapRef.current.off();
+          mapRef.current.remove();
+        } catch (e) {}
         mapRef.current = null;
       }
 
@@ -457,6 +460,16 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         });
       }
     }
+
+    return () => {
+      if (mapRef.current) {
+        try {
+          mapRef.current.off();
+          mapRef.current.remove();
+        } catch (e) {}
+        mapRef.current = null;
+      }
+    };
   }, [activeTab]);
 
   // Update map layer on radius or coordinates change
