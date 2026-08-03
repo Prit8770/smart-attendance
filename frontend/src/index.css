@@ -752,36 +752,120 @@ body {
 
   /* Modal dialog responsiveness */
   div[style*="modalContent"],
-  div[style*="codeGeneratorCard"] {
-    width: 94vw !important;
-    max-width: 94vw !important;
-    padding: 20px 14px !important;
+  div[style*="codeGeneratorCard"],
+  div[style*="position: 'fixed'"] > div {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    padding: 20px 16px !important;
     max-height: 90vh !important;
     overflow-y: auto !important;
+    border-radius: 16px !important;
   }
 
-  /* Table responsiveness */
+  /* Table responsiveness & touch scrolling */
   .custom-table-container,
-  div[style*="tableScrollable"] {
+  div[style*="tableScrollable"],
+  div[style*="overflowX: 'auto'"],
+  div[style*="overflow-x: auto"] {
     overflow-x: auto !important;
-    -webkit-overflow-scrolling: touch;
+    -webkit-overflow-scrolling: touch !important;
     width: 100% !important;
+    border-radius: 12px;
+  }
+
+  .custom-table,
+  table {
+    min-width: 600px !important; /* Ensures table columns don't compress into unreadable text */
   }
 
   .custom-table th,
   table th {
-    padding: 16px 18px 14px 18px !important;
-    font-size: 0.85rem !important;
-    line-height: 1.6 !important;
+    padding: 12px 14px !important;
+    font-size: 0.82rem !important;
+    line-height: 1.4 !important;
     white-space: nowrap !important;
   }
 
   .custom-table td,
   table td {
-    padding: 20px 18px 18px 18px !important;
-    font-size: 0.85rem !important;
-    line-height: 1.6 !important;
+    padding: 12px 14px !important;
+    font-size: 0.82rem !important;
+    line-height: 1.4 !important;
     white-space: nowrap !important;
+  }
+
+  /* Navigation Sidebars & Tab Bars on Mobile */
+  aside.faculty-sidebar,
+  aside.admin-sidebar,
+  div[style*="tabNavbar"],
+  ul[style*="sideMenuList"] {
+    display: flex !important;
+    flex-direction: row !important;
+    overflow-x: auto !important;
+    white-space: nowrap !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding: 8px 10px !important;
+    gap: 8px !important;
+    width: 100% !important;
+    scrollbar-width: none !important;
+  }
+
+  aside.faculty-sidebar::-webkit-scrollbar,
+  aside.admin-sidebar::-webkit-scrollbar,
+  div[style*="tabNavbar"]::-webkit-scrollbar,
+  ul[style*="sideMenuList"]::-webkit-scrollbar {
+    display: none !important;
+  }
+
+  aside ul[style*="sideMenuList"] li,
+  div[style*="tabNavbar"] button {
+    flex: 0 0 auto !important;
+  }
+
+  /* Dashboard Header Mobile Adaptability */
+  header[style*="display: 'flex'"],
+  header[style*="display: flex"],
+  header {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 12px !important;
+    padding: 16px 14px !important;
+  }
+
+  header > div {
+    width: 100% !important;
+    justify-content: space-between !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+
+  /* Search & Filter bar responsiveness in Admin / Faculty / Reports */
+  div[style*="display: 'flex'"][style*="gap"],
+  div[style*="display: flex"][style*="gap"] {
+    flex-wrap: wrap !important;
+  }
+
+  /* Input fields and selects full width on mobile */
+  .glass-input,
+  select.glass-input,
+  input[type="text"],
+  input[type="password"],
+  input[type="date"],
+  select {
+    max-width: 100% !important;
+    font-size: 0.9rem !important;
+  }
+
+  /* QR code canvas scaling */
+  canvas {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+
+  /* Map container height for mobile */
+  .leaflet-container {
+    height: 250px !important;
+    min-height: 250px !important;
   }
 
   /* Login card sizing */
@@ -796,17 +880,25 @@ body {
     font-size: 1.6rem !important;
   }
 
-  .stat-card-info p {
-    font-size: 1.3rem;
+  .stat-card-info p,
+  div[style*="fontSize: '1.8rem'"],
+  div[style*="fontSize: '2.5rem'"] {
+    font-size: 1.4rem !important;
   }
 
   .btn {
     width: 100% !important;
+    justify-content: center !important;
   }
 
   div[style*="headerActions"] {
     flex-wrap: wrap;
     gap: 8px !important;
+  }
+
+  /* Stat grid layout on ultra small devices */
+  .dashboard-grid {
+    grid-template-columns: 1fr !important;
   }
 }
 
@@ -816,4 +908,5 @@ img[src="/logo.png"] {
   padding: 4px;
   transition: background-color 0.3s;
 }
+
 
