@@ -579,18 +579,18 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                 <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>ID: {user.enrollment_no}</span>
               </div>
             </div>
-            <div style={styles.profileDetails}>
-              <div style={styles.detailRow}>
-                <span>Course</span>
-                <strong>{user.course}</strong>
+            <div style={styles.profileDetails} className="student-profile-details">
+              <div style={styles.detailRow} className="student-profile-item">
+                <span style={styles.detailLabel}>Course</span>
+                <strong style={styles.detailValue}>{user.course}</strong>
               </div>
-              <div style={styles.detailRow}>
-                <span>Semester</span>
-                <strong>Sem {user.semester}</strong>
+              <div style={styles.detailRow} className="student-profile-item">
+                <span style={styles.detailLabel}>Semester</span>
+                <strong style={styles.detailValue}>Sem {user.semester}</strong>
               </div>
-              <div style={styles.detailRow}>
-                <span>Mobile</span>
-                <strong>{user.mobile}</strong>
+              <div style={styles.detailRow} className="student-profile-item student-profile-item-full">
+                <span style={styles.detailLabel}>Mobile</span>
+                <strong style={styles.detailValue}>{user.mobile}</strong>
               </div>
             </div>
           </div>
@@ -880,13 +880,31 @@ const styles = {
   },
   profileDetails: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
-    gap: '16px'
+    gridTemplateColumns: 'repeat(3, 1fr)',
+    gap: '16px',
+    width: '100%',
+    boxSizing: 'border-box'
   },
   detailRow: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '4px'
+    gap: '4px',
+    minWidth: 0,
+    overflowWrap: 'break-word',
+    wordBreak: 'break-word'
+  },
+  detailLabel: {
+    fontSize: '14px',
+    color: 'var(--text-secondary)',
+    fontWeight: '500'
+  },
+  detailValue: {
+    fontSize: '15px',
+    fontWeight: '600',
+    color: 'var(--text-primary)',
+    minWidth: 0,
+    overflowWrap: 'break-word',
+    wordBreak: 'break-word'
   },
   // Styles continued
   attendanceFormCard: {

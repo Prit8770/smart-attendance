@@ -877,6 +877,20 @@ body {
     max-width: 100% !important;
   }
 
+  /* Student Profile Card Responsive Layout */
+  .student-profile-details {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 14px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .student-profile-item-full {
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+  }
+
   /* Student Dashboard Location Grid Fixes */
   .student-location-grid {
     grid-template-columns: 1fr !important;
