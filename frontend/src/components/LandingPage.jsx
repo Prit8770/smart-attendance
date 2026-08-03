@@ -362,7 +362,12 @@ const styles = {
     gap: '6px'
   },
   heroVisualContent: {
-    width: '100%'
+    width: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '26px',
+    position: 'relative',
+    padding: '12px 0'
   },
   glowingOrb: {
     position: 'absolute',
@@ -375,30 +380,47 @@ const styles = {
   floatingCard1: {
     background: 'var(--panel-bg)',
     border: '1px solid rgba(147, 51, 234, 0.3)',
-    boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+    boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
+    padding: '26px 28px',
+    marginBottom: '10px',
+    borderRadius: '16px',
+    position: 'relative',
+    zIndex: 2,
+    boxSizing: 'border-box'
   },
   floatingCard2: {
     background: 'var(--panel-bg)',
     border: '1px solid rgba(16, 185, 129, 0.3)',
-    boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+    boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
+    padding: '26px 28px',
+    marginBottom: '10px',
+    borderRadius: '16px',
+    position: 'relative',
+    zIndex: 2,
+    boxSizing: 'border-box'
   },
   floatingCard3: {
     background: 'var(--panel-bg)',
     border: '1px solid rgba(14, 165, 233, 0.4)',
-    boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+    boxShadow: '0 20px 40px rgba(0,0,0,0.4)',
+    padding: '26px 28px',
+    borderRadius: '16px',
+    position: 'relative',
+    zIndex: 2,
+    boxSizing: 'border-box'
   },
   miniBadge: {
-    padding: '3px 8px',
+    padding: '5px 12px',
     borderRadius: '6px',
-    fontSize: '0.75rem',
+    fontSize: '0.8rem',
     background: 'rgba(14, 165, 233, 0.15)',
     color: 'var(--accent)',
     fontWeight: '600'
   },
   miniBadgeSuccess: {
-    padding: '3px 8px',
+    padding: '5px 12px',
     borderRadius: '6px',
-    fontSize: '0.75rem',
+    fontSize: '0.8rem',
     background: 'rgba(16, 185, 129, 0.15)',
     color: 'var(--success)',
     fontWeight: '600'
@@ -406,27 +428,28 @@ const styles = {
   cardMiniHeader: {
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
-    fontSize: '0.8rem',
+    gap: '10px',
+    fontSize: '0.85rem',
     color: 'var(--text-secondary)',
-    marginBottom: '12px',
+    marginBottom: '16px',
     textTransform: 'uppercase',
-    letterSpacing: '1px'
+    letterSpacing: '1px',
+    fontWeight: '600'
   },
   cardMiniTitle: {
     fontFamily: 'var(--font-display)',
-    fontWeight: '600',
-    fontSize: '1.1rem',
-    marginBottom: '16px',
+    fontWeight: '700',
+    fontSize: '1.2rem',
+    marginBottom: '18px',
     color: 'var(--text-primary)'
   },
   cardMiniData: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '10px',
+    padding: '14px 18px',
     background: 'var(--border-light)',
-    borderRadius: '8px'
+    borderRadius: '10px'
   },
   dataLabel: {
     fontSize: '0.85rem',
