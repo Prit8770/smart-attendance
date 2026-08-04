@@ -950,7 +950,7 @@ body {
   .leaflet-container {
     height: 240px !important;
     min-height: 240px !important;
-    max-width: 50% !important;
+    max-width: 100% !important;
   }
 
   /* Student Profile Card Layout (Desktop default) */
@@ -1076,8 +1076,8 @@ body {
 
   /* Reduced map width in mobile view so the entire map shows cleanly without clipping */
   .student-map-wrapper {
-    width: 50% !important;
-    max-width: 50% !important;
+    width: 100% !important;
+    max-width: 100% !important;
     padding: 0 !important;
     margin-top: 14px !important;
     box-sizing: border-box !important;
