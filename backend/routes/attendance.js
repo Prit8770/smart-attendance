@@ -257,13 +257,21 @@ router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
       .select(`
         id, time, distance, status, date, qr_session_id,
         student:student_id (enrollment_no, name, course, semester, mobile),
-        otp:otp_id (otp, faculty:generated_by(name)),
-        qr_session:qr_session_id (faculty:created_by_faculty_id(name))
+        otp:otp_id (otp, generated_by, faculty:generated_by(name)),
+        qr_session:qr_session_id (created_by_faculty_id, faculty:created_by_faculty_id(name))
       `)
       .eq('date', today)
       .order('time', { ascending: false });
 
-    const flatLogs = (logs || []).map(log => ({
+    let filteredLogs = logs || [];
+    if (req.user.role === 'faculty') {
+      filteredLogs = filteredLogs.filter(log => 
+        (log.qr_session && String(log.qr_session.created_by_faculty_id) === String(req.user.id)) ||
+        (log.otp && String(log.otp.generated_by) === String(req.user.id))
+      );
+    }
+
+    const flatLogs = filteredLogs.map(log => ({
       id: log.id,
       enrollment_no: log.student?.enrollment_no,
       name: log.student?.name,
@@ -293,8 +301,8 @@ router.get('/reports', authenticateJWT, requireAdmin, async (req, res) => {
     let reqQuery = supabase.from('attendance').select(`
       id, time, distance, status, date, qr_session_id,
       student:student_id (enrollment_no, name, course, semester, mobile),
-      otp:otp_id (otp, faculty:generated_by(name)),
-      qr_session:qr_session_id (faculty:created_by_faculty_id(name))
+      otp:otp_id (otp, generated_by, faculty:generated_by(name)),
+      qr_session:qr_session_id (created_by_faculty_id, faculty:created_by_faculty_id(name))
     `);
 
     if (date) {
@@ -312,7 +320,15 @@ router.get('/reports', authenticateJWT, requireAdmin, async (req, res) => {
     const { data: reports, error } = await reqQuery;
     if (error) throw error;
 
-    const flatReports = (reports || []).map(log => ({
+    let filteredReports = reports || [];
+    if (req.user.role === 'faculty') {
+      filteredReports = filteredReports.filter(log => 
+        (log.qr_session && String(log.qr_session.created_by_faculty_id) === String(req.user.id)) ||
+        (log.otp && String(log.otp.generated_by) === String(req.user.id))
+      );
+    }
+
+    const flatReports = filteredReports.map(log => ({
       id: log.id,
       enrollment_no: log.student?.enrollment_no,
       name: log.student?.name,
@@ -346,18 +362,35 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
     const { count: totalFaculty } = await supabase.from('faculty').select('*', { count: 'exact', head: true });
     
     // 2. Present Today (Success logs count unique student_id)
-    const { data: presentRows } = await supabase.from('attendance').select('student_id').eq('date', today).eq('status', 'Success');
-    const presentToday = new Set((presentRows || []).map(r => r.student_id)).size;
+    const { data: presentRows } = await supabase.from('attendance')
+      .select('student_id, qr_session:qr_session_id(created_by_faculty_id), otp:otp_id(generated_by)')
+      .eq('date', today).eq('status', 'Success');
+    let filteredPresent = presentRows || [];
+    if (req.user.role === 'faculty') {
+      filteredPresent = filteredPresent.filter(r => 
+        (r.qr_session && String(r.qr_session.created_by_faculty_id) === String(req.user.id)) ||
+        (r.otp && String(r.otp.generated_by) === String(req.user.id))
+      );
+    }
+    const presentToday = new Set(filteredPresent.map(r => r.student_id)).size;
 
     // 3. Absent Today
     const absentToday = Math.max(0, (totalStudents || 0) - presentToday);
 
     // 4. Legacy OTPs generated today
-    const { count: otpsGenerated } = await supabase.from('otp').select('*', { count: 'exact', head: true }).eq('date', today);
+    let otpsQuery = supabase.from('otp').select('*', { count: 'exact', head: true }).eq('date', today);
+    if (req.user.role === 'faculty') {
+      otpsQuery = otpsQuery.eq('generated_by', req.user.id);
+    }
+    const { count: otpsGenerated } = await otpsQuery;
     const otpsRemaining = Math.max(0, 5 - (otpsGenerated || 0));
 
     // 5. Legacy Active OTP info
-    const { data: latestOtp } = await supabase.from('otp').select('*').order('id', { ascending: false }).limit(1).maybeSingle();
+    let latestOtpQuery = supabase.from('otp').select('*').order('id', { ascending: false }).limit(1);
+    if (req.user.role === 'faculty') {
+      latestOtpQuery = latestOtpQuery.eq('generated_by', req.user.id);
+    }
+    const { data: latestOtp } = await latestOtpQuery.maybeSingle();
     let activeOtp = null;
     if (latestOtp) {
       const now = new Date().getTime();
@@ -379,7 +412,11 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
     }
 
     // 7. Active QR session info
-    const { data: latestQr } = await supabase.from('qr_sessions').select('*').order('id', { ascending: false }).limit(1).maybeSingle();
+    let latestQrQuery = supabase.from('qr_sessions').select('*').order('id', { ascending: false }).limit(1);
+    if (req.user.role === 'faculty') {
+      latestQrQuery = latestQrQuery.eq('created_by_faculty_id', req.user.id);
+    }
+    const { data: latestQr } = await latestQrQuery.maybeSingle();
     let activeQrSession = null;
     if (latestQr) {
       const now = new Date().getTime();
@@ -402,11 +439,18 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
       const dateStr = getLocalDateString(d);
       
       const { data: att } = await supabase.from('attendance')
-        .select('student_id')
+        .select('student_id, qr_session:qr_session_id(created_by_faculty_id), otp:otp_id(generated_by)')
         .eq('date', dateStr)
         .eq('status', 'Success');
+      let filteredAtt = att || [];
+      if (req.user.role === 'faculty') {
+        filteredAtt = filteredAtt.filter(r => 
+          (r.qr_session && String(r.qr_session.created_by_faculty_id) === String(req.user.id)) ||
+          (r.otp && String(r.otp.generated_by) === String(req.user.id))
+        );
+      }
         
-      const pCount = new Set((att || []).map(r => r.student_id)).size;
+      const pCount = new Set(filteredAtt.map(r => r.student_id)).size;
       trend.push({ date: dateStr, present_count: pCount });
     }
 

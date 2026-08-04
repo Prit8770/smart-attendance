@@ -117,11 +117,14 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
 router.get('/active', authenticateJWT, async (req, res) => {
   try {
     // Find the latest generated session
-    const { data: latestSession } = await supabase.from('qr_sessions')
+    let sessionQuery = supabase.from('qr_sessions')
       .select('*, faculty:created_by_faculty_id(name)')
       .order('id', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+    if (req.user && req.user.role === 'faculty') {
+      sessionQuery = sessionQuery.eq('created_by_faculty_id', req.user.id);
+    }
+    const { data: latestSession } = await sessionQuery.maybeSingle();
 
     if (!latestSession) {
       return res.json({ active: false });
@@ -155,10 +158,14 @@ router.get('/active', authenticateJWT, async (req, res) => {
 router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) => {
   const today = getLocalDateString();
   try {
-    const { data: sessions, error } = await supabase.from('qr_sessions')
+    let sessionsQuery = supabase.from('qr_sessions')
       .select('id, created_at, expires_at, date, faculty:created_by_faculty_id(name)')
       .eq('date', today)
       .order('id', { ascending: false });
+    if (req.user.role === 'faculty') {
+      sessionsQuery = sessionsQuery.eq('created_by_faculty_id', req.user.id);
+    }
+    const { data: sessions, error } = await sessionsQuery;
 
     if (error) throw error;
     

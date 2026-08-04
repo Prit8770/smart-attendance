@@ -25,10 +25,14 @@ function getLocalDateString() {
 router.get('/today', authenticateJWT, requireAdmin, async (req, res) => {
   const today = getLocalDateString();
   try {
-    const { data: otps, error } = await supabase.from('otp')
+    let otpsQuery = supabase.from('otp')
       .select('id, otp, generated_time, expire_time, date')
       .eq('date', today)
       .order('id', { ascending: false });
+    if (req.user && req.user.role === 'faculty') {
+      otpsQuery = otpsQuery.eq('generated_by', req.user.id);
+    }
+    const { data: otps, error } = await otpsQuery;
 
     if (error) throw error;
     
@@ -50,11 +54,14 @@ router.get('/today', authenticateJWT, requireAdmin, async (req, res) => {
 router.get('/active', authenticateJWT, async (req, res) => {
   try {
     // Find the latest generated OTP
-    const { data: latestOtp } = await supabase.from('otp')
+    let latestOtpQuery = supabase.from('otp')
       .select('*')
       .order('id', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+    if (req.user && req.user.role === 'faculty') {
+      latestOtpQuery = latestOtpQuery.eq('generated_by', req.user.id);
+    }
+    const { data: latestOtp } = await latestOtpQuery.maybeSingle();
 
     if (!latestOtp) {
       return res.json({ active: false, otp: null });
