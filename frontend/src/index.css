@@ -88,10 +88,13 @@
 html,
 body,
 #root {
-  max-width: 100vw;
+  max-width: 100%;
   width: 100%;
   overflow-x: hidden;
   position: relative;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
 body {
@@ -612,7 +615,25 @@ body {
    Mobile Responsiveness & PWA Utilities
    ========================================================================== */
 
-/* Responsive Grid Utilities */
+/* Responsive Grid Utilities & Overflow Prevention */
+.responsive-grid-2col,
+.grid-1-2,
+.grid-3-cols,
+.dashboard-grid {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.responsive-grid-2col > *,
+.grid-1-2 > *,
+.grid-3-cols > *,
+.dashboard-grid > * {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+}
+
 .responsive-grid-2col {
   display: grid;
   grid-template-columns: 1fr 1.5fr;
@@ -654,8 +675,14 @@ body {
 }
 
 @media (max-width: 900px) {
-  .responsive-grid-2col {
-    grid-template-columns: 1fr;
+  .responsive-grid-2col,
+  .grid-1-2,
+  .grid-3-cols,
+  .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
   }
 
   /* Faculty Dashboard mainGrid override */
@@ -744,16 +771,17 @@ body {
   }
 
   /* Dashboard Grids & Flex containers */
-  .dashboard-grid {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
-
+  .dashboard-grid,
+  .responsive-grid-2col,
   .grid-1-2,
   .grid-3-cols,
   .hero-layout {
-    grid-template-columns: 1fr !important;
-    gap: 12px !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 14px !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
   }
 
   /* Flex row to column overrides for mobile */
@@ -996,9 +1024,10 @@ body {
   /* Student Profile Card Responsive Layout */
   .student-profile-details {
     display: grid !important;
-    grid-template-columns: 1fr 1fr !important;
-    gap: 14px !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 12px !important;
     width: 100% !important;
+    max-width: 100% !important;
     box-sizing: border-box !important;
   }
 
@@ -1034,6 +1063,12 @@ body {
   /* =========================================
      Student Portal Responsive & Mobile Friendly
      ========================================= */
+  .student-portal-container,
+  .student-portal-container * {
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
   .student-portal-container {
     padding: 12px 10px !important;
     gap: 16px !important;
@@ -1041,6 +1076,22 @@ body {
     max-width: 100% !important;
     box-sizing: border-box !important;
     overflow-x: hidden !important;
+  }
+
+  .student-portal-container table,
+  .student-portal-container .custom-table {
+    min-width: 500px !important;
+    width: auto !important;
+    max-width: none !important;
+  }
+
+  #qr-reader-container,
+  #qr-reader-container video,
+  #qr-reader-container canvas {
+    width: 100% !important;
+    max-width: 100% !important;
+    height: auto !important;
+    box-sizing: border-box !important;
   }
 
   .student-portal-header {

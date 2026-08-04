@@ -343,7 +343,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     const strokeDashoffset = circumference - (pct / 100) * circumference;
 
     return (
-      <div className="student-radial-gauge" style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: '160px', flexWrap: 'wrap', boxSizing: 'border-box' }}>
+      <div className="student-radial-gauge" style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: '0', flexWrap: 'wrap', boxSizing: 'border-box' }}>
         <div style={{ position: 'relative', width: '90px', height: '90px' }}>
           <svg height="90" width="90" style={{ transform: 'rotate(-90deg)' }}>
             <circle
@@ -421,7 +421,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     }
 
     return (
-      <div className="student-trend-graph" style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, minWidth: '280px', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
+      <div className="student-trend-graph" style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, minWidth: '0', width: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
           <span>Attendance Trend</span>
           <span>Lectures (OTPs) →</span>
@@ -703,7 +703,9 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '20px',
-    boxSizing: 'border-box'
+    minWidth: 0,
+    boxSizing: 'border-box',
+    overflowX: 'hidden'
   },
   header: {
     padding: '16px 20px',
@@ -713,6 +715,7 @@ const styles = {
     flexWrap: 'wrap',
     gap: '12px',
     width: '100%',
+    maxWidth: '100%',
     boxSizing: 'border-box'
   },
   logoGroup: {
@@ -747,19 +750,28 @@ const styles = {
     flexDirection: 'column',
     gap: '20px',
     width: '100%',
-    boxSizing: 'border-box'
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box',
+    overflowX: 'hidden'
   },
   rightCol: {
     display: 'flex',
     flexDirection: 'column',
     gap: '20px',
     width: '100%',
-    boxSizing: 'border-box'
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box',
+    overflowX: 'hidden'
   },
   profileCard: {
     padding: '20px',
     width: '100%',
-    boxSizing: 'border-box'
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box',
+    overflowX: 'hidden'
   },
   profileHeader: {
     display: 'flex',
@@ -807,7 +819,12 @@ const styles = {
   },
   // Styles continued
   attendanceFormCard: {
-    padding: '24px'
+    padding: '24px',
+    width: '100%',
+    minWidth: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box',
+    overflowX: 'hidden'
   },
   sectionTitle: {
     fontFamily: 'var(--font-display)',
@@ -884,8 +901,12 @@ const styles = {
   historyCard: {
     padding: '24px',
     width: '100%',
+    minWidth: 0,
+    maxWidth: '100%',
     display: 'flex',
-    flexDirection: 'column'
+    flexDirection: 'column',
+    boxSizing: 'border-box',
+    overflowX: 'hidden'
   },
   historyHeader: {
     display: 'flex',
