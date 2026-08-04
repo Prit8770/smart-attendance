@@ -30,6 +30,38 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   const [scannerError, setScannerError] = useState('');
   const html5QrCodeRef = useRef(null);
 
+  // GPS refresh requirement & Device Cooldown States
+  const [isGpsRefreshed, setIsGpsRefreshed] = useState(false);
+  const [cooldownTime, setCooldownTime] = useState(0);
+
+  // Check device cooldown from localStorage
+  useEffect(() => {
+    const checkCooldown = () => {
+      const until = localStorage.getItem('qr_attendance_cooldown');
+      if (until) {
+        const diff = Math.ceil((parseInt(until, 10) - Date.now()) / 1000);
+        if (diff > 0) {
+          setCooldownTime(diff);
+        } else {
+          setCooldownTime(0);
+          localStorage.removeItem('qr_attendance_cooldown');
+        }
+      } else {
+        setCooldownTime(0);
+      }
+    };
+
+    checkCooldown();
+    const timer = setInterval(checkCooldown, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatCooldown = (secs) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}m ${s}s`;
+  };
+
   // Haversine formula to compute distance in meters on client side for display
   function calculateDistance(lat1, lon1, lat2, lon2) {
     const R = 6371e3; // Earth radius in meters
@@ -190,6 +222,10 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
 
   // Request browser Geolocation manual refresh
   const handleGetLocation = () => {
+    setIsGpsRefreshed(true);
+    if (scannerError.includes("Set GPS")) {
+      setScannerError('');
+    }
     setLocLoading(true);
     setLocError('');
     navigator.geolocation.getCurrentPosition(
@@ -245,6 +281,12 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
       }
 
       setMessage({ text: 'Attendance marked successfully!', type: 'success' });
+
+      // Block Scan Attendance QR button for 2 minutes on this device
+      const unlockTime = Date.now() + 2 * 60 * 1000;
+      localStorage.setItem('qr_attendance_cooldown', unlockTime.toString());
+      setCooldownTime(120);
+
       fetchHistory();
       fetchStudentTrend();
     } catch (err) {
@@ -256,6 +298,20 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
 
   // Camera QR Scanner control methods
   const startScanner = () => {
+    if (cooldownTime > 0) {
+      const msg = `Attendance submitted! Scan button is blocked for ${formatCooldown(cooldownTime)} on this device.`;
+      setScannerError(msg);
+      alert(msg);
+      return;
+    }
+
+    if (!isGpsRefreshed) {
+      const msg = "Set GPS! Please click on the 'Refresh GPS' button below first before scanning QR.";
+      setScannerError(msg);
+      alert(msg);
+      return;
+    }
+
     setScannerError('');
     setScannerOpen(true);
 
@@ -343,7 +399,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     const strokeDashoffset = circumference - (pct / 100) * circumference;
 
     return (
-      <div className="student-radial-gauge" style={{ display: 'flex', alignItems: 'center', gap: '16px', minWidth: '0', flexWrap: 'wrap', boxSizing: 'border-box' }}>
+      <div className="student-radial-gauge" style={{ display: 'flex', alignItems: 'center', gap: '20px', minWidth: '0', width: '100%', paddingBottom: '20px', borderBottom: '1px solid rgba(255, 255, 255, 0.08)', flexWrap: 'wrap', boxSizing: 'border-box' }}>
         <div style={{ position: 'relative', width: '90px', height: '90px' }}>
           <svg height="90" width="90" style={{ transform: 'rotate(-90deg)' }}>
             <circle
@@ -527,15 +583,9 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
               {/* QR Scanner Area */}
               <div style={styles.formGroup}>
                 <label style={styles.formLabel}>Camera QR Scanner</label>
-                
-                {scannerOpen ? (
+                               {scannerOpen ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center', width: '100%' }}>
                     <div id="qr-reader-container" style={{ width: '100%', maxWidth: '320px', aspectRatio: '1/1', borderRadius: '12px', overflow: 'hidden', border: '2px solid rgba(255,255,255,0.1)', background: '#000' }} />
-                    {scannerError && (
-                      <div className="status-badge failed" style={{ color: '#ef4444', background: 'rgba(239, 68, 68, 0.1)', padding: '8px 12px', borderRadius: '6px', fontSize: '0.85rem', width: '100%', maxWidth: '320px', textAlign: 'center' }}>
-                        {scannerError}
-                      </div>
-                    )}
                     <button className="btn btn-secondary" onClick={stopScanner} style={{ width: '100%', maxWidth: '320px' }}>
                       Cancel Scan
                     </button>
@@ -545,12 +595,33 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                     type="button"
                     className="btn btn-primary"
                     onClick={startScanner}
-                    disabled={submitLoading || !location}
-                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', padding: '14px' }}
+                    disabled={submitLoading || !location || cooldownTime > 0}
+                    style={{ 
+                      width: '100%', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
+                      gap: '8px', 
+                      padding: '14px',
+                      opacity: (submitLoading || !location || cooldownTime > 0) ? 0.6 : 1,
+                      cursor: cooldownTime > 0 ? 'not-allowed' : 'pointer'
+                    }}
                   >
                     <Camera size={18} />
-                    {submitLoading ? 'Processing Scan...' : 'Scan Attendance QR'}
+                    {submitLoading 
+                      ? 'Processing Scan...' 
+                      : cooldownTime > 0 
+                      ? `Scan Blocked (${formatCooldown(cooldownTime)})` 
+                      : !isGpsRefreshed 
+                      ? 'Scan Attendance QR (Click Refresh GPS first)' 
+                      : 'Scan Attendance QR'}
                   </button>
+                )}
+
+                {scannerError && (
+                  <div className="status-badge failed" style={{ color: '#ef4444', background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', padding: '10px 14px', borderRadius: '8px', fontSize: '0.88rem', width: '100%', marginTop: '8px', textAlign: 'center', boxSizing: 'border-box', display: 'block' }}>
+                    {scannerError}
+                  </div>
                 )}
                 
                 {!location && (
@@ -563,16 +634,19 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
               {/* GPS Field */}
               <div style={styles.formGroup}>
                 <div className="mobile-stack-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                  <label style={styles.formLabel}>GPS Location Verification</label>
+                  <label style={styles.formLabel}>
+                    GPS Location Verification
+                    {isGpsRefreshed && <span style={{ color: '#34d399', fontSize: '0.75rem', marginLeft: '8px' }}>✓ Ready for Scan</span>}
+                  </label>
                   <button
                     type="button"
                     className="btn btn-secondary gps-refresh-btn"
                     onClick={handleGetLocation}
                     disabled={locLoading}
-                    style={{ padding: '4px 8px', fontSize: '0.75rem', gap: '4px' }}
+                    style={{ padding: '6px 12px', fontSize: '0.8rem', gap: '6px', border: !isGpsRefreshed ? '1px solid #34d399' : '1px solid rgba(255,255,255,0.1)' }}
                   >
-                    <RefreshCw size={10} className={locLoading ? 'spin-slow' : ''} />
-                    Refresh GPS
+                    <RefreshCw size={12} className={locLoading ? 'spin-slow' : ''} />
+                    {locLoading ? 'Refreshing...' : 'Refresh GPS'}
                   </button>
                 </div>
 
@@ -625,7 +699,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             {trendLoading ? (
               <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>Loading analytics...</div>
             ) : (
-              <div className="student-analytics-flex" style={{ display: 'flex', flexWrap: 'wrap', gap: '24px', alignItems: 'center', width: '100%', boxSizing: 'border-box' }}>
+              <div className="student-analytics-flex" style={{ display: 'flex', flexDirection: 'column', gap: '24px', alignItems: 'stretch', width: '100%', boxSizing: 'border-box' }}>
                 {renderRadialGauge()}
                 {renderTrendGraph()}
               </div>

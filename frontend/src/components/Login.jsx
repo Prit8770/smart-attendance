@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { User, ShieldAlert, KeyRound, Mail, GraduationCap, ArrowLeft } from 'lucide-react';
+import { User, ShieldAlert, KeyRound, Mail, GraduationCap, ArrowLeft, Eye, EyeOff } from 'lucide-react';
 
 export default function Login({ onLoginSuccess, onBack }) {
   const [loginRole, setLoginRole] = useState('student'); // 'student', 'faculty', 'admin'
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
@@ -174,14 +175,33 @@ export default function Login({ onLoginSuccess, onBack }) {
             <div style={styles.inputWrapper}>
               <KeyRound size={18} style={styles.inputIcon} />
               <input
-                type="password"
+                type={showPassword ? 'text' : 'password'}
                 className="glass-input"
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                style={{ paddingLeft: '44px' }}
+                style={{ paddingLeft: '44px', paddingRight: '44px', width: '100%' }}
               />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{
+                  position: 'absolute',
+                  right: '12px',
+                  background: 'transparent',
+                  border: 'none',
+                  color: 'var(--text-muted)',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '4px'
+                }}
+                title={showPassword ? "Hide Password" : "Show Password"}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
             </div>
           </div>
 
