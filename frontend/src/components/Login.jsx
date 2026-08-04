@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { User, ShieldAlert, KeyRound, Mail, GraduationCap, ArrowLeft, Eye, EyeOff } from 'lucide-react';
 
 export default function Login({ onLoginSuccess, onBack }) {
@@ -9,9 +9,41 @@ export default function Login({ onLoginSuccess, onBack }) {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [cooldownTime, setCooldownTime] = useState(0);
+
+  useEffect(() => {
+    const checkLock = () => {
+      const lockUntilStr = localStorage.getItem('student_device_lock_until');
+      if (lockUntilStr) {
+        const lockUntil = parseInt(lockUntilStr, 10);
+        const diff = Math.floor((lockUntil - Date.now()) / 1000);
+        if (diff > 0) {
+          setCooldownTime(diff);
+        } else {
+          setCooldownTime(0);
+          localStorage.removeItem('student_device_lock_until');
+        }
+      } else {
+        setCooldownTime(0);
+      }
+    };
+    checkLock();
+    const interval = setInterval(checkLock, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const formatCooldown = (seconds) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return `${m}m ${s}s`;
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (loginRole === 'student' && cooldownTime > 0) {
+      setError(`Device locked for student logins! Please wait ${formatCooldown(cooldownTime)} before logging in again with any student ID.`);
+      return;
+    }
     setLoading(true);
     setError('');
 
@@ -120,6 +152,15 @@ export default function Login({ onLoginSuccess, onBack }) {
         <form onSubmit={handleSubmit} style={styles.form}>
           {error && <div style={styles.errorAlert}>{error}</div>}
 
+          {loginRole === 'student' && cooldownTime > 0 && (
+            <div style={{ ...styles.errorAlert, backgroundColor: 'rgba(239, 68, 68, 0.15)', borderColor: 'rgba(239, 68, 68, 0.4)', color: '#ef4444', textAlign: 'center', marginBottom: '16px' }}>
+              <strong>Device Locked for Student Login!</strong>
+              <div style={{ fontSize: '0.85rem', marginTop: '4px' }}>
+                After logout, this device cannot log in with this or any other student ID for <strong>{formatCooldown(cooldownTime)}</strong>.
+              </div>
+            </div>
+          )}
+
           {loginRole === 'admin' ? (
             <div style={styles.inputGroup}>
               <label style={styles.label}>Admin Email</label>
@@ -208,10 +249,10 @@ export default function Login({ onLoginSuccess, onBack }) {
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={loading}
-            style={{ width: '100%', marginTop: '10px' }}
+            disabled={loading || (loginRole === 'student' && cooldownTime > 0)}
+            style={{ width: '100%', marginTop: '10px', opacity: (loginRole === 'student' && cooldownTime > 0) ? 0.6 : 1 }}
           >
-            {loading ? 'Logging in...' : 'Sign In'}
+            {loading ? 'Logging in...' : (loginRole === 'student' && cooldownTime > 0) ? `Login Blocked (${formatCooldown(cooldownTime)})` : 'Sign In'}
           </button>
         </form>
       </div>
