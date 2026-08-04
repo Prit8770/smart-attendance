@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Users, KeyRound, QrCode, MapPin, BarChart3, Download, Plus, Search, 
   Trash2, Edit, CheckCircle, XCircle, Clock, ShieldAlert, LogOut, RefreshCw,
-  Sun, Moon, GraduationCap, User, Settings
+  Sun, Moon, GraduationCap, User, Settings, Folder
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -37,6 +37,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     password: ''
   });
   const [showStudentModal, setShowStudentModal] = useState(false);
+  const [enrollmentTouched, setEnrollmentTouched] = useState(false);
+  const [mobileTouched, setMobileTouched] = useState(false);
   const [modalMode, setModalMode] = useState('add'); // 'add' or 'edit'
   const [createdStudentCredentials, setCreatedStudentCredentials] = useState(null); // Save generated credentials
   const [studentsLoading, setStudentsLoading] = useState(false);
@@ -63,7 +65,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const [activeQrSessionDetails, setActiveQrSessionDetails] = useState(null);
   const [qrSessionTimer, setQrSessionTimer] = useState(0);
   const [tokenIndex, setTokenIndex] = useState(0);
-  const [qrCodeTimer, setQrCodeTimer] = useState(20);
+  const [qrCodeTimer, setQrCodeTimer] = useState(15);
   const [qrGenerationEnabled, setQrGenerationEnabled] = useState(true);
   const qrCanvasRef = useRef(null);
 
@@ -344,9 +346,9 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             return 0;
           }
           const elapsed = 120 - (prev - 1);
-          const idx = Math.min(5, Math.floor(elapsed / 20));
+          const idx = Math.min(7, Math.floor(elapsed / 15));
           setTokenIndex(idx);
-          setQrCodeTimer(20 - (elapsed % 20));
+          setQrCodeTimer(15 - (elapsed % 15));
           return prev - 1;
         });
       }, 1000);
@@ -750,7 +752,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         setActiveQrSessionDetails(data.session);
         setQrSessionTimer(120);
         setTokenIndex(0);
-        setQrCodeTimer(20);
+        setQrCodeTimer(15);
         fetchStats();
       } else {
         alert(data.error || 'Failed to start QR session');
@@ -924,8 +926,22 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const handleStudentSubmit = async (e) => {
     e.preventDefault();
     setCreatedStudentCredentials(null);
+    setEnrollmentTouched(true);
+    setMobileTouched(true);
 
     const isEdit = modalMode === 'edit';
+    if (!isEdit) {
+      if (!/^\d{10}$/.test(String(studentForm.enrollment_no || '').trim())) {
+        alert('Please enter valid enrollment number');
+        return;
+      }
+    }
+
+    if (!/^\d{10}$/.test(String(studentForm.mobile || '').trim())) {
+      alert('Please enter valid mobile number');
+      return;
+    }
+
     const method = isEdit ? 'PUT' : 'POST';
     const endpoint = isEdit 
       ? `/api/students/${studentForm.id}`
@@ -1000,6 +1016,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       password: ''
     });
     setCreatedStudentCredentials(null);
+    setEnrollmentTouched(false);
+    setMobileTouched(false);
     setShowStudentModal(true);
   };
 
@@ -1017,6 +1035,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       resetPassword: false
     });
     setCreatedStudentCredentials(null);
+    setEnrollmentTouched(false);
+    setMobileTouched(false);
     setShowStudentModal(true);
   };
 
@@ -1479,6 +1499,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                             <th>Name</th>
                             <th>Course</th>
                             <th>Semester</th>
+                            <th>Faculty Name</th>
                             <th>Mobile No</th>
                             <th>Time Checked In</th>
                             <th>Distance</th>
@@ -1488,14 +1509,15 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           {(() => {
                             const presentLogs = liveLogs.filter(log => log.status === 'Success');
                             if (presentLogs.length === 0) {
-                              return <tr><td colSpan="7" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)', fontStyle: 'italic' }}>No students checked in successfully today yet.</td></tr>;
+                              return <tr><td colSpan="8" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)', fontStyle: 'italic' }}>No students checked in successfully today yet.</td></tr>;
                             }
                             return presentLogs.map(log => (
                               <tr key={log.id}>
                                 <td>{log.enrollment_no}</td>
-                                <td>{log.name}</td>
+                                <td style={{ fontWeight: '600' }}>{log.name}</td>
                                 <td>{log.course}</td>
                                 <td>Sem {log.semester}</td>
+                                <td style={{ fontWeight: '600', color: 'var(--primary)' }}>{log.faculty_name || 'Admin'}</td>
                                 <td>{log.mobile || '-'}</td>
                                 <td>{log.time}</td>
                                 <td>{log.distance ? `${Math.round(log.distance)}m` : '-'}</td>
@@ -1829,9 +1851,9 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           <span>Active QR Code Validity</span>
                           <strong style={{ color: '#a855f7' }}>{qrCodeTimer}s</strong>
                         </div>
-                        {/* 20-second progress bar */}
+                        {/* 15-second progress bar */}
                         <div style={{ height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden', marginBottom: '16px' }}>
-                          <div style={{ height: '100%', width: `${(qrCodeTimer / 20) * 100}%`, background: 'linear-gradient(90deg, #9333ea, #a855f7)', transition: 'width 1s linear' }}></div>
+                          <div style={{ height: '100%', width: `${(qrCodeTimer / 15) * 100}%`, background: 'linear-gradient(90deg, #9333ea, #a855f7)', transition: 'width 1s linear' }}></div>
                         </div>
 
                         <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem', color: 'var(--text-primary)', fontWeight: '600' }}>
@@ -2117,37 +2139,64 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
               </div>
             </div>
 
-            {/* Quick Filters */}
-            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '20px', padding: '16px', background: 'var(--panel-bg)', borderRadius: '12px', border: '1px solid var(--border-light)' }}>
-              <div style={styles.inputGroup}>
-                <label style={styles.formLabel}>Filter by Sem</label>
-                <input 
-                  type="text" 
-                  placeholder="e.g. 3" 
-                  className="glass-input" 
-                  value={reportFilterSem} 
-                  onChange={e => setReportFilterSem(e.target.value)} 
-                />
+            {/* Semester Folder Navigation (Sem 1 to Sem 8) */}
+            <div style={{ marginBottom: '20px', padding: '16px', background: 'var(--panel-bg)', borderRadius: '12px', border: '1px solid var(--border-light)' }}>
+              <div style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Folder size={18} color="#a855f7" /> Semester Folders (Sem 1 to Sem 8):
               </div>
-              <div style={styles.inputGroup}>
-                <label style={styles.formLabel}>Filter by Name</label>
-                <input 
-                  type="text" 
-                  placeholder="Search name..." 
-                  className="glass-input" 
-                  value={reportFilterName} 
-                  onChange={e => setReportFilterName(e.target.value)} 
-                />
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
+                <button
+                  type="button"
+                  className={`btn ${reportFilterSem === '' ? 'btn-primary' : 'btn-secondary'}`}
+                  onClick={() => setReportFilterSem('')}
+                  style={{ fontSize: '0.85rem', padding: '8px 10px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', width: '100%' }}
+                >
+                  <Folder size={14} /> All Folders
+                </button>
+                {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+                  <button
+                    key={s}
+                    type="button"
+                    className={`btn ${reportFilterSem === String(s) ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setReportFilterSem(String(s))}
+                    style={{ fontSize: '0.85rem', padding: '8px 10px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', width: '100%' }}
+                  >
+                    <Folder size={14} /> Sem {s}
+                  </button>
+                ))}
               </div>
-              <div style={styles.inputGroup}>
-                <label style={styles.formLabel}>Filter by Enrollment No.</label>
-                <input 
-                  type="text" 
-                  placeholder="Search enrollment..." 
-                  className="glass-input" 
-                  value={reportFilterEnroll} 
-                  onChange={e => setReportFilterEnroll(e.target.value)} 
-                />
+
+              {/* Quick Filters */}
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                <div style={styles.inputGroup}>
+                  <label style={styles.formLabel}>Filter by Name</label>
+                  <input 
+                    type="text" 
+                    placeholder="Search name..." 
+                    className="glass-input" 
+                    value={reportFilterName} 
+                    onChange={e => setReportFilterName(e.target.value)} 
+                  />
+                </div>
+                <div style={styles.inputGroup}>
+                  <label style={styles.formLabel}>Filter by Enrollment No.</label>
+                  <input 
+                    type="text" 
+                    placeholder="Search enrollment..." 
+                    className="glass-input" 
+                    value={reportFilterEnroll} 
+                    onChange={e => setReportFilterEnroll(e.target.value)} 
+                  />
+                </div>
+                <div style={styles.inputGroup}>
+                  <label style={styles.formLabel}>Filter by Date</label>
+                  <input 
+                    type="date" 
+                    className="glass-input" 
+                    value={reportDate} 
+                    onChange={e => setReportDate(e.target.value)} 
+                  />
+                </div>
               </div>
             </div>
 
@@ -2380,12 +2429,21 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   <input
                     type="text"
                     className="glass-input"
-                    placeholder="e.g. 210020119001"
+                    placeholder="e.g. 2100201190"
                     value={studentForm.enrollment_no}
                     onChange={(e) => setStudentForm({ ...studentForm, enrollment_no: e.target.value.trim() })}
+                    onBlur={() => setEnrollmentTouched(true)}
                     required
+                    pattern="^\d{10}$"
+                    title="Please enter valid enrollment number"
                     disabled={modalMode === 'edit'}
+                    style={enrollmentTouched && studentForm.enrollment_no && !/^\d{10}$/.test(studentForm.enrollment_no) ? { borderColor: '#ff4d4f', boxShadow: '0 0 0 2px rgba(255, 77, 79, 0.2)' } : {}}
                   />
+                  {enrollmentTouched && studentForm.enrollment_no && !/^\d{10}$/.test(studentForm.enrollment_no) && (
+                    <div style={{ color: '#ff4d4f', fontSize: '0.82rem', marginTop: '6px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'rgba(255, 77, 79, 0.08)', padding: '6px 10px', borderRadius: '6px', border: '1px solid rgba(255, 77, 79, 0.25)' }}>
+                      ⚠️ Please enter valid enrollment number
+                    </div>
+                  )}
                 </div>
 
                 <div style={styles.formGroup}>
@@ -2434,8 +2492,17 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     placeholder="e.g. 9876543210"
                     value={studentForm.mobile}
                     onChange={(e) => setStudentForm({ ...studentForm, mobile: e.target.value.trim() })}
+                    onBlur={() => setMobileTouched(true)}
                     required
+                    pattern="^\d{10}$"
+                    title="Please enter valid mobile number"
+                    style={mobileTouched && studentForm.mobile && !/^\d{10}$/.test(studentForm.mobile) ? { borderColor: '#ff4d4f', boxShadow: '0 0 0 2px rgba(255, 77, 79, 0.2)' } : {}}
                   />
+                  {mobileTouched && studentForm.mobile && !/^\d{10}$/.test(studentForm.mobile) && (
+                    <div style={{ color: '#ff4d4f', fontSize: '0.82rem', marginTop: '6px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'rgba(255, 77, 79, 0.08)', padding: '6px 10px', borderRadius: '6px', border: '1px solid rgba(255, 77, 79, 0.25)' }}>
+                      ⚠️ Please enter valid mobile number
+                    </div>
+                  )}
                 </div>
 
                 <div style={styles.formGroup}>

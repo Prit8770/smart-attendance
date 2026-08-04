@@ -111,10 +111,10 @@ router.post('/submit', authenticateJWT, async (req, res) => {
         return res.status(400).json({ error: 'Invalid QR code. Please scan the currently active QR.' });
       }
 
-      // Verify token 20-second interval + 25-second network/testing buffer (total 45 seconds validity from start of interval)
+      // Verify token 15-second interval + 25-second network/testing buffer (total 40 seconds validity from start of interval)
       const sessionStartMs = new Date(qrSessionRecord.created_at).getTime();
-      const tokenStartMs = sessionStartMs + tokenIndex * 20000;
-      const tokenEndMs = tokenStartMs + 45000;
+      const tokenStartMs = sessionStartMs + tokenIndex * 15000;
+      const tokenEndMs = tokenStartMs + 40000;
 
       if (nowMs < tokenStartMs - 2000) { // allow 2 seconds clock drift
         return res.status(400).json({ error: 'QR session clock drift. Please wait.' });
@@ -295,7 +295,7 @@ router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
 
 // GET report list with filters (Admin only)
 router.get('/reports', authenticateJWT, requireAdmin, async (req, res) => {
-  const { date, startDate, endDate, studentId } = req.query;
+  const { date, startDate, endDate, studentId, range } = req.query;
 
   try {
     let reqQuery = supabase.from('attendance').select(`
@@ -305,7 +305,22 @@ router.get('/reports', authenticateJWT, requireAdmin, async (req, res) => {
       qr_session:qr_session_id (created_by_faculty_id, faculty:created_by_faculty_id(name))
     `);
 
-    if (date) {
+    const todayStr = getLocalDateString();
+    if (range === 'today') {
+      reqQuery = reqQuery.eq('date', todayStr);
+    } else if (range === 'yesterday') {
+      const y = new Date();
+      y.setDate(y.getDate() - 1);
+      reqQuery = reqQuery.eq('date', getLocalDateString(y));
+    } else if (range === 'last_week') {
+      const w = new Date();
+      w.setDate(w.getDate() - 7);
+      reqQuery = reqQuery.gte('date', getLocalDateString(w)).lte('date', todayStr);
+    } else if (range === 'last_month') {
+      const m = new Date();
+      m.setDate(m.getDate() - 30);
+      reqQuery = reqQuery.gte('date', getLocalDateString(m)).lte('date', todayStr);
+    } else if (date) {
       reqQuery = reqQuery.eq('date', date);
     } else if (startDate && endDate) {
       reqQuery = reqQuery.gte('date', startDate).lte('date', endDate);

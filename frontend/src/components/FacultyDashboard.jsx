@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Users, KeyRound, QrCode, BarChart3, Download, Search, CheckCircle,
-  XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Sun, Moon, Menu, X
+  XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Sun, Moon, Menu, X, Folder
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -27,12 +27,18 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   const [activeQrSessionDetails, setActiveQrSessionDetails] = useState(null);
   const [qrSessionTimer, setQrSessionTimer] = useState(0);
   const [tokenIndex, setTokenIndex] = useState(0);
-  const [qrCodeTimer, setQrCodeTimer] = useState(20);
+  const [qrCodeTimer, setQrCodeTimer] = useState(15);
   const qrCanvasRef = useRef(null);
   const [otpRemaining, setOtpRemaining] = useState(5);
   const [activeOtpDetails, setActiveOtpDetails] = useState(null);
   const [otpCountdown, setOtpCountdown] = useState(0);
   const [qrGenerationEnabled, setQrGenerationEnabled] = useState(true);
+  const [dashModalSem, setDashModalSem] = useState('');
+  const [liveFeedSemFilter, setLiveFeedSemFilter] = useState('');
+  const [selectedSemFolder, setSelectedSemFolder] = useState(null);
+  const [folderSearchName, setFolderSearchName] = useState('');
+  const [folderSearchEnroll, setFolderSearchEnroll] = useState('');
+  const [folderSearchDate, setFolderSearchDate] = useState('');
 
   const fetchQrSettings = async () => {
     try {
@@ -177,13 +183,13 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   const fetchReportData = async () => {
     let query = '';
     if (reportType === 'today') {
-      const todayStr = new Date().toISOString().split('T')[0];
-      query = `?date=${todayStr}`;
+      query = '?range=today';
     } else if (reportType === 'yesterday') {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toISOString().split('T')[0];
-      query = `?date=${yesterdayStr}`;
+      query = '?range=yesterday';
+    } else if (reportType === 'last_week') {
+      query = '?range=last_week';
+    } else if (reportType === 'last_month') {
+      query = '?range=last_month';
     } else if (reportType === 'monthly') {
       const d = new Date();
       const startOfMonth = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
@@ -240,10 +246,12 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
             fetchStats();
             return 0;
           }
+          const totalTokens = activeQrSessionDetails?.tokens?.length || 8;
+          const intervalSec = Math.round(120 / totalTokens);
           const elapsed = 120 - (prev - 1);
-          const idx = Math.min(5, Math.floor(elapsed / 20));
+          const idx = Math.min(totalTokens - 1, Math.floor(elapsed / intervalSec));
           setTokenIndex(idx);
-          setQrCodeTimer(20 - (elapsed % 20));
+          setQrCodeTimer(intervalSec - (elapsed % intervalSec));
           return prev - 1;
         });
       }, 1000);
@@ -300,7 +308,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
         setActiveQrSessionDetails(data.session);
         setQrSessionTimer(120);
         setTokenIndex(0);
-        setQrCodeTimer(20);
+        setQrCodeTimer(15);
         fetchStats();
         setActiveTab('otp'); // Switch to view code
       } else {
@@ -514,18 +522,34 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
             {/* Present Today Modal */}
             {dashModal === 'present' && (
               <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
                   <CheckCircle size={24} color="#22c55e" />
                   <h2 style={{ ...styles.cardTitle, margin: 0 }}>Present Today</h2>
                   <span style={{ marginLeft: 'auto', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    {liveLogs.filter(l => l.status === 'Success').length} students
+                    {liveLogs.filter(l => l.status === 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).length} students
                   </span>
                 </div>
-                {liveLogs.filter(l => l.status === 'Success').length === 0 ? (
-                  <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '30px 0' }}>No present students yet today.</p>
+
+                {/* Semester Folder Buttons (4 per row grid) */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '16px' }}>
+                  <button
+                    onClick={() => setDashModalSem('')}
+                    style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === '' ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                  ><Folder size={12} /> All</button>
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+                    <button
+                      key={s}
+                      onClick={() => setDashModalSem(String(s))}
+                      style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === String(s) ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                    ><Folder size={12} /> Sem {s}</button>
+                  ))}
+                </div>
+
+                {liveLogs.filter(l => l.status === 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).length === 0 ? (
+                  <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '30px 0' }}>No present students found for selected semester folder.</p>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {liveLogs.filter(l => l.status === 'Success').map((l, i) => (
+                    {liveLogs.filter(l => l.status === 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).map((l, i) => (
                       <div key={l.id} style={{
                         display: 'flex', alignItems: 'center', gap: '12px',
                         padding: '12px 14px', borderRadius: '10px',
@@ -555,18 +579,34 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
             {/* Absent / Rejected Modal */}
             {dashModal === 'absent' && (
               <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
                   <XCircle size={24} color="#ef4444" />
                   <h2 style={{ ...styles.cardTitle, margin: 0 }}>Rejected / Absent</h2>
                   <span style={{ marginLeft: 'auto', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    {liveLogs.filter(l => l.status !== 'Success').length} students
+                    {liveLogs.filter(l => l.status !== 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).length} students
                   </span>
                 </div>
-                {liveLogs.filter(l => l.status !== 'Success').length === 0 ? (
-                  <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '30px 0' }}>No rejected attendance logs today.</p>
+
+                {/* Semester Folder Buttons (4 per row grid) */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '16px' }}>
+                  <button
+                    onClick={() => setDashModalSem('')}
+                    style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === '' ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                  ><Folder size={12} /> All</button>
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+                    <button
+                      key={s}
+                      onClick={() => setDashModalSem(String(s))}
+                      style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === String(s) ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                    ><Folder size={12} /> Sem {s}</button>
+                  ))}
+                </div>
+
+                {liveLogs.filter(l => l.status !== 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).length === 0 ? (
+                  <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '30px 0' }}>No rejected attendance logs found for selected semester folder.</p>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {liveLogs.filter(l => l.status !== 'Success').map((l, i) => (
+                    {liveLogs.filter(l => l.status !== 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).map((l, i) => (
                       <div key={l.id} style={{
                         display: 'flex', alignItems: 'center', gap: '12px',
                         padding: '12px 14px', borderRadius: '10px',
@@ -630,7 +670,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                       <canvas ref={qrCanvasRef} />
                     </div>
                     <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                      Token <strong>{tokenIndex + 1}</strong> of 6 • Rotates every 20s
+                      Token <strong>{tokenIndex + 1}</strong> of {activeQrSessionDetails?.tokens?.length || 8} • Rotates every 15s
                     </div>
                     <div style={{
                       fontSize: '2rem', fontWeight: '700', color: '#a855f7',
@@ -894,58 +934,193 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 </div>
               </div>
 
-              {/* Live Monitor */}
+              {/* Live Monitor / Semester Folders */}
               <div className="glass-panel" style={styles.cardPadding}>
                 <div className="mobile-stack-header" style={styles.flexSpaceBetween}>
-                  <h3 style={styles.cardTitle}>Live Attendance Feed</h3>
+                  <h3 style={styles.cardTitle}>
+                    {selectedSemFolder ? `📁 Semester ${selectedSemFolder} Folder Directory` : '📁 Semester Attendance Folders (Sem 1 to Sem 8)'}
+                  </h3>
                   <div style={styles.badgeSuccess}>Live Polling</div>
                 </div>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '16px' }}>
-                  Student check-ins will pop up here in real time.
-                </p>
 
-                <div style={styles.tableScrollable} className="custom-table-container">
-                  <table className="custom-table" style={styles.table}>
-                    <thead>
-                      <tr>
-                        <th style={styles.tableTh}>Student</th>
-                        <th style={styles.tableTh}>Enrollment No</th>
-                        <th style={styles.tableTh}>Course/Sem</th>
-                        <th style={styles.tableTh}>Time</th>
-                        <th style={styles.tableTh}>Distance</th>
-                        <th style={styles.tableTh}>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {liveLogs.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} style={{ ...styles.noDataRow, textAlign: 'center' }}>
-                            No student registrations today yet.
-                          </td>
-                        </tr>
-                      ) : (
-                        liveLogs.map((log) => (
-                          <tr key={log.id}>
-                            <td style={styles.tableTd}>{log.name}</td>
-                            <td style={styles.tableTd}>{log.enrollment_no}</td>
-                            <td style={styles.tableTd}>{log.course} (Sem {log.semester})</td>
-                            <td style={styles.tableTd}>{log.time}</td>
-                            <td style={styles.tableTd}>{log.distance ? `${Math.round(log.distance)}m` : '-'}</td>
-                            <td style={styles.tableTd}>
-                              <span style={{
-                                ...styles.statusTag,
-                                ...(log.status === 'Success' ? styles.statusSuccess : styles.statusFail)
-                              }}>
-                                {log.status === 'Success' ? 'Present' : 'Rejected'}
+                {selectedSemFolder === null ? (
+                  <>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '20px' }}>
+                      Click on any Semester Folder to open and view student attendance list for that semester.
+                    </p>
+
+                    {/* 8 Semester Folder Cards (1 Row Mein 4 Folders) */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                      {[1, 2, 3, 4, 5, 6, 7, 8].map(sem => {
+                        const semLogs = liveLogs.filter(l => String(l.semester) === String(sem));
+                        const presentCount = semLogs.filter(l => l.status === 'Success').length;
+                        const rejectCount = semLogs.filter(l => l.status !== 'Success').length;
+
+                        return (
+                          <div
+                            key={sem}
+                            onClick={() => setSelectedSemFolder(sem)}
+                            style={{
+                              background: 'rgba(147, 51, 234, 0.08)',
+                              border: '1px solid rgba(147, 51, 234, 0.3)',
+                              borderRadius: '16px',
+                              padding: '20px 16px',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s ease',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '10px'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <Folder size={32} color="#a855f7" />
+                              <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '12px', background: 'rgba(168,85,247,0.2)', color: '#c084fc', fontWeight: '600' }}>
+                                {semLogs.length} Records
                               </span>
-                            </td>
-                          </tr>
-                        ))
+                            </div>
+
+                            <div>
+                              <div style={{ fontWeight: '700', fontSize: '1.05rem', color: 'var(--text-primary)' }}>
+                                Sem {sem} Folder
+                              </div>
+                              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                Semester {sem} Student List
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '8px', fontSize: '0.75rem', marginTop: '4px' }}>
+                              <span style={{ color: '#4ade80', fontWeight: '600' }}>✓ {presentCount} Present</span>
+                              <span style={{ color: '#f87171', fontWeight: '600' }}>✗ {rejectCount} Rejected</span>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-primary"
+                              style={{ width: '100%', padding: '6px 0', fontSize: '0.8rem', marginTop: '4px' }}
+                            >
+                              📂 Open Sem {sem} Folder
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  /* Single Semester Folder View */
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                      <button
+                        onClick={() => { setSelectedSemFolder(null); setFolderSearchName(''); setFolderSearchEnroll(''); setFolderSearchDate(''); }}
+                        className="btn btn-secondary"
+                        style={{ padding: '6px 14px', fontSize: '0.85rem' }}
+                      >
+                        ← Back to All Folders
+                      </button>
+
+                      <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                        Showing student attendance list for <strong>Semester {selectedSemFolder}</strong>
+                      </div>
+                    </div>
+
+                    {/* Filters Inside Semester Folder */}
+                    <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid var(--border-light)' }}>
+                      <div style={styles.filterGroup}>
+                        <label style={styles.filterLabel}>Filter by Name</label>
+                        <input
+                          type="text"
+                          placeholder="Search student name..."
+                          value={folderSearchName}
+                          onChange={(e) => setFolderSearchName(e.target.value)}
+                          style={{ ...styles.selectInput, width: '180px' }}
+                        />
+                      </div>
+                      <div style={styles.filterGroup}>
+                        <label style={styles.filterLabel}>Filter by Enrollment</label>
+                        <input
+                          type="text"
+                          placeholder="Search enrollment..."
+                          value={folderSearchEnroll}
+                          onChange={(e) => setFolderSearchEnroll(e.target.value)}
+                          style={{ ...styles.selectInput, width: '180px' }}
+                        />
+                      </div>
+                      <div style={styles.filterGroup}>
+                        <label style={styles.filterLabel}>Filter by Date</label>
+                        <input
+                          type="date"
+                          value={folderSearchDate}
+                          onChange={(e) => setFolderSearchDate(e.target.value)}
+                          style={{ ...styles.selectInput, width: '160px' }}
+                        />
+                      </div>
+                      {(folderSearchName || folderSearchEnroll || folderSearchDate) && (
+                        <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                          <button
+                            onClick={() => { setFolderSearchName(''); setFolderSearchEnroll(''); setFolderSearchDate(''); }}
+                            className="btn btn-secondary"
+                            style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                          >Clear</button>
+                        </div>
                       )}
-                    </tbody>
-                    </table>
-                  </div>
-                </div>
+                    </div>
+
+                    {/* Table of Semester Students */}
+                    <div style={styles.tableScrollable} className="custom-table-container">
+                      <table className="custom-table" style={styles.table}>
+                        <thead>
+                          <tr>
+                            <th style={styles.tableTh}>Student Name</th>
+                            <th style={styles.tableTh}>Enrollment No</th>
+                            <th style={styles.tableTh}>Date</th>
+                            <th style={styles.tableTh}>Time</th>
+                            <th style={styles.tableTh}>Distance</th>
+                            <th style={styles.tableTh}>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            const semLogs = liveLogs.filter(log => String(log.semester) === String(selectedSemFolder));
+                            const filtered = semLogs.filter(log => {
+                              const matchName = !folderSearchName || (log.name && log.name.toLowerCase().includes(folderSearchName.toLowerCase()));
+                              const matchEnroll = !folderSearchEnroll || (log.enrollment_no && log.enrollment_no.toLowerCase().includes(folderSearchEnroll.toLowerCase()));
+                              const matchDate = !folderSearchDate || log.date === folderSearchDate;
+                              return matchName && matchEnroll && matchDate;
+                            });
+
+                            if (filtered.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan={6} style={{ ...styles.noDataRow, textAlign: 'center' }}>
+                                    No attendance records found for Semester {selectedSemFolder}.
+                                  </td>
+                                </tr>
+                              );
+                            }
+
+                            return filtered.map((log) => (
+                              <tr key={log.id}>
+                                <td style={{ ...styles.tableTd, fontWeight: '600' }}>{log.name}</td>
+                                <td style={styles.tableTd}>{log.enrollment_no}</td>
+                                <td style={styles.tableTd}>{log.date || 'Today'}</td>
+                                <td style={styles.tableTd}>{log.time}</td>
+                                <td style={styles.tableTd}>{log.distance ? `${Math.round(log.distance)}m` : '-'}</td>
+                                <td style={styles.tableTd}>
+                                  <span style={{
+                                    ...styles.statusTag,
+                                    ...(log.status === 'Success' ? styles.statusSuccess : styles.statusFail)
+                                  }}>
+                                    {log.status === 'Success' ? 'Present' : 'Rejected'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
           )}
 
@@ -1027,8 +1202,15 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     </div>
 
                     <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '20px' }}>
-                      Token index {tokenIndex + 1} of 6 is active. Keep this screen visible to the class.
+                      Token index {tokenIndex + 1} of {activeQrSessionDetails?.tokens?.length || 8} is active. Keep this screen visible to the class.
                     </p>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => { setActiveQrSessionDetails(null); setQrSessionTimer(0); }}
+                      style={{ marginTop: '16px', width: '100%', fontSize: '0.85rem' }}
+                    >
+                      End Current Session
+                    </button>
                   </div>
                 ) : activeOtpDetails ? (
                   <div style={styles.qrDisplayBox}>
@@ -1094,7 +1276,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   >
                     <option value="today" style={{ color: '#000' }}>Today's Logs</option>
                     <option value="yesterday" style={{ color: '#000' }}>Yesterday's Logs</option>
-                    <option value="monthly" style={{ color: '#000' }}>Current Month</option>
+                    <option value="last_week" style={{ color: '#000' }}>Last 7 Days (Last Week)</option>
+                    <option value="last_month" style={{ color: '#000' }}>Last 30 Days (Last Month)</option>
                     <option value="student_wise" style={{ color: '#000' }}>Student-Wise</option>
                   </select>
                 </div>
@@ -1114,6 +1297,34 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     </select>
                   </div>
                 )}
+              </div>
+
+              {/* Semester Folder Navigation (4 per row grid) */}
+              <div style={{ marginTop: '16px', padding: '14px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--border-light)' }}>
+                <div style={{ fontSize: '0.88rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Folder size={16} color="#a855f7" /> Semester Folders (Sem 1 to Sem 8):
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className={`btn ${filterSem === '' ? 'btn-primary' : 'btn-secondary'}`}
+                    onClick={() => setFilterSem('')}
+                    style={{ fontSize: '0.82rem', padding: '8px 6px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', width: '100%' }}
+                  >
+                    <Folder size={14} /> All Folders
+                  </button>
+                  {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      className={`btn ${filterSem === String(s) ? 'btn-primary' : 'btn-secondary'}`}
+                      onClick={() => setFilterSem(String(s))}
+                      style={{ fontSize: '0.82rem', padding: '8px 6px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', width: '100%' }}
+                    >
+                      <Folder size={14} /> Sem {s}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {/* Search Filters Row */}
@@ -1137,19 +1348,6 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     onChange={(e) => setFilterName(e.target.value)}
                     style={{ ...styles.selectInput, width: '180px' }}
                   />
-                </div>
-                <div style={styles.filterGroup}>
-                  <label style={styles.filterLabel}>Semester</label>
-                  <select
-                    value={filterSem}
-                    onChange={(e) => setFilterSem(e.target.value)}
-                    style={styles.selectInput}
-                  >
-                    <option value="" style={{ color: '#000' }}>All Semesters</option>
-                    {[1,2,3,4,5,6,7,8].map(s => (
-                      <option key={s} value={String(s)} style={{ color: '#000' }}>Sem {s}</option>
-                    ))}
-                  </select>
                 </div>
                 {(filterEnrollment || filterName || filterSem) && (
                   <div style={{ display: 'flex', alignItems: 'flex-end' }}>

@@ -65,7 +65,15 @@ export default function Login({ onLoginSuccess, onBack }) {
         body: JSON.stringify(payload)
       });
 
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch (e) {
+        if (!response.ok) {
+          throw new Error('Backend server is unreachable or returned an invalid response. Please ensure the backend server is running.');
+        }
+        throw new Error('Invalid JSON response received from server.');
+      }
 
       if (!response.ok) {
         throw new Error(data.error || 'Login failed. Please try again.');

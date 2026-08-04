@@ -76,9 +76,9 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
       return res.status(403).json({ error: 'Daily limit reached. You can generate a maximum of 5 QR sessions per day.' });
     }
 
-    // Generate 6 random 16-character hex tokens (120 seconds valid, changed every 20 seconds)
+    // Generate 8 random 16-character hex tokens (120 seconds valid, changed every 15 seconds)
     const tokens = [];
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 8; i++) {
       tokens.push(crypto.randomBytes(8).toString('hex'));
     }
 

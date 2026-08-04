@@ -46,6 +46,14 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'All fields are required' });
   }
 
+  if (!/^\d{10}$/.test(String(enrollment_no).trim())) {
+    return res.status(400).json({ error: 'Please enter valid enrollment number' });
+  }
+
+  if (!/^\d{10}$/.test(String(mobile).trim())) {
+    return res.status(400).json({ error: 'Please enter valid mobile number' });
+  }
+
   // Generate username and password
   const username = enrollment_no.toLowerCase().trim();
   const rawPassword = (customPassword && customPassword.trim() !== '') ? customPassword.trim() : generatePassword();
@@ -95,6 +103,10 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
 
   if (!name || !course || !semester || !mobile) {
     return res.status(400).json({ error: 'All fields are required' });
+  }
+
+  if (!/^\d{10}$/.test(String(mobile).trim())) {
+    return res.status(400).json({ error: 'Please enter valid mobile number' });
   }
 
   try {
@@ -158,6 +170,11 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
 
     if (!enrollment_no || !name || !course || !semester || !mobile) {
       results.errors.push(`Row ${i + 1}: Missing required fields.`);
+      continue;
+    }
+
+    if (!/^\d{10}$/.test(String(enrollment_no).trim())) {
+      results.errors.push(`Row ${i + 1}: Please enter valid enrollment number (Must be 10 digits).`);
       continue;
     }
 
