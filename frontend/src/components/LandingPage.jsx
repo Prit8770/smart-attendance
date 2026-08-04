@@ -27,27 +27,29 @@ const LandingPage = ({ onGetStarted }) => {
 
       {/* Navbar/Header */}
       <header style={styles.header} className="animate-fade-in-up">
-        <div style={styles.logoContainer}>
-          <div style={styles.logoIcon}>
-            <img src="/logo.png" alt="LJCCA" style={{ width: '48px', height: '48px', objectFit: 'contain' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
+          <div style={styles.logoContainer}>
+            <div style={styles.logoIcon}>
+              <img src="/logo.png" alt="LJCCA" style={{ width: '48px', height: '48px', objectFit: 'contain' }} />
+            </div>
+            <h1 style={styles.logoText}>Smart<span style={{color: 'var(--primary)'}}>Attend</span></h1>
           </div>
-          <h1 style={styles.logoText}>Smart<span style={{color: 'var(--primary)'}}>Attend</span></h1>
+          <button className="btn landing-login-btn" onClick={onGetStarted} style={styles.loginBtn}>
+            Login Portal
+          </button>
         </div>
-        <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <button className="btn" style={styles.ghostBtn} onClick={() => {
+            document.getElementById('how-it-works').scrollIntoView({ behavior: 'smooth' });
+          }}>
+            How it Works
+          </button>
           <button 
             style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '8px', display: 'flex', color: 'var(--text-primary)' }} 
             onClick={() => setIsDark(!isDark)}
             title="Toggle Theme"
           >
             {isDark ? <Sun size={20} /> : <Moon size={20} />}
-          </button>
-          <button className="btn" style={styles.ghostBtn} onClick={() => {
-            document.getElementById('how-it-works').scrollIntoView({ behavior: 'smooth' });
-          }}>
-            How it Works
-          </button>
-          <button className="btn btn-secondary" onClick={onGetStarted} style={styles.loginBtn}>
-            Login Portal
           </button>
         </div>
       </header>
@@ -248,9 +250,11 @@ const styles = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '20px 5%',
+    padding: '16px 5%',
     position: 'relative',
-    zIndex: 10
+    zIndex: 10,
+    flexWrap: 'wrap',
+    gap: '12px'
   },
   logoContainer: {
     display: 'flex',
@@ -275,9 +279,16 @@ const styles = {
     display: 'none' // Hidden on mobile, handled in media queries optionally, but inline let's just keep it simple. Actually, we'll show it.
   },
   loginBtn: {
-    padding: '10px 24px',
+    padding: '7px 16px',
     borderRadius: '99px',
-    fontWeight: '600'
+    fontSize: '0.85rem',
+    fontWeight: '600',
+    background: '#2563eb',
+    color: '#ffffff',
+    border: 'none',
+    boxShadow: '0 4px 14px rgba(37, 99, 235, 0.45)',
+    transition: 'all 0.3s ease',
+    cursor: 'pointer'
   },
   main: {
     flex: 1,
