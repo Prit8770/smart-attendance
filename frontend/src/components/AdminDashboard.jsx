@@ -1009,6 +1009,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     setStudentForm({
       id: null,
       enrollment_no: '',
+      roll_no: '',
+      division: '',
       name: '',
       course: '',
       semester: '',
@@ -1027,6 +1029,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     setStudentForm({
       id: student.id,
       enrollment_no: student.enrollment_no,
+      roll_no: student.roll_no || '',
+      division: student.division || '',
       name: student.name,
       course: student.course,
       semester: student.semester,
@@ -1358,15 +1362,15 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
               <div 
                 className="glass-panel stat-card" 
-                style={{ cursor: 'pointer', border: activeStatsList === 'present' ? '1.5px solid #10b981' : '1px solid rgba(255,255,255,0.08)' }} 
+                style={{ cursor: 'pointer', border: activeStatsList === 'present' ? '1.5px solid #3b82f6' : '1px solid rgba(255,255,255,0.08)' }} 
                 onClick={() => setActiveStatsList(prev => prev === 'present' ? null : 'present')}
               >
                 <div className="stat-card-info">
                   <h4>Present Today</h4>
-                  <p style={{ color: '#10b981' }}>{statsLoading ? '...' : stats.presentToday}</p>
+                  <p style={{ color: '#3b82f6' }}>{statsLoading ? '...' : stats.presentToday}</p>
                 </div>
-                <div className="stat-card-icon" style={{ background: 'rgba(16, 185, 129, 0.15)' }}>
-                  <CheckCircle size={24} color="#10b981" />
+                <div className="stat-card-icon" style={{ background: 'rgba(59, 130, 246, 0.15)' }}>
+                  <CheckCircle size={24} color="#3b82f6" />
                 </div>
               </div>
 
@@ -1495,6 +1499,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <>
                         <thead>
                           <tr>
+                            <th>Roll No</th>
                             <th>Enrollment No</th>
                             <th>Name</th>
                             <th>Course</th>
@@ -1509,10 +1514,11 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           {(() => {
                             const presentLogs = liveLogs.filter(log => log.status === 'Success');
                             if (presentLogs.length === 0) {
-                              return <tr><td colSpan="8" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)', fontStyle: 'italic' }}>No students checked in successfully today yet.</td></tr>;
+                              return <tr><td colSpan="9" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)', fontStyle: 'italic' }}>No students checked in successfully today yet.</td></tr>;
                             }
                             return presentLogs.map(log => (
                               <tr key={log.id}>
+                                <td style={{ fontWeight: '700', color: 'var(--primary)' }}>{log.roll_no || '-'}</td>
                                 <td>{log.enrollment_no}</td>
                                 <td style={{ fontWeight: '600' }}>{log.name}</td>
                                 <td>{log.course}</td>
@@ -1713,10 +1719,12 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                 <table className="custom-table">
                   <thead>
                     <tr>
+                      <th>Roll No</th>
                       <th>Enrollment No</th>
                       <th>Name</th>
                       <th>Course</th>
                       <th>Semester</th>
+                      <th>Division</th>
                       <th>Mobile</th>
                       <th>Username</th>
                       <th>Password</th>
@@ -1726,10 +1734,12 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   <tbody>
                     {filteredStudents.map((student) => (
                       <tr key={student.id}>
+                        <td style={{ fontWeight: 600, color: 'var(--primary)' }}>{student.roll_no || '-'}</td>
                         <td>{student.enrollment_no}</td>
                         <td style={{ fontWeight: 600 }}>{student.name}</td>
                         <td>{student.course}</td>
                         <td>Sem {student.semester}</td>
+                        <td style={{ fontWeight: 600 }}>{student.division || '-'}</td>
                         <td>{student.mobile}</td>
                         <td><code>{student.username}</code></td>
                         <td><code>{student.plain_password}</code></td>
@@ -2144,7 +2154,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
               <div style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 <Folder size={18} color="#a855f7" /> Semester Folders (Sem 1 to Sem 8):
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '16px' }}>
+              <div className="semester-folder-grid" style={{ gap: '10px', marginBottom: '16px' }}>
                 <button
                   type="button"
                   className={`btn ${reportFilterSem === '' ? 'btn-primary' : 'btn-secondary'}`}
@@ -2447,6 +2457,17 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                 </div>
 
                 <div style={styles.formGroup}>
+                  <label style={styles.formLabel}>Roll Number (Optional)</label>
+                  <input
+                    type="text"
+                    className="glass-input"
+                    placeholder="e.g. 101"
+                    value={studentForm.roll_no || ''}
+                    onChange={(e) => setStudentForm({ ...studentForm, roll_no: e.target.value })}
+                  />
+                </div>
+
+                <div style={styles.formGroup}>
                   <label style={styles.formLabel}>Student Full Name</label>
                   <input
                     type="text"
@@ -2481,6 +2502,17 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     value={studentForm.semester}
                     onChange={(e) => setStudentForm({ ...studentForm, semester: e.target.value })}
                     required
+                  />
+                </div>
+
+                <div style={styles.formGroup}>
+                  <label style={styles.formLabel}>Division / Section (Optional)</label>
+                  <input
+                    type="text"
+                    className="glass-input"
+                    placeholder="e.g. A, B, Div-1 (Leave blank if no division)"
+                    value={studentForm.division || ''}
+                    onChange={(e) => setStudentForm({ ...studentForm, division: e.target.value })}
                   />
                 </div>
 
@@ -2950,37 +2982,50 @@ const styles = {
     left: 0,
     right: 0,
     bottom: 0,
-    background: 'rgba(0,0,0,0.6)',
-    backdropFilter: 'blur(4px)',
+    background: 'rgba(0,0,0,0.7)',
+    backdropFilter: 'blur(6px)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 999
+    zIndex: 999,
+    padding: '16px'
   },
   modalContent: {
     width: '100%',
-    maxWidth: '480px',
-    padding: '30px',
-    boxShadow: '0 20px 40px rgba(0,0,0,0.5)'
+    maxWidth: '500px',
+    maxHeight: '85vh',
+    display: 'flex',
+    flexDirection: 'column',
+    padding: '24px',
+    boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+    borderRadius: '16px',
+    overflow: 'hidden'
   },
   modalTitle: {
     fontFamily: 'var(--font-display)',
     fontSize: '1.25rem',
     fontWeight: '600',
     color: 'var(--text-primary)',
-    marginBottom: '20px',
-    textAlign: 'center'
+    marginBottom: '16px',
+    textAlign: 'center',
+    flexShrink: 0
   },
   modalForm: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px'
+    gap: '14px',
+    overflowY: 'auto',
+    paddingRight: '6px',
+    flex: 1
   },
   modalActions: {
     display: 'flex',
     justifyContent: 'flex-end',
     gap: '10px',
-    marginTop: '16px'
+    marginTop: '16px',
+    paddingTop: '14px',
+    borderTop: '1px solid rgba(255,255,255,0.08)',
+    flexShrink: 0
   },
   credentialsSuccessCard: {
     display: 'flex',

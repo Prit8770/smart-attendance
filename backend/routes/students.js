@@ -29,9 +29,10 @@ router.get('/', authenticateJWT, async (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
   try {
-    const { data: students, error } = await supabase.from('students').select('id, enrollment_no, name, course, semester, mobile, username, plain_password');
+    const { data: students, error } = await supabase.from('students').select('*');
     if (error) throw error;
-    res.json(students || []);
+    const safeStudents = (students || []).map(({ password, ...rest }) => rest);
+    res.json(safeStudents);
   } catch (err) {
     console.error('Error fetching students:', err);
     res.status(500).json({ error: 'Failed to fetch students' });
@@ -40,7 +41,7 @@ router.get('/', authenticateJWT, async (req, res) => {
 
 // POST add new student
 router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
-  const { enrollment_no, name, course, semester, mobile, password: customPassword } = req.body;
+  const { enrollment_no, roll_no, division, name, course, semester, mobile, password: customPassword } = req.body;
 
   if (!enrollment_no || !name || !course || !semester || !mobile) {
     return res.status(400).json({ error: 'All fields are required' });
@@ -70,9 +71,13 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Student with this enrollment number or username already exists' });
     }
 
-    const { data: result, error } = await supabase.from('students').insert([{
+    const newStudentObj = {
       enrollment_no, name, course, semester, mobile, username, password: hashedPassword, plain_password: rawPassword
-    }]).select().single();
+    };
+    if (roll_no && String(roll_no).trim() !== '') newStudentObj.roll_no = String(roll_no).trim();
+    if (division && String(division).trim() !== '') newStudentObj.division = String(division).trim();
+
+    const { data: result, error } = await supabase.from('students').insert([newStudentObj]).select().single();
     
     if (error) throw error;
 
@@ -99,7 +104,7 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
 // PUT edit student
 router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { name, course, semester, mobile, resetPassword, password } = req.body;
+  const { roll_no, division, name, course, semester, mobile, resetPassword, password } = req.body;
 
   if (!name || !course || !semester || !mobile) {
     return res.status(400).json({ error: 'All fields are required' });
@@ -116,6 +121,12 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
     }
 
     let updateObj = { name, course, semester, mobile };
+    if (student.hasOwnProperty('roll_no') || (roll_no && String(roll_no).trim() !== '')) {
+      updateObj.roll_no = (roll_no && String(roll_no).trim() !== '') ? String(roll_no).trim() : null;
+    }
+    if (student.hasOwnProperty('division') || (division && String(division).trim() !== '')) {
+      updateObj.division = (division && String(division).trim() !== '') ? String(division).trim() : null;
+    }
     let newPassword = null;
 
     if (password && password.trim() !== '') {
@@ -166,7 +177,7 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
 
   for (let i = 0; i < importedList.length; i++) {
     const student = importedList[i];
-    const { enrollment_no, name, course, semester, mobile, password } = student;
+    const { enrollment_no, roll_no, division, name, course, semester, mobile, password } = student;
 
     if (!enrollment_no || !name || !course || !semester || !mobile) {
       results.errors.push(`Row ${i + 1}: Missing required fields.`);
@@ -190,7 +201,7 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
       const rawPassword = (password && password.toString().trim() !== '') ? password.toString().trim() : generatePassword();
       const hashedPassword = bcrypt.hashSync(rawPassword, 10);
 
-      const { error } = await supabase.from('students').insert([{
+      const importObj = {
         enrollment_no: enrollment_no.toString().trim(),
         name: name.trim(),
         course: course.trim(),
@@ -199,7 +210,11 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
         username,
         password: hashedPassword,
         plain_password: rawPassword
-      }]);
+      };
+      if (roll_no && String(roll_no).trim() !== '') importObj.roll_no = String(roll_no).trim();
+      if (division && String(division).trim() !== '') importObj.division = String(division).trim();
+
+      const { error } = await supabase.from('students').insert([importObj]);
       
       if (error) throw error;
 

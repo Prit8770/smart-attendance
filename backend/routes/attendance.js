@@ -256,7 +256,7 @@ router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
     const { data: logs } = await supabase.from('attendance')
       .select(`
         id, time, distance, status, date, qr_session_id,
-        student:student_id (enrollment_no, name, course, semester, mobile),
+        student:student_id (*),
         otp:otp_id (otp, generated_by, faculty:generated_by(name)),
         qr_session:qr_session_id (created_by_faculty_id, faculty:created_by_faculty_id(name))
       `)
@@ -274,6 +274,8 @@ router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
     const flatLogs = filteredLogs.map(log => ({
       id: log.id,
       enrollment_no: log.student?.enrollment_no,
+      roll_no: log.student?.roll_no,
+      division: log.student?.division,
       name: log.student?.name,
       course: log.student?.course,
       semester: log.student?.semester,
@@ -300,7 +302,7 @@ router.get('/reports', authenticateJWT, requireAdmin, async (req, res) => {
   try {
     let reqQuery = supabase.from('attendance').select(`
       id, time, distance, status, date, qr_session_id,
-      student:student_id (enrollment_no, name, course, semester, mobile),
+      student:student_id (*),
       otp:otp_id (otp, generated_by, faculty:generated_by(name)),
       qr_session:qr_session_id (created_by_faculty_id, faculty:created_by_faculty_id(name))
     `);
@@ -346,6 +348,8 @@ router.get('/reports', authenticateJWT, requireAdmin, async (req, res) => {
     const flatReports = filteredReports.map(log => ({
       id: log.id,
       enrollment_no: log.student?.enrollment_no,
+      roll_no: log.student?.roll_no,
+      division: log.student?.division,
       name: log.student?.name,
       course: log.student?.course,
       semester: log.student?.semester,

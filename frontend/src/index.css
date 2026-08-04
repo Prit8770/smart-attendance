@@ -1240,3 +1240,18 @@ img[src="/logo.png"] {
   padding: 4px;
   transition: background-color 0.3s;
 }
+
+/* Responsive Semester Folder Grid (4 folders/row Desktop, 2 folders/row Mobile) */
+.semester-folder-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 768px) {
+  .semester-folder-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px !important;
+  }
+}

@@ -523,15 +523,15 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
             {dashModal === 'present' && (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                  <CheckCircle size={24} color="#22c55e" />
+                  <CheckCircle size={24} color="#3b82f6" />
                   <h2 style={{ ...styles.cardTitle, margin: 0 }}>Present Today</h2>
                   <span style={{ marginLeft: 'auto', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
                     {liveLogs.filter(l => l.status === 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).length} students
                   </span>
                 </div>
 
-                {/* Semester Folder Buttons (4 per row grid) */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '16px' }}>
+                {/* Semester Folder Buttons (4 per row Desktop, 2 per row Mobile) */}
+                <div className="semester-folder-grid" style={{ gap: '6px', marginBottom: '16px' }}>
                   <button
                     onClick={() => setDashModalSem('')}
                     style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === '' ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
@@ -553,20 +553,20 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                       <div key={l.id} style={{
                         display: 'flex', alignItems: 'center', gap: '12px',
                         padding: '12px 14px', borderRadius: '10px',
-                        background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.2)'
+                        background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.3)'
                       }}>
                         <div style={{
                           width: '32px', height: '32px', borderRadius: '50%',
-                          background: 'rgba(34,197,94,0.2)', display: 'flex',
+                          background: 'rgba(59, 130, 246, 0.25)', display: 'flex',
                           alignItems: 'center', justifyContent: 'center',
-                          fontSize: '0.8rem', fontWeight: '700', color: '#4ade80', flexShrink: 0
+                          fontSize: '0.8rem', fontWeight: '700', color: '#3b82f6', flexShrink: 0
                         }}>{i + 1}</div>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.9rem' }}>{l.name}</div>
-                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{l.enrollment_no} • {l.course} Sem {l.semester}</div>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{l.roll_no ? `Roll: ${l.roll_no} • ` : ''}{l.enrollment_no} • {l.course} Sem {l.semester}{l.division ? ` (Div ${l.division})` : ''}</div>
                         </div>
                         <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: '0.78rem', color: '#4ade80', fontWeight: '600' }}>✓ Present</div>
+                          <div style={{ fontSize: '0.78rem', color: '#3b82f6', fontWeight: '600' }}>✓ Present</div>
                           <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.time}</div>
                         </div>
                       </div>
@@ -587,8 +587,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   </span>
                 </div>
 
-                {/* Semester Folder Buttons (4 per row grid) */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '16px' }}>
+                {/* Semester Folder Buttons (4 per row Desktop, 2 per row Mobile) */}
+                <div className="semester-folder-grid" style={{ gap: '6px', marginBottom: '16px' }}>
                   <button
                     onClick={() => setDashModalSem('')}
                     style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === '' ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
@@ -620,7 +620,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                         }}>{i + 1}</div>
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.9rem' }}>{l.name}</div>
-                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{l.enrollment_no} • {l.course} Sem {l.semester}</div>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{l.roll_no ? `Roll: ${l.roll_no} • ` : ''}{l.enrollment_no} • {l.course} Sem {l.semester}{l.division ? ` (Div ${l.division})` : ''}</div>
                         </div>
                         <div style={{ textAlign: 'right' }}>
                           <div style={{ fontSize: '0.78rem', color: '#f87171', fontWeight: '600' }}>✗ Rejected</div>
@@ -811,7 +811,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 >
                   <div style={styles.statHeader}>
                     <span style={styles.statLabel}>Present Today</span>
-                    <CheckCircle size={20} color="#22c55e" />
+                    <CheckCircle size={20} color="#3b82f6" />
                   </div>
                   <div style={styles.statVal}>{stats.presentToday}</div>
                   <div style={styles.statSubText}>Students marked present</div>
@@ -949,8 +949,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                       Click on any Semester Folder to open and view student attendance list for that semester.
                     </p>
 
-                    {/* 8 Semester Folder Cards (1 Row Mein 4 Folders) */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '24px' }}>
+                    {/* 8 Semester Folder Cards (4 per row Desktop, 2 per row Mobile) */}
+                    <div className="semester-folder-grid">
                       {[1, 2, 3, 4, 5, 6, 7, 8].map(sem => {
                         const semLogs = liveLogs.filter(l => String(l.semester) === String(sem));
                         const presentCount = semLogs.filter(l => l.status === 'Success').length;
@@ -1069,6 +1069,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                       <table className="custom-table" style={styles.table}>
                         <thead>
                           <tr>
+                            <th style={styles.tableTh}>Roll No</th>
                             <th style={styles.tableTh}>Student Name</th>
                             <th style={styles.tableTh}>Enrollment No</th>
                             <th style={styles.tableTh}>Date</th>
@@ -1090,7 +1091,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                             if (filtered.length === 0) {
                               return (
                                 <tr>
-                                  <td colSpan={6} style={{ ...styles.noDataRow, textAlign: 'center' }}>
+                                  <td colSpan={7} style={{ ...styles.noDataRow, textAlign: 'center' }}>
                                     No attendance records found for Semester {selectedSemFolder}.
                                   </td>
                                 </tr>
@@ -1099,7 +1100,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
                             return filtered.map((log) => (
                               <tr key={log.id}>
-                                <td style={{ ...styles.tableTd, fontWeight: '600' }}>{log.name}</td>
+                                <td style={{ ...styles.tableTd, fontWeight: '700', color: 'var(--primary)' }}>{log.roll_no || '-'}</td>
+                                <td style={{ ...styles.tableTd, fontWeight: '600' }}>{log.name}{log.division ? <span style={{ marginLeft: '6px', fontSize: '0.75rem', padding: '2px 6px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--primary)' }}>Div {log.division}</span> : null}</td>
                                 <td style={styles.tableTd}>{log.enrollment_no}</td>
                                 <td style={styles.tableTd}>{log.date || 'Today'}</td>
                                 <td style={styles.tableTd}>{log.time}</td>
@@ -1304,7 +1306,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 <div style={{ fontSize: '0.88rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <Folder size={16} color="#a855f7" /> Semester Folders (Sem 1 to Sem 8):
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+                <div className="semester-folder-grid" style={{ gap: '8px', marginBottom: 0 }}>
                   <button
                     type="button"
                     className={`btn ${filterSem === '' ? 'btn-primary' : 'btn-secondary'}`}
