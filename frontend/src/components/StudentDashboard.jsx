@@ -30,10 +30,6 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   const [scannerError, setScannerError] = useState('');
   const html5QrCodeRef = useRef(null);
 
-  const mapContainerRef = useRef(null);
-  const mapRef = useRef(null);
-  const studentMarkerRef = useRef(null);
-
   // Haversine formula to compute distance in meters on client side for display
   function calculateDistance(lat1, lon1, lat2, lon2) {
     const R = 6371e3; // Earth radius in meters
@@ -191,102 +187,6 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     };
   }, [token, onLogout]);
 
-  // Initialize Student Map ONCE when college location is loaded
-  useEffect(() => {
-    if (!collegeLoc || !mapContainerRef.current || !window.L) return;
-
-    if (mapRef.current) {
-      try {
-        mapRef.current.off();
-        mapRef.current.remove();
-      } catch (e) {}
-      mapRef.current = null;
-      studentMarkerRef.current = null;
-    }
-
-    const centerLat = collegeLoc.latitude;
-    const centerLon = collegeLoc.longitude;
-    const radius = collegeLoc.radius || 200;
-
-    const map = window.L.map(mapContainerRef.current, {
-      dragging: true,
-      zoomControl: true,
-      scrollWheelZoom: false
-    }).setView([centerLat, centerLon], 16);
-
-    mapRef.current = map;
-
-    // Ensure Leaflet map correctly calculates width and mobile container size
-    setTimeout(() => {
-      if (mapRef.current) {
-        mapRef.current.invalidateSize();
-      }
-    }, 300);
-
-    window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
-
-    const collegeMarker = window.L.marker([centerLat, centerLon], {
-      title: "College Campus Center"
-    }).addTo(map);
-    collegeMarker.bindPopup("<b>College Campus Center</b>");
-
-    window.L.circle([centerLat, centerLon], {
-      color: '#9333ea',
-      fillColor: '#9333ea',
-      fillOpacity: 0.12,
-      radius: radius
-    }).addTo(map);
-
-    return () => {
-      if (mapRef.current) {
-        try {
-          mapRef.current.off();
-          mapRef.current.remove();
-        } catch (e) {}
-        mapRef.current = null;
-        studentMarkerRef.current = null;
-      }
-    };
-  }, [collegeLoc]);
-
-  // Dynamically update ONLY student position marker without destroying the map
-  useEffect(() => {
-    if (!mapRef.current || !location || !window.L) return;
-
-    const studentLat = location.latitude;
-    const studentLon = location.longitude;
-
-    if (studentMarkerRef.current) {
-      studentMarkerRef.current.setLatLng([studentLat, studentLon]);
-    } else {
-      studentMarkerRef.current = window.L.circleMarker([studentLat, studentLon], {
-        radius: 8,
-        fillColor: '#2563eb',
-        color: 'var(--text-primary)',
-        weight: 2,
-        opacity: 1,
-        fillOpacity: 0.8
-      }).addTo(mapRef.current);
-      studentMarkerRef.current.bindPopup("<b>Your GPS Position</b>");
-    }
-
-    if (collegeLoc) {
-      try {
-        const bounds = window.L.latLngBounds([
-          [collegeLoc.latitude, collegeLoc.longitude],
-          [studentLat, studentLon]
-        ]);
-        mapRef.current.fitBounds(bounds, { padding: [15, 15] });
-        setTimeout(() => {
-          if (mapRef.current) {
-            mapRef.current.invalidateSize();
-          }
-        }, 200);
-      } catch (e) {}
-    }
-  }, [location, collegeLoc]);
 
   // Request browser Geolocation manual refresh
   const handleGetLocation = () => {
@@ -713,20 +613,6 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                   </div>
                 )}
               </div>
-
-              {/* Leaflet Live Map Display */}
-              {collegeLoc && (
-                <div className="student-map-wrapper" style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px', width: '100%', maxWidth: '100%', boxSizing: 'border-box', overflow: 'hidden' }}>
-                  <label style={styles.formLabel}>Campus Verification Map (Read-Only)</label>
-                  <div 
-                    ref={mapContainerRef} 
-                    className="student-verification-map"
-                    style={{ width: '100%', height: '220px', minHeight: '220px', borderRadius: '10px', zIndex: 0, boxSizing: 'border-box', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)' }}
-                  >
-                    {!window.L && <div style={{ textAlign: 'center', padding: '50px 0', color: 'var(--text-muted)' }}>Loading verification map...</div>}
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
