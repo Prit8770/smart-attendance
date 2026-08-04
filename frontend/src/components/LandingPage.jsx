@@ -27,29 +27,27 @@ const LandingPage = ({ onGetStarted }) => {
 
       {/* Navbar/Header */}
       <header style={styles.header} className="animate-fade-in-up">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap' }}>
-          <div style={styles.logoContainer}>
-            <div style={styles.logoIcon}>
-              <img src="/logo.png" alt="LJCCA" style={{ width: '48px', height: '48px', objectFit: 'contain' }} />
-            </div>
-            <h1 style={styles.logoText}>Smart<span style={{color: 'var(--primary)'}}>Attend</span></h1>
+        <div style={styles.logoContainer}>
+          <div style={styles.logoIcon}>
+            <img src="/logo.png" alt="LJCCA" style={{ width: '48px', height: '48px', objectFit: 'contain' }} />
           </div>
-          <button className="btn landing-login-btn" onClick={onGetStarted} style={styles.loginBtn}>
-            Login Portal
-          </button>
+          <h1 style={styles.logoText}>Smart<span style={{color: 'var(--primary)'}}>Attend</span></h1>
         </div>
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <button className="btn" style={styles.ghostBtn} onClick={() => {
-            document.getElementById('how-it-works').scrollIntoView({ behavior: 'smooth' });
-          }}>
-            How it Works
-          </button>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button 
             style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '8px', display: 'flex', color: 'var(--text-primary)' }} 
             onClick={() => setIsDark(!isDark)}
             title="Toggle Theme"
           >
             {isDark ? <Sun size={20} /> : <Moon size={20} />}
+          </button>
+          <button className="btn" style={styles.ghostBtn} onClick={() => {
+            document.getElementById('how-it-works').scrollIntoView({ behavior: 'smooth' });
+          }}>
+            How it Works
+          </button>
+          <button className="btn landing-login-btn" onClick={onGetStarted} style={styles.loginBtn}>
+            Login Portal
           </button>
         </div>
       </header>
