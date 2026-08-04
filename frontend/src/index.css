@@ -1076,8 +1076,8 @@ body {
 
   /* Reduced map width in mobile view so the entire map shows cleanly without clipping */
   .student-map-wrapper {
-    width: 100% !important;
-    max-width: 100% !important;
+    width: 50% !important;
+    max-width: 50% !important;
     padding: 0 !important;
     margin-top: 14px !important;
     box-sizing: border-box !important;
