@@ -1093,7 +1093,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     </p>
 
                     {/* 8 Semester Folder Cards (4 per row Desktop, 2 per row Mobile) */}
-                    <div className="semester-folder-grid">
+                    <div className="semester-folder-grid" style={{ display: 'grid', width: '100%', boxSizing: 'border-box' }}>
                       {[1, 2, 3, 4, 5, 6, 7, 8].map(sem => {
                         const semLogs = liveLogs.filter(l => String(l.semester) === String(sem));
                         const presentCount = semLogs.filter(l => l.status === 'Success').length;
@@ -2266,7 +2266,9 @@ const styles = {
   },
   cardPadding: {
     padding: '28px',
-    borderRadius: '16px'
+    borderRadius: '16px',
+    boxSizing: 'border-box',
+    width: '100%'
   },
   cardTitle: {
     fontSize: '1.15rem',

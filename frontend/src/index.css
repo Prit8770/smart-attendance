@@ -1293,6 +1293,8 @@ img[src="/logo.png"] {
   .semester-folder-grid {
     grid-template-columns: repeat(2, 1fr) !important;
     gap: 12px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
   }
 }
 
@@ -1300,6 +1302,8 @@ img[src="/logo.png"] {
   .semester-folder-grid {
     grid-template-columns: repeat(2, 1fr) !important;
     gap: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
   }
 }
 
@@ -1460,9 +1464,18 @@ div[style*="cursor:pointer"],
     margin: 0 !important;
   }
 
-  /* Buttons: accessible touch targets */
-  button, .btn, .tab {
+  /* Buttons: accessible touch targets (exempt small semester folder buttons) */
+  button:not(.semester-folder-grid button),
+  .btn:not(.semester-folder-grid .btn),
+  .tab {
     min-height: 44px !important;
+    touch-action: manipulation !important;
+  }
+
+  /* Semester folder grid buttons: keep compact */
+  .semester-folder-grid button,
+  .semester-folder-grid .btn {
+    min-height: 36px !important;
     touch-action: manipulation !important;
   }
 
@@ -1552,6 +1565,20 @@ div[style*="cursor:pointer"],
   /* Admin Present Today panel semester folder grid item */
   .semester-folder-grid > div[style*="borderRadius: '16px'"] {
     padding: 14px 10px !important;
+  }
+
+  /* Faculty cardPadding: reduce from 28px to 14px on mobile so semester grid has room */
+  div[style*="padding: '28px'"][style*="borderRadius: '16px'"],
+  .faculty-dashboard-root .glass-panel {
+    padding: 14px !important;
+    overflow: visible !important;
+  }
+
+  /* Ensure semester-folder-grid parent has full width and no clip */
+  .glass-panel:has(.semester-folder-grid) {
+    overflow: visible !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
   }
 }
 
