@@ -705,26 +705,16 @@ button {
     gap: 16px !important;
   }
 
-  /* Faculty sidebar: horizontal scrollable pill row on mobile */
+  /* Faculty sidebar: 2-column compact grid on mobile */
   aside.faculty-sidebar {
-    display: flex !important;
-    flex-direction: row !important;
-    overflow-x: auto !important;
-    white-space: nowrap !important;
-    -webkit-overflow-scrolling: touch !important;
-    padding: 10px 12px !important;
-    gap: 8px !important;
+    display: block !important;
     width: 100% !important;
     max-width: 100% !important;
-    box-sizing: border-box !important;
-    scrollbar-width: none !important;
-    border-radius: 12px !important;
+    padding: 10px !important;
     margin-bottom: 0 !important;
-    align-items: center !important;
-  }
-
-  aside.faculty-sidebar::-webkit-scrollbar {
-    display: none !important;
+    border-radius: 16px !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
   }
 
   aside.faculty-sidebar > div:first-child {
@@ -732,26 +722,28 @@ button {
   }
 
   aside ul[style*="sideMenuList"] {
-    display: flex !important;
-    flex-direction: row !important;
-    overflow-x: visible !important;
-    white-space: nowrap !important;
-    gap: 6px !important;
+    display: grid !important;
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 8px !important;
     padding: 0 !important;
     margin: 0 !important;
-    width: auto !important;
+    width: 100% !important;
   }
 
   aside ul[style*="sideMenuList"] li {
-    flex: 0 0 auto !important;
-    width: auto !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
+
+  aside ul[style*="sideMenuList"] li:last-child {
+    grid-column: span 2 !important;
   }
 
   aside ul[style*="sideMenuList"] button {
-    width: auto !important;
-    white-space: nowrap !important;
-    padding: 8px 14px !important;
-    font-size: 0.85rem !important;
+    width: 100% !important;
+    justify-content: center !important;
+    padding: 10px 8px !important;
+    font-size: 0.83rem !important;
     min-height: 40px !important;
   }
 }

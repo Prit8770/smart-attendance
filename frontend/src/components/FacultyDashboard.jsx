@@ -12,6 +12,13 @@ import QRCode from 'qrcode';
 export default function FacultyDashboard({ user, token, onLogout, theme, toggleTheme }) {
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'otp', 'reports', 'settings', 'manual'
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 900);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth <= 900);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   // Stats
   const [stats, setStats] = useState({
@@ -610,7 +617,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   }, [reportType, reportStudentId, activeTab]);
 
   return (
-    <div style={styles.dashboardContainer} className="faculty-dashboard-root">
+    <div style={{ ...styles.dashboardContainer, padding: isMobile ? '12px 8px' : '30px', gap: isMobile ? '14px' : '30px' }} className="faculty-dashboard-root">
 
       {/* ===== MODAL OVERLAY ===== */}
       {dashModal && (
@@ -618,15 +625,19 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
           style={{
             position: 'fixed', inset: 0, zIndex: 1000,
             background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+            display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center',
+            padding: isMobile ? '0' : '20px'
           }}
           onClick={() => setDashModal(null)}
         >
           <div
             className="glass-panel"
             style={{
-              width: '100%', maxWidth: '520px', borderRadius: '20px',
-              padding: '28px', maxHeight: '80vh', overflowY: 'auto', position: 'relative'
+              width: '100%', maxWidth: '520px',
+              borderRadius: isMobile ? '20px 20px 0 0' : '20px',
+              padding: isMobile ? '18px 14px 24px' : '28px',
+              maxHeight: isMobile ? '92vh' : '80vh',
+              overflowY: 'auto', position: 'relative'
             }}
             onClick={e => e.stopPropagation()}
           >
@@ -846,15 +857,27 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
         </div>
       )}
       {/* Top Navbar */}
-      <nav style={styles.navBar} className="glass-panel">
-        <div style={styles.navLeft}>
-          <div style={styles.logoBadge}>F</div>
+      <nav
+        style={{
+          ...styles.navBar,
+          padding: isMobile ? '10px 14px' : '16px 24px',
+          borderRadius: isMobile ? '12px' : '16px',
+          position: isMobile ? 'sticky' : 'relative',
+          top: isMobile ? 0 : 'auto',
+          zIndex: isMobile ? 200 : 'auto',
+          flexWrap: 'wrap',
+          gap: isMobile ? '8px' : '0'
+        }}
+        className="glass-panel"
+      >
+        <div style={{ ...styles.navLeft, gap: isMobile ? '10px' : '16px' }}>
+          <div style={{ ...styles.logoBadge, width: isMobile ? '36px' : '42px', height: isMobile ? '36px' : '42px', fontSize: isMobile ? '1rem' : '1.2rem' }}>F</div>
           <div>
-            <h1 style={styles.navTitle}>Faculty Hub</h1>
-            <p style={styles.navSubTitle}>{user.name} • {user.department}</p>
+            <h1 style={{ ...styles.navTitle, fontSize: isMobile ? '1rem' : '1.2rem' }}>Faculty Hub</h1>
+            <p style={{ ...styles.navSubTitle, fontSize: isMobile ? '0.72rem' : '0.8rem' }}>{user.name} • {user.department}</p>
           </div>
         </div>
-        <div style={styles.navRight}>
+        <div style={{ ...styles.navRight, gap: isMobile ? '8px' : '14px' }}>
           <button
             onClick={toggleTheme}
             className="btn btn-secondary icon-btn-circle theme-toggle-btn"
@@ -862,76 +885,111 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
           >
             {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
           </button>
-          <button onClick={onLogout} style={styles.logoutBtn} className="btn">
+          <button onClick={onLogout} style={{ ...styles.logoutBtn, padding: isMobile ? '6px 12px' : '8px 16px', fontSize: isMobile ? '0.82rem' : '0.88rem' }} className="btn">
             <LogOut size={16} />
-            Logout
+            {isMobile ? '' : 'Logout'}
           </button>
         </div>
       </nav>
 
       {/* Main Grid Layout */}
-      <div style={styles.mainGrid}>
-        {/* Sidebar Nav (Mobile card view at top, Desktop sidebar on left) */}
-        <aside style={styles.sidebar} className="glass-panel faculty-sidebar">
-          <ul style={styles.sideMenuList}>
-            <li>
+      <div style={{
+        ...styles.mainGrid,
+        gridTemplateColumns: isMobile ? '100%' : '260px 1fr',
+        gap: isMobile ? '12px' : '30px',
+        width: '100%',
+        maxWidth: '100%',
+        minWidth: 0,
+        boxSizing: 'border-box'
+      }}>
+        {/* Sidebar Nav */}
+        <aside
+          style={{
+            ...styles.sidebar,
+            padding: isMobile ? '10px' : '24px 16px',
+            borderRadius: isMobile ? '16px' : '16px',
+            display: 'block',
+            width: '100%',
+            maxWidth: '100%',
+            minWidth: 0,
+            boxSizing: 'border-box',
+            overflow: 'hidden'
+          }}
+          className="glass-panel faculty-sidebar"
+        >
+          <ul style={{
+            ...styles.sideMenuList,
+            display: isMobile ? 'grid' : 'flex',
+            gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : undefined,
+            flexDirection: isMobile ? undefined : 'column',
+            gap: isMobile ? '8px' : '8px',
+            width: '100%',
+            padding: 0,
+            margin: 0
+          }}>
+            <li style={{ width: '100%', minWidth: 0 }}>
               <button
                 onClick={() => setActiveTab('dashboard')}
                 style={{
                   ...styles.menuItemBtn,
-                  ...(activeTab === 'dashboard' ? styles.menuItemBtnActive : {})
+                  ...(activeTab === 'dashboard' ? styles.menuItemBtnActive : {}),
+                  ...(isMobile ? { padding: '10px 8px', fontSize: '0.83rem', width: '100%', justifyContent: 'center' } : {})
                 }}
               >
-                <Users size={18} />
+                <Users size={isMobile ? 16 : 18} />
                 Dashboard
               </button>
             </li>
-            <li>
+            <li style={{ width: '100%', minWidth: 0 }}>
               <button
                 onClick={() => setActiveTab('otp')}
                 style={{
                   ...styles.menuItemBtn,
-                  ...(activeTab === 'otp' ? styles.menuItemBtnActive : {})
+                  ...(activeTab === 'otp' ? styles.menuItemBtnActive : {}),
+                  ...(isMobile ? { padding: '10px 8px', fontSize: '0.83rem', width: '100%', justifyContent: 'center' } : {})
                 }}
               >
-                <QrCode size={18} />
-                OTP/QR Generator
+                <QrCode size={isMobile ? 16 : 18} />
+                OTP/QR
               </button>
             </li>
-            <li>
+            <li style={{ width: '100%', minWidth: 0 }}>
               <button
                 onClick={() => { setActiveTab('manual'); fetchTodayAllAttendance(); }}
                 style={{
                   ...styles.menuItemBtn,
                   ...(activeTab === 'manual' ? styles.menuItemBtnActive : {}),
-                  ...(activeTab === 'manual' ? {} : { color: '#f59e0b' })
+                  ...(activeTab === 'manual' ? {} : { color: '#f59e0b' }),
+                  ...(isMobile ? { padding: '10px 8px', fontSize: '0.83rem', width: '100%', justifyContent: 'center' } : {})
                 }}
               >
-                <ClipboardList size={18} />
-                Manual Attendance
+                <ClipboardList size={isMobile ? 16 : 18} />
+                Manual
               </button>
             </li>
-            <li>
+            <li style={{ width: '100%', minWidth: 0 }}>
               <button
                 onClick={() => setActiveTab('reports')}
                 style={{
                   ...styles.menuItemBtn,
-                  ...(activeTab === 'reports' ? styles.menuItemBtnActive : {})
+                  ...(activeTab === 'reports' ? styles.menuItemBtnActive : {}),
+                  ...(isMobile ? { padding: '10px 8px', fontSize: '0.83rem', width: '100%', justifyContent: 'center' } : {})
                 }}
               >
-                <BarChart3 size={18} />
-                Reports & Export
+                <BarChart3 size={isMobile ? 16 : 18} />
+                Reports
               </button>
             </li>
-            <li>
+            <li style={{ width: '100%', minWidth: 0, gridColumn: isMobile ? 'span 2' : undefined }}>
               <button
                 onClick={() => setActiveTab('settings')}
                 style={{
                   ...styles.menuItemBtn,
-                  ...(activeTab === 'settings' ? styles.menuItemBtnActive : {})
+                  ...(activeTab === 'settings' ? styles.menuItemBtnActive : {}),
+                  ...(isMobile ? { padding: '10px 8px', fontSize: '0.83rem', width: '100%', justifyContent: 'center' } : {})
                 }}
               >
-                <KeyRound size={18} />
+                <KeyRound size={isMobile ? 16 : 18} />
                 Account Settings
               </button>
             </li>
@@ -939,11 +997,11 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
         </aside>
 
         {/* Content Pane */}
-        <main style={styles.contentPane}>
+        <main style={{ ...styles.contentPane, minWidth: 0, width: '100%' }}>
           {activeTab === 'dashboard' && (
-            <div style={styles.tabContent}>
+            <div style={{ ...styles.tabContent, gap: isMobile ? '16px' : '30px' }}>
               {/* Statistics Grid */}
-              <div className="grid-3-cols" style={{ marginBottom: '20px' }}>
+              <div className="grid-3-cols" style={{ marginBottom: isMobile ? '10px' : '20px' }}>
 
                 {/* Present Today - Clickable */}
                 <div
@@ -1078,7 +1136,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               </div>
 
               {/* Live Monitor / Semester Folders */}
-              <div className="glass-panel" style={styles.cardPadding}>
+              <div className="glass-panel" style={{ ...styles.cardPadding, padding: isMobile ? '12px 8px' : '28px' }}>
                 <div className="mobile-stack-header" style={styles.flexSpaceBetween}>
                   <h3 style={styles.cardTitle}>
                     {selectedSemFolder ? `📁 Semester ${selectedSemFolder} Folder Directory` : '📁 Semester Attendance Folders (Sem 1 to Sem 8)'}
@@ -1111,48 +1169,61 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                               background: 'rgba(147, 51, 234, 0.08)',
                               border: '1px solid rgba(147, 51, 234, 0.3)',
                               borderRadius: '16px',
-                              padding: '20px 16px',
+                              padding: isMobile ? '12px 10px' : '20px 16px',
                               cursor: 'pointer',
                               transition: 'all 0.2s ease',
                               display: 'flex',
                               flexDirection: 'column',
-                              gap: '10px'
+                              gap: isMobile ? '6px' : '10px',
+                              minWidth: 0,
+                              width: '100%',
+                              boxSizing: 'border-box',
+                              overflow: 'hidden'
                             }}
                           >
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                              <Folder size={32} color="#a855f7" />
-                              <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '12px', background: 'rgba(168,85,247,0.2)', color: '#c084fc', fontWeight: '600' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
+                              <Folder size={isMobile ? 24 : 32} color="#a855f7" style={{ flexShrink: 0 }} />
+                              <span style={{
+                                fontSize: isMobile ? '0.68rem' : '0.75rem',
+                                padding: isMobile ? '2px 6px' : '3px 8px',
+                                borderRadius: '12px',
+                                background: 'rgba(168,85,247,0.2)',
+                                color: '#c084fc',
+                                fontWeight: '600',
+                                flexShrink: 0,
+                                whiteSpace: 'nowrap'
+                              }}>
                                 {semLogs.length} Records
                               </span>
                             </div>
 
-                            <div>
-                              <div style={{ fontWeight: '700', fontSize: '1.05rem', color: 'var(--text-primary)' }}>
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontWeight: '700', fontSize: isMobile ? '0.92rem' : '1.05rem', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 Sem {sem} Folder
                               </div>
-                              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                              <div style={{ fontSize: isMobile ? '0.7rem' : '0.78rem', color: 'var(--text-muted)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                 Semester {sem} Student List
                               </div>
                               {semDivs.length > 0 ? (
-                                <div style={{ fontSize: '0.75rem', color: '#c084fc', marginTop: '5px', fontWeight: '600' }}>
+                                <div style={{ fontSize: isMobile ? '0.68rem' : '0.75rem', color: '#c084fc', marginTop: '4px', fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                   Divisions: {semDivs.map(d => `Div ${d}`).join(', ')}
                                 </div>
                               ) : (
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '5px', fontStyle: 'italic' }}>
+                                <div style={{ fontSize: isMobile ? '0.68rem' : '0.75rem', color: 'var(--text-muted)', marginTop: '4px', fontStyle: 'italic' }}>
                                   No Divisions Available
                                 </div>
                               )}
                             </div>
 
-                            <div style={{ display: 'flex', gap: '8px', fontSize: '0.75rem', marginTop: '4px' }}>
-                              <span style={{ color: '#4ade80', fontWeight: '600' }}>✓ {presentCount} Present</span>
-                              <span style={{ color: '#f87171', fontWeight: '600' }}>✗ {rejectCount} Rejected</span>
+                            <div style={{ display: 'flex', gap: isMobile ? '4px' : '8px', fontSize: isMobile ? '0.68rem' : '0.75rem', marginTop: '2px', flexWrap: 'wrap' }}>
+                              <span style={{ color: '#4ade80', fontWeight: '600', whiteSpace: 'nowrap' }}>✓ {presentCount} Present</span>
+                              <span style={{ color: '#f87171', fontWeight: '600', whiteSpace: 'nowrap' }}>✗ {rejectCount} Rejected</span>
                             </div>
 
                             <button
                               type="button"
                               className="btn btn-primary"
-                              style={{ width: '100%', padding: '6px 0', fontSize: '0.8rem', marginTop: '4px' }}
+                              style={{ width: '100%', padding: isMobile ? '6px 2px' : '6px 0', fontSize: isMobile ? '0.74rem' : '0.8rem', marginTop: '4px' }}
                             >
                               📂 Open Sem {sem} Folder
                             </button>
@@ -1234,42 +1305,42 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     })()}
 
                     {/* Filters Inside Semester Folder */}
-                    <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid var(--border-light)' }}>
-                      <div style={styles.filterGroup}>
+                    <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid var(--border-light)' }}>
+                      <div style={{ ...styles.filterGroup, width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : '1' }}>
                         <label style={styles.filterLabel}>Filter by Name</label>
                         <input
                           type="text"
                           placeholder="Search student name..."
                           value={folderSearchName}
                           onChange={(e) => setFolderSearchName(e.target.value)}
-                          style={{ ...styles.selectInput, width: '180px' }}
+                          style={{ ...styles.selectInput, width: isMobile ? '100%' : '180px' }}
                         />
                       </div>
-                      <div style={styles.filterGroup}>
+                      <div style={{ ...styles.filterGroup, width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : '1' }}>
                         <label style={styles.filterLabel}>Filter by Enrollment</label>
                         <input
                           type="text"
                           placeholder="Search enrollment..."
                           value={folderSearchEnroll}
                           onChange={(e) => setFolderSearchEnroll(e.target.value)}
-                          style={{ ...styles.selectInput, width: '180px' }}
+                          style={{ ...styles.selectInput, width: isMobile ? '100%' : '180px' }}
                         />
                       </div>
-                      <div style={styles.filterGroup}>
+                      <div style={{ ...styles.filterGroup, width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : '1' }}>
                         <label style={styles.filterLabel}>Filter by Date</label>
                         <input
                           type="date"
                           value={folderSearchDate}
                           onChange={(e) => setFolderSearchDate(e.target.value)}
-                          style={{ ...styles.selectInput, width: '160px' }}
+                          style={{ ...styles.selectInput, width: isMobile ? '100%' : '160px' }}
                         />
                       </div>
                       {(folderSearchName || folderSearchEnroll || folderSearchDate) && (
-                        <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-end', width: isMobile ? '100%' : 'auto' }}>
                           <button
                             onClick={() => { setFolderSearchName(''); setFolderSearchEnroll(''); setFolderSearchDate(''); }}
                             className="btn btn-secondary"
-                            style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                            style={{ padding: '6px 12px', fontSize: '0.8rem', width: isMobile ? '100%' : 'auto' }}
                           >Clear</button>
                         </div>
                       )}
@@ -1353,7 +1424,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
             <div style={styles.tabContent}>
 
               {/* Generator Controls at top */}
-              <div className="glass-panel" style={{ ...styles.cardPadding, marginBottom: '20px' }}>
+              <div className="glass-panel" style={{ ...styles.cardPadding, padding: isMobile ? '12px 8px' : '28px', marginBottom: '20px' }}>
                 <div className="mobile-stack-header" style={styles.flexSpaceBetween}>
                   <div>
                     <h3 style={styles.cardTitle}>Session Controllers</h3>
@@ -1481,7 +1552,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
 
           {activeTab === 'reports' && (
-            <div className="glass-panel" style={styles.cardPadding}>
+            <div className="glass-panel" style={{ ...styles.cardPadding, padding: isMobile ? '12px 8px' : '28px' }}>
               <div className="mobile-stack-header" style={styles.flexSpaceBetween}>
                 <h2 style={styles.cardTitle}>Attendance Database Reports</h2>
                 <div style={styles.buttonStackRow}>
@@ -1563,33 +1634,33 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               </div>
 
               {/* Search Filters Row */}
-              <div style={{ display: 'flex', gap: '12px', marginTop: '16px', flexWrap: 'wrap' }}>
-                <div style={styles.filterGroup}>
+              <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
+                <div style={{ ...styles.filterGroup, width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : '1' }}>
                   <label style={styles.filterLabel}>Enrollment No</label>
                   <input
                     type="text"
                     placeholder="Search enrollment..."
                     value={filterEnrollment}
                     onChange={(e) => setFilterEnrollment(e.target.value)}
-                    style={{ ...styles.selectInput, width: '180px' }}
+                    style={{ ...styles.selectInput, width: isMobile ? '100%' : '180px' }}
                   />
                 </div>
-                <div style={styles.filterGroup}>
+                <div style={{ ...styles.filterGroup, width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : '1' }}>
                   <label style={styles.filterLabel}>Student Name</label>
                   <input
                     type="text"
                     placeholder="Search name..."
                     value={filterName}
                     onChange={(e) => setFilterName(e.target.value)}
-                    style={{ ...styles.selectInput, width: '180px' }}
+                    style={{ ...styles.selectInput, width: isMobile ? '100%' : '180px' }}
                   />
                 </div>
                 {(filterEnrollment || filterName || filterSem) && (
-                  <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-end', width: isMobile ? '100%' : 'auto' }}>
                     <button
                       onClick={() => { setFilterEnrollment(''); setFilterName(''); setFilterSem(''); }}
                       className="btn btn-secondary"
-                      style={{ padding: '8px 14px', fontSize: '0.82rem' }}
+                      style={{ padding: '8px 14px', fontSize: '0.82rem', width: isMobile ? '100%' : 'auto' }}
                     >
                       Clear Filters
                     </button>
@@ -1659,7 +1730,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
           )}
 
           {activeTab === 'settings' && (
-            <div className="glass-panel" style={styles.cardPadding}>
+            <div className="glass-panel" style={{ ...styles.cardPadding, padding: isMobile ? '12px 8px' : '28px' }}>
               <h2 style={styles.cardTitle}>Account Profile Settings</h2>
               <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '24px' }}>
                 Update your portal login details.
@@ -1774,12 +1845,12 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               {/* Sem Folder View or Student List */}
               {!manualSemFolder ? (
                 /* Semester folders */
-                <div className="glass-panel" style={styles.cardPadding}>
+                <div className="glass-panel" style={{ ...styles.cardPadding, padding: isMobile ? '12px 8px' : '28px' }}>
                   <h3 style={{ ...styles.cardTitle, marginBottom: '20px' }}>Select Semester</h3>
                   <div style={{
                     display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-                    gap: '16px'
+                    gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fill, minmax(160px, 1fr))',
+                    gap: isMobile ? '8px' : '16px'
                   }}>
                     {[1,2,3,4,5,6,7,8].map(sem => {
                       const semStudents = studentsList.filter(s => String(s.semester) === String(sem));
