@@ -55,7 +55,7 @@ router.post('/submit', authenticateJWT, async (req, res) => {
     const nowMs = now.getTime();
 
     // Hardware/Device Cooldown Check (15 minutes)
-    if (deviceId) {
+    if (deviceId && deviceId !== 'Manual') {
       const { data: lastDeviceAttendance } = await supabase.from('attendance')
         .select('date, time')
         .eq('device_id', deviceId)
@@ -224,6 +224,123 @@ router.post('/submit', authenticateJWT, async (req, res) => {
   }
 });
 
+// POST manual attendance by Faculty/Admin
+router.post('/manual', authenticateJWT, requireAdmin, async (req, res) => {
+  const { student_id, qr_session_id, otp_id } = req.body;
+
+  if (!student_id) {
+    return res.status(400).json({ error: 'Student ID is required.' });
+  }
+
+  try {
+    const today = getLocalDateString();
+    const { data: existing } = await supabase.from('attendance')
+      .select('id, device_id, status')
+      .eq('student_id', student_id)
+      .eq('date', today)
+      .eq('status', 'Success')
+      .limit(1)
+      .maybeSingle();
+
+    if (existing) {
+      if (existing.device_id && existing.device_id !== 'Manual') {
+        return res.status(400).json({ error: 'Student already marked attendance via Smartphone today.' });
+      } else {
+        return res.status(400).json({ error: 'Student is already marked present today.' });
+      }
+    }
+
+    let linkCol = null;
+    let linkId = null;
+
+    if (qr_session_id) {
+      linkCol = 'qr_session_id';
+      linkId = qr_session_id;
+    } else if (otp_id) {
+      linkCol = 'otp_id';
+      linkId = otp_id;
+    } else {
+      // Find latest QR session by this faculty today
+      const { data: recentQr } = await supabase.from('qr_sessions')
+        .select('id')
+        .eq('created_by_faculty_id', req.user.id)
+        .gte('created_at', today + 'T00:00:00.000Z')
+        .order('id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (recentQr) {
+        linkCol = 'qr_session_id';
+        linkId = recentQr.id;
+      } else {
+        const { data: recentOtp } = await supabase.from('otp')
+          .select('id')
+          .eq('generated_by', req.user.id)
+          .order('id', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (recentOtp) {
+          linkCol = 'otp_id';
+          linkId = recentOtp.id;
+        }
+      }
+    }
+
+    const submitTime = new Date();
+    const localTimeStr = submitTime.toLocaleTimeString('en-US', { hour12: false });
+    const insertPayload = {
+      student_id,
+      date: today,
+      time: localTimeStr,
+      latitude: 0,
+      longitude: 0,
+      distance: 0,
+      status: 'Success',
+      device_id: 'Manual'
+    };
+    if (linkCol && linkId) {
+      insertPayload[linkCol] = linkId;
+    }
+
+    const { error } = await supabase.from('attendance').insert([insertPayload]);
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Manual attendance recorded successfully.' });
+  } catch (err) {
+    console.error('Error in manual attendance:', err);
+    res.status(500).json({ error: 'Failed to record manual attendance.' });
+  }
+});
+
+// POST undo manual attendance (Mark Absent)
+router.post('/manual/undo', authenticateJWT, requireAdmin, async (req, res) => {
+  const { student_id, date } = req.body;
+  if (!student_id) {
+    return res.status(400).json({ error: 'Student ID is required.' });
+  }
+  try {
+    const targetDate = date || getLocalDateString();
+    const { data: toDelete, error: findErr } = await supabase.from('attendance')
+      .select('id, device_id')
+      .eq('student_id', student_id)
+      .eq('date', targetDate)
+      .eq('device_id', 'Manual')
+      .limit(1)
+      .maybeSingle();
+
+    if (findErr || !toDelete) {
+      return res.status(400).json({ error: 'Only manual attendance records can be undone or student is already absent.' });
+    }
+
+    const { error } = await supabase.from('attendance').delete().eq('id', toDelete.id);
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Attendance removed / set to Absent.' });
+  } catch (err) {
+    console.error('Error undoing manual attendance:', err);
+    res.status(500).json({ error: 'Failed to undo attendance.' });
+  }
+});
+
 // GET attendance history for logged-in student
 router.get('/history/student', authenticateJWT, async (req, res) => {
   if (req.user.role !== 'student') {
@@ -255,7 +372,7 @@ router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
   try {
     const { data: logs } = await supabase.from('attendance')
       .select(`
-        id, time, distance, status, date, qr_session_id,
+        id, time, distance, status, date, qr_session_id, device_id,
         student:student_id (*),
         otp:otp_id (otp, generated_by, faculty:generated_by(name)),
         qr_session:qr_session_id (created_by_faculty_id, faculty:created_by_faculty_id(name))
@@ -267,7 +384,8 @@ router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
     if (req.user.role === 'faculty') {
       filteredLogs = filteredLogs.filter(log => 
         (log.qr_session && String(log.qr_session.created_by_faculty_id) === String(req.user.id)) ||
-        (log.otp && String(log.otp.generated_by) === String(req.user.id))
+        (log.otp && String(log.otp.generated_by) === String(req.user.id)) ||
+        (log.device_id === 'Manual' && !log.qr_session && !log.otp)
       );
     }
 
@@ -283,9 +401,10 @@ router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
       time: log.time,
       distance: log.distance,
       status: log.status,
+      device_id: log.device_id,
       otp: log.otp?.otp,
       qr_session_id: log.qr_session_id,
-      faculty_name: log.qr_session?.faculty?.name || log.otp?.faculty?.name || 'Admin'
+      faculty_name: log.qr_session?.faculty?.name || log.otp?.faculty?.name || (log.device_id === 'Manual' ? 'Faculty (Manual)' : 'Admin')
     }));
 
     res.json(flatLogs);
@@ -301,7 +420,7 @@ router.get('/reports', authenticateJWT, requireAdmin, async (req, res) => {
 
   try {
     let reqQuery = supabase.from('attendance').select(`
-      id, time, distance, status, date, qr_session_id,
+      id, time, distance, status, date, qr_session_id, device_id,
       student:student_id (*),
       otp:otp_id (otp, generated_by, faculty:generated_by(name)),
       qr_session:qr_session_id (created_by_faculty_id, faculty:created_by_faculty_id(name))
@@ -341,7 +460,8 @@ router.get('/reports', authenticateJWT, requireAdmin, async (req, res) => {
     if (req.user.role === 'faculty') {
       filteredReports = filteredReports.filter(log => 
         (log.qr_session && String(log.qr_session.created_by_faculty_id) === String(req.user.id)) ||
-        (log.otp && String(log.otp.generated_by) === String(req.user.id))
+        (log.otp && String(log.otp.generated_by) === String(req.user.id)) ||
+        (log.device_id === 'Manual' && !log.qr_session && !log.otp)
       );
     }
 
@@ -358,9 +478,10 @@ router.get('/reports', authenticateJWT, requireAdmin, async (req, res) => {
       time: log.time,
       distance: log.distance,
       status: log.status,
+      device_id: log.device_id,
       otp: log.otp?.otp,
       qr_session_id: log.qr_session_id,
-      faculty_name: log.qr_session?.faculty?.name || log.otp?.faculty?.name || 'Admin'
+      faculty_name: log.qr_session?.faculty?.name || log.otp?.faculty?.name || (log.device_id === 'Manual' ? 'Faculty (Manual)' : 'Admin')
     }));
 
     res.json(flatReports);

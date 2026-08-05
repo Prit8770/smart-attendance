@@ -76,7 +76,9 @@ router.get('/active', authenticateJWT, async (req, res) => {
         otp: latestOtp.otp,
         generatedTime: latestOtp.generated_time,
         expireTime: latestOtp.expire_time,
-        secondsLeft: Math.max(0, Math.floor((expireTime - now) / 1000))
+        secondsLeft: Math.max(0, Math.floor((expireTime - now) / 1000)),
+        semester: latestOtp.semester || null,
+        division: latestOtp.division || null
       });
     } else {
       res.json({ active: false, otp: null });
@@ -89,7 +91,7 @@ router.get('/active', authenticateJWT, async (req, res) => {
 
 // POST generate new OTP
 router.post('/generate', authenticateJWT, requireAdmin, async (req, res) => {
-  const { semester } = req.body;
+  const { semester, division } = req.body;
   const today = getLocalDateString();
 
   try {
@@ -114,10 +116,18 @@ router.post('/generate', authenticateJWT, requireAdmin, async (req, res) => {
       expire_time: expireTime,
       generated_by: req.user.id,
       date: today,
-      semester: semester ? parseInt(semester) : null
+      semester: semester ? parseInt(semester) : null,
+      division: (division && String(division).trim() !== '') ? String(division).trim().toUpperCase() : null
     }]).select().single();
     
-    if (error) throw error;
+    if (error) {
+      if (error.code === 'PGRST204' || (error.message && (error.message.includes('division') || error.message.includes('schema cache')))) {
+        return res.status(400).json({ 
+          error: "Supabase DB Error: 'division' column otp table me nahi hai.\n\nKripya Supabase Dashboard -> SQL Editor me ye command run karein:\n\nALTER TABLE otp ADD COLUMN IF NOT EXISTS division TEXT;\nALTER TABLE qr_sessions ADD COLUMN IF NOT EXISTS division TEXT;" 
+        });
+      }
+      throw error;
+    }
 
     res.status(201).json({
       message: 'OTP generated successfully',
@@ -126,7 +136,9 @@ router.post('/generate', authenticateJWT, requireAdmin, async (req, res) => {
         otp: otpCode,
         generatedTime,
         expireTime,
-        secondsLeft: 120
+        secondsLeft: 120,
+        semester: result.semester || null,
+        division: result.division || null
       }
     });
   } catch (err) {

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Users, KeyRound, QrCode, BarChart3, Download, Search, CheckCircle,
-  XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Sun, Moon, Menu, X, Folder
+  XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Sun, Moon, Menu, X, Folder,
+  ClipboardList, UserCheck, UserX, Smartphone, HandIcon
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -9,7 +10,7 @@ import * as XLSX from 'xlsx';
 import QRCode from 'qrcode';
 
 export default function FacultyDashboard({ user, token, onLogout, theme, toggleTheme }) {
-  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'otp', 'reports', 'settings'
+  const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'otp', 'reports', 'settings', 'manual'
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   // Stats
@@ -36,9 +37,18 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   const [dashModalSem, setDashModalSem] = useState('');
   const [liveFeedSemFilter, setLiveFeedSemFilter] = useState('');
   const [selectedSemFolder, setSelectedSemFolder] = useState(null);
+  const [folderDivFilter, setFolderDivFilter] = useState('ALL');
   const [folderSearchName, setFolderSearchName] = useState('');
   const [folderSearchEnroll, setFolderSearchEnroll] = useState('');
   const [folderSearchDate, setFolderSearchDate] = useState('');
+
+  // Manual Attendance state
+  const [manualSemFolder, setManualSemFolder] = useState(null);
+  const [manualDivFilter, setManualDivFilter] = useState('ALL');
+  const [manualSearchName, setManualSearchName] = useState('');
+  const [manualTodayLogs, setManualTodayLogs] = useState([]); // today's attendance (all)
+  const [manualActionMsg, setManualActionMsg] = useState({ id: null, text: '', type: '' });
+  const [manualLoading, setManualLoading] = useState(false);
 
   const fetchQrSettings = async () => {
     try {
@@ -79,9 +89,11 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   // Dashboard modal state: null | 'present' | 'absent' | 'session'
   const [dashModal, setDashModal] = useState(null);
 
-  // Semester selection before generating QR/OTP
+  // Semester & Division selection before generating QR/OTP
   const [semesterModal, setSemesterModal] = useState(null); // null | 'qr' | 'otp'
   const [selectedSemester, setSelectedSemester] = useState('');
+  const [selectedDivision, setSelectedDivision] = useState('');
+  const [availableDivisions, setAvailableDivisions] = useState([]);
 
   // Fetch Dashboard Statistics
   const fetchStats = async () => {
@@ -219,7 +231,77 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
     fetchLiveLogs();
     fetchStudents();
     fetchQrSettings();
+    fetchTodayAllAttendance();
   }, []);
+
+  // Fetch today's attendance for ALL students (for manual attendance tab)
+  const fetchTodayAllAttendance = async () => {
+    try {
+      const res = await fetch('/api/attendance/reports?range=today', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setManualTodayLogs(data);
+      }
+    } catch (err) {
+      console.error('Error fetching today attendance for manual tab:', err);
+    }
+  };
+
+  // Mark student Present manually
+  const handleManualMark = async (student) => {
+    setManualLoading(true);
+    setManualActionMsg({ id: student.id, text: '', type: '' });
+    try {
+      const res = await fetch('/api/attendance/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ student_id: student.id })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setManualActionMsg({ id: student.id, text: '✓ Marked Present', type: 'success' });
+        await fetchTodayAllAttendance();
+        await fetchLiveLogs();
+        await fetchStats();
+      } else {
+        setManualActionMsg({ id: student.id, text: data.error || 'Failed', type: 'error' });
+      }
+    } catch (err) {
+      setManualActionMsg({ id: student.id, text: 'Network error', type: 'error' });
+    } finally {
+      setManualLoading(false);
+      setTimeout(() => setManualActionMsg({ id: null, text: '', type: '' }), 3000);
+    }
+  };
+
+  // Undo manual attendance (Mark Absent)
+  const handleManualUnmark = async (student) => {
+    setManualLoading(true);
+    setManualActionMsg({ id: student.id, text: '', type: '' });
+    try {
+      const res = await fetch('/api/attendance/manual/undo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ student_id: student.id })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setManualActionMsg({ id: student.id, text: '✓ Marked Absent', type: 'success' });
+        await fetchTodayAllAttendance();
+        await fetchLiveLogs();
+        await fetchStats();
+      } else {
+        setManualActionMsg({ id: student.id, text: data.error || 'Failed to undo', type: 'error' });
+      }
+    } catch (err) {
+      setManualActionMsg({ id: student.id, text: 'Network error', type: 'error' });
+    } finally {
+      setManualLoading(false);
+      setTimeout(() => setManualActionMsg({ id: null, text: '', type: '' }), 3000);
+    }
+  };
 
   // Poll stats and logs
   useEffect(() => {
@@ -230,10 +312,11 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       fetchStats();
       fetchLiveLogs();
       fetchQrSettings();
+      if (activeTab === 'manual') fetchTodayAllAttendance();
     }, intervalTime);
 
     return () => clearInterval(interval);
-  }, [activeQrSessionDetails, activeOtpDetails]);
+  }, [activeQrSessionDetails, activeOtpDetails, activeTab]);
 
   // Timers for QR and OTP
   useEffect(() => {
@@ -296,16 +379,16 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   }, [activeQrSessionDetails, tokenIndex]);
 
   // Actions
-  const handleStartQrSession = async (sem) => {
+  const handleStartQrSession = async (sem, div = null) => {
     try {
       const res = await fetch('/api/qr/start-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ semester: sem })
+        body: JSON.stringify({ semester: sem, division: div })
       });
       const data = await res.json();
       if (res.ok) {
-        setActiveQrSessionDetails(data.session);
+        setActiveQrSessionDetails({ ...data.session, semester: sem, division: div });
         setQrSessionTimer(120);
         setTokenIndex(0);
         setQrCodeTimer(15);
@@ -319,16 +402,16 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
     }
   };
 
-  const handleGenerateOtp = async (sem) => {
+  const handleGenerateOtp = async (sem, div = null) => {
     try {
       const res = await fetch('/api/otp/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ semester: sem })
+        body: JSON.stringify({ semester: sem, division: div })
       });
       const data = await res.json();
       if (res.ok) {
-        setActiveOtpDetails(data.otp);
+        setActiveOtpDetails({ ...data.otp, semester: sem, division: div });
         setOtpCountdown(120);
         setOtpRemaining(prev => Math.max(0, prev - 1));
         fetchStats();
@@ -343,18 +426,55 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
   // Opens semester modal then calls handler
   const openSemesterModal = (type) => {
+    fetchStudents();
     setSelectedSemester('');
+    setSelectedDivision('');
+    setAvailableDivisions([]);
     setSemesterModal(type);
+  };
+
+  const handleSelectSemesterForModal = (semStr) => {
+    const divs = new Set();
+    if (studentsList && Array.isArray(studentsList)) {
+      studentsList.forEach(st => {
+        if (String(st.semester) === String(semStr) && st.division && String(st.division).trim() !== '') {
+          divs.add(String(st.division).trim().toUpperCase());
+        }
+      });
+    }
+    const sortedDivs = Array.from(divs).sort();
+
+    if (sortedDivs.length === 0) {
+      // Jis sem me division na ho, wahan direct sem select karte hi QR/OTP generate ho jaye
+      setSemesterModal(null);
+      setSelectedSemester('');
+      setSelectedDivision('');
+      setAvailableDivisions([]);
+      if (semesterModal === 'qr') handleStartQrSession(semStr, null);
+      else if (semesterModal === 'otp') handleGenerateOtp(semStr, null);
+    } else {
+      // Jis sem me division ho, wahan division select karne ka option dedo
+      setSelectedSemester(semStr);
+      setAvailableDivisions(sortedDivs);
+      setSelectedDivision('');
+    }
   };
 
   const confirmSemesterAndGenerate = () => {
     if (!selectedSemester) { alert('Please select a semester first!'); return; }
+    if (availableDivisions.length > 0 && !selectedDivision) {
+      alert('Please select a division (or All Divisions) for this semester!');
+      return;
+    }
     const sem = selectedSemester;
+    const div = (selectedDivision && selectedDivision !== 'ALL') ? selectedDivision : null;
     setSemesterModal(null);
     setSelectedSemester('');
+    setSelectedDivision('');
+    setAvailableDivisions([]);
     if (sem) {
-      if (semesterModal === 'qr') handleStartQrSession(sem);
-      else if (semesterModal === 'otp') handleGenerateOtp(sem);
+      if (semesterModal === 'qr') handleStartQrSession(sem, div);
+      else if (semesterModal === 'otp') handleGenerateOtp(sem, div);
     }
   };
 
@@ -490,7 +610,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   }, [reportType, reportStudentId, activeTab]);
 
   return (
-    <div style={styles.dashboardContainer}>
+    <div style={styles.dashboardContainer} className="faculty-dashboard-root">
 
       {/* ===== MODAL OVERLAY ===== */}
       {dashModal && (
@@ -534,13 +654,13 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 <div className="semester-folder-grid" style={{ gap: '6px', marginBottom: '16px' }}>
                   <button
                     onClick={() => setDashModalSem('')}
-                    style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === '' ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                    style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === '' ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: 'black', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
                   ><Folder size={12} /> All</button>
                   {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
                     <button
                       key={s}
                       onClick={() => setDashModalSem(String(s))}
-                      style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === String(s) ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                      style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === String(s) ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: 'black', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
                     ><Folder size={12} /> Sem {s}</button>
                   ))}
                 </div>
@@ -591,13 +711,13 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 <div className="semester-folder-grid" style={{ gap: '6px', marginBottom: '16px' }}>
                   <button
                     onClick={() => setDashModalSem('')}
-                    style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === '' ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                    style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === '' ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: 'black', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
                   ><Folder size={12} /> All</button>
                   {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
                     <button
                       key={s}
                       onClick={() => setDashModalSem(String(s))}
-                      style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === String(s) ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: '#fff', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                      style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === String(s) ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: 'black', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
                     ><Folder size={12} /> Sem {s}</button>
                   ))}
                 </div>
@@ -661,8 +781,13 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     <div style={{
                       display: 'inline-block', padding: '4px 16px', borderRadius: '20px',
                       background: 'rgba(147,51,234,0.15)', border: '1px solid rgba(147,51,234,0.4)',
-                      color: 'var(--primary)', fontSize: '0.8rem', fontWeight: '700', marginBottom: '20px'
+                      color: 'var(--primary)', fontSize: '0.8rem', fontWeight: '700', marginBottom: '12px'
                     }}>ROTATING QR SESSION</div>
+                    {activeQrSessionDetails.semester && (
+                      <div style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                        Target: Sem {activeQrSessionDetails.semester} {activeQrSessionDetails.division ? `• Div ${activeQrSessionDetails.division}` : '• All Divisions'}
+                      </div>
+                    )}
                     <div style={{
                       background: '#fff', borderRadius: '16px', padding: '16px',
                       display: 'inline-block', boxShadow: '0 10px 40px rgba(147,51,234,0.3)', margin: '0 auto 20px'
@@ -685,8 +810,13 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     <div style={{
                       display: 'inline-block', padding: '4px 16px', borderRadius: '20px',
                       background: 'rgba(37,99,235,0.15)', border: '1px solid rgba(37,99,235,0.4)',
-                      color: '#60a5fa', fontSize: '0.8rem', fontWeight: '700', marginBottom: '24px'
+                      color: '#60a5fa', fontSize: '0.8rem', fontWeight: '700', marginBottom: '12px'
                     }}>STATIC OTP CODE</div>
+                    {activeOtpDetails.semester && (
+                      <div style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                        Target: Sem {activeOtpDetails.semester} {activeOtpDetails.division ? `• Div ${activeOtpDetails.division}` : '• All Divisions'}
+                      </div>
+                    )}
                     <div style={{
                       fontSize: '3rem', fontWeight: '800', letterSpacing: '10px',
                       color: '#60a5fa', fontFamily: 'monospace', margin: '20px 0'
@@ -766,6 +896,19 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               >
                 <QrCode size={18} />
                 OTP/QR Generator
+              </button>
+            </li>
+            <li>
+              <button
+                onClick={() => { setActiveTab('manual'); fetchTodayAllAttendance(); }}
+                style={{
+                  ...styles.menuItemBtn,
+                  ...(activeTab === 'manual' ? styles.menuItemBtnActive : {}),
+                  ...(activeTab === 'manual' ? {} : { color: '#f59e0b' })
+                }}
+              >
+                <ClipboardList size={18} />
+                Manual Attendance
               </button>
             </li>
             <li>
@@ -955,11 +1098,15 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                         const semLogs = liveLogs.filter(l => String(l.semester) === String(sem));
                         const presentCount = semLogs.filter(l => l.status === 'Success').length;
                         const rejectCount = semLogs.filter(l => l.status !== 'Success').length;
+                        const semDivs = Array.from(new Set([
+                          ...(Array.isArray(studentsList) ? studentsList.filter(s => String(s.semester) === String(sem) && s.division).map(s => String(s.division).trim().toUpperCase()) : []),
+                          ...semLogs.filter(l => l.division).map(l => String(l.division).trim().toUpperCase())
+                        ])).filter(Boolean).sort();
 
                         return (
                           <div
                             key={sem}
-                            onClick={() => setSelectedSemFolder(sem)}
+                            onClick={() => { setSelectedSemFolder(sem); setFolderDivFilter('ALL'); }}
                             style={{
                               background: 'rgba(147, 51, 234, 0.08)',
                               border: '1px solid rgba(147, 51, 234, 0.3)',
@@ -986,6 +1133,15 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                               <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
                                 Semester {sem} Student List
                               </div>
+                              {semDivs.length > 0 ? (
+                                <div style={{ fontSize: '0.75rem', color: '#c084fc', marginTop: '5px', fontWeight: '600' }}>
+                                  Divisions: {semDivs.map(d => `Div ${d}`).join(', ')}
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '5px', fontStyle: 'italic' }}>
+                                  No Divisions Available
+                                </div>
+                              )}
                             </div>
 
                             <div style={{ display: 'flex', gap: '8px', fontSize: '0.75rem', marginTop: '4px' }}>
@@ -1010,7 +1166,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   <>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
                       <button
-                        onClick={() => { setSelectedSemFolder(null); setFolderSearchName(''); setFolderSearchEnroll(''); setFolderSearchDate(''); }}
+                        onClick={() => { setSelectedSemFolder(null); setFolderSearchName(''); setFolderSearchEnroll(''); setFolderSearchDate(''); setFolderDivFilter('ALL'); }}
                         className="btn btn-secondary"
                         style={{ padding: '6px 14px', fontSize: '0.85rem' }}
                       >
@@ -1021,6 +1177,61 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                         Showing student attendance list for <strong>Semester {selectedSemFolder}</strong>
                       </div>
                     </div>
+
+                    {/* Division Selector for Opened Semester Folder */}
+                    {(() => {
+                      const semDivisions = Array.from(new Set([
+                        ...(Array.isArray(studentsList) ? studentsList.filter(s => String(s.semester) === String(selectedSemFolder) && s.division).map(s => String(s.division).trim().toUpperCase()) : []),
+                        ...liveLogs.filter(l => String(l.semester) === String(selectedSemFolder) && l.division).map(l => String(l.division).trim().toUpperCase())
+                      ])).filter(Boolean).sort();
+
+                      if (semDivisions.length === 0) {
+                        return (
+                          <div style={{ marginBottom: '16px', fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                            ℹ️ No divisions available in Semester {selectedSemFolder}. Showing all semester records.
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div style={{ marginBottom: '16px', padding: '12px 16px', background: 'var(--panel-bg)', borderRadius: '10px', border: '1px solid var(--border-light)' }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span>🏷️ Select Division for Semester {selectedSemFolder}:</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            <button
+                              type="button"
+                              onClick={() => setFolderDivFilter('ALL')}
+                              style={{
+                                padding: '6px 16px', borderRadius: '8px', fontWeight: '600',
+                                fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s ease',
+                                border: folderDivFilter === 'ALL' ? '2px solid var(--primary)' : '1px solid var(--border-light)',
+                                background: folderDivFilter === 'ALL' ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
+                                color: folderDivFilter === 'ALL' ? '#a855f7' : 'var(--text-primary)'
+                              }}
+                            >
+                              All Divisions
+                            </button>
+                            {semDivisions.map(div => (
+                              <button
+                                key={div}
+                                type="button"
+                                onClick={() => setFolderDivFilter(div)}
+                                style={{
+                                  padding: '6px 18px', borderRadius: '8px', fontWeight: '600',
+                                  fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s ease',
+                                  border: folderDivFilter === div ? '2px solid var(--primary)' : '1px solid var(--border-light)',
+                                  background: folderDivFilter === div ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
+                                  color: folderDivFilter === div ? '#a855f7' : 'var(--text-primary)'
+                                }}
+                              >
+                                Div {div}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Filters Inside Semester Folder */}
                     <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid var(--border-light)' }}>
@@ -1071,6 +1282,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                           <tr>
                             <th style={styles.tableTh}>Roll No</th>
                             <th style={styles.tableTh}>Student Name</th>
+                            <th style={styles.tableTh}>Sem & Division</th>
                             <th style={styles.tableTh}>Enrollment No</th>
                             <th style={styles.tableTh}>Date</th>
                             <th style={styles.tableTh}>Time</th>
@@ -1082,17 +1294,18 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                           {(() => {
                             const semLogs = liveLogs.filter(log => String(log.semester) === String(selectedSemFolder));
                             const filtered = semLogs.filter(log => {
+                              const matchDiv = folderDivFilter === 'ALL' || (log.division && String(log.division).trim().toUpperCase() === folderDivFilter);
                               const matchName = !folderSearchName || (log.name && log.name.toLowerCase().includes(folderSearchName.toLowerCase()));
                               const matchEnroll = !folderSearchEnroll || (log.enrollment_no && log.enrollment_no.toLowerCase().includes(folderSearchEnroll.toLowerCase()));
                               const matchDate = !folderSearchDate || log.date === folderSearchDate;
-                              return matchName && matchEnroll && matchDate;
+                              return matchDiv && matchName && matchEnroll && matchDate;
                             });
 
                             if (filtered.length === 0) {
                               return (
                                 <tr>
-                                  <td colSpan={7} style={{ ...styles.noDataRow, textAlign: 'center' }}>
-                                    No attendance records found for Semester {selectedSemFolder}.
+                                  <td colSpan={8} style={{ ...styles.noDataRow, textAlign: 'center' }}>
+                                    No attendance records found for Semester {selectedSemFolder} {folderDivFilter !== 'ALL' ? `(Div ${folderDivFilter})` : ''}.
                                   </td>
                                 </tr>
                               );
@@ -1101,7 +1314,17 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                             return filtered.map((log) => (
                               <tr key={log.id}>
                                 <td style={{ ...styles.tableTd, fontWeight: '700', color: 'var(--primary)' }}>{log.roll_no || '-'}</td>
-                                <td style={{ ...styles.tableTd, fontWeight: '600' }}>{log.name}{log.division ? <span style={{ marginLeft: '6px', fontSize: '0.75rem', padding: '2px 6px', background: 'rgba(255,255,255,0.1)', borderRadius: '4px', color: 'var(--primary)' }}>Div {log.division}</span> : null}</td>
+                                <td style={{ ...styles.tableTd, fontWeight: '600' }}>{log.name}</td>
+                                <td style={styles.tableTd}>
+                                  <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>Sem {log.semester || selectedSemFolder}</span>
+                                  {log.division ? (
+                                    <span style={{ marginLeft: '6px', fontSize: '0.75rem', padding: '2px 6px', background: 'rgba(147,51,234,0.2)', borderRadius: '4px', color: '#c084fc', fontWeight: 'bold' }}>
+                                      Div {log.division}
+                                    </span>
+                                  ) : (
+                                    <span style={{ marginLeft: '6px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>(No Div)</span>
+                                  )}
+                                </td>
                                 <td style={styles.tableTd}>{log.enrollment_no}</td>
                                 <td style={styles.tableTd}>{log.date || 'Today'}</td>
                                 <td style={styles.tableTd}>{log.time}</td>
@@ -1186,6 +1409,11 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 {activeQrSessionDetails ? (
                   <div style={styles.qrDisplayBox}>
                     <div style={styles.qrBadge}>ROTATING QR SESSION</div>
+                    {activeQrSessionDetails.semester && (
+                      <div style={{ fontSize: '0.88rem', fontWeight: '600', color: 'var(--text-secondary)', margin: '10px 0' }}>
+                        Target: Sem {activeQrSessionDetails.semester} {activeQrSessionDetails.division ? `• Div ${activeQrSessionDetails.division}` : '• All Divisions'}
+                      </div>
+                    )}
 
                     {/* Live Canvas for QR Code */}
                     <div style={{ padding: '16px', background: '#fff', borderRadius: '16px', display: 'flex', justifyContent: 'center', alignItems: 'center', boxShadow: '0 10px 40px rgba(147, 51, 234, 0.3)', margin: '20px auto', width: 'fit-content' }}>
@@ -1219,6 +1447,11 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     <div style={{ ...styles.qrBadge, background: 'rgba(37, 99, 235, 0.2)', border: '1px solid rgba(37, 99, 235, 0.4)', color: '#60a5fa' }}>
                       STATIC OTP CODE
                     </div>
+                    {activeOtpDetails.semester && (
+                      <div style={{ fontSize: '0.88rem', fontWeight: '600', color: 'var(--text-secondary)', margin: '10px 0' }}>
+                        Target: Sem {activeOtpDetails.semester} {activeOtpDetails.division ? `• Div ${activeOtpDetails.division}` : '• All Divisions'}
+                      </div>
+                    )}
 
                     <div style={styles.otpNumBox}>
                       {activeOtpDetails.otp}
@@ -1490,6 +1723,266 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               </form>
             </div>
           )}
+
+          {/* ===== MANUAL ATTENDANCE TAB ===== */}
+          {activeTab === 'manual' && (
+            <div style={styles.tabContent}>
+              {/* Header */}
+              <div className="glass-panel" style={{ ...styles.cardPadding, marginBottom: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  <div style={{
+                    width: '48px', height: '48px', borderRadius: '14px',
+                    background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    boxShadow: '0 6px 20px rgba(245,158,11,0.35)', flexShrink: 0
+                  }}>
+                    <ClipboardList size={24} color="#fff" />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <h2 style={{ ...styles.cardTitle, margin: 0 }}>Manual Attendance</h2>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '4px', margin: 0 }}>
+                      For students without a smartphone — mark attendance manually. Students who already marked via phone are shown but cannot be overridden.
+                    </p>
+                  </div>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={fetchTodayAllAttendance}
+                    style={{ gap: '8px', flexShrink: 0 }}
+                  >
+                    <RefreshCw size={14} />
+                    Refresh
+                  </button>
+                </div>
+              </div>
+
+              {/* Legend */}
+              <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                  <span style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#22c55e', flexShrink: 0 }} />
+                  Present (via Smartphone)
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                  <span style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#f59e0b', flexShrink: 0 }} />
+                  Present (Manually by Faculty)
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                  <span style={{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--border-light)', flexShrink: 0 }} />
+                  Absent / Not Yet Marked
+                </div>
+              </div>
+
+              {/* Sem Folder View or Student List */}
+              {!manualSemFolder ? (
+                /* Semester folders */
+                <div className="glass-panel" style={styles.cardPadding}>
+                  <h3 style={{ ...styles.cardTitle, marginBottom: '20px' }}>Select Semester</h3>
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+                    gap: '16px'
+                  }}>
+                    {[1,2,3,4,5,6,7,8].map(sem => {
+                      const semStudents = studentsList.filter(s => String(s.semester) === String(sem));
+                      if (semStudents.length === 0) return null;
+                      const semPresent = manualTodayLogs.filter(l =>
+                        l.status === 'Success' && String(l.semester) === String(sem)
+                      ).length;
+                      return (
+                        <div
+                          key={sem}
+                          onClick={() => { setManualSemFolder(String(sem)); setManualDivFilter('ALL'); setManualSearchName(''); }}
+                          style={{
+                            background: 'rgba(245,158,11,0.07)',
+                            border: '1.5px solid rgba(245,158,11,0.25)',
+                            borderRadius: '16px',
+                            padding: '22px 16px',
+                            cursor: 'pointer',
+                            textAlign: 'center',
+                            transition: 'all 0.2s ease'
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 30px rgba(245,158,11,0.2)'; }}
+                          onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
+                        >
+                          <Folder size={36} color="#f59e0b" style={{ marginBottom: '10px' }} />
+                          <div style={{ fontWeight: '700', fontSize: '1rem', color: 'var(--text-primary)' }}>Semester {sem}</div>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '6px' }}>{semStudents.length} students</div>
+                          <div style={{ fontSize: '0.78rem', color: '#4ade80', marginTop: '2px' }}>{semPresent} present today</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (() => {
+                /* Inside a Semester Folder */
+                const semStudentsAll = studentsList.filter(s => String(s.semester) === String(manualSemFolder));
+                const divSet = new Set(semStudentsAll.filter(s => s.division && String(s.division).trim() !== '').map(s => String(s.division).trim().toUpperCase()));
+                const divList = ['ALL', ...Array.from(divSet).sort()];
+                const hasDivisions = divSet.size > 0;
+
+                const filteredStudents = semStudentsAll.filter(s => {
+                  const matchDiv = !hasDivisions || manualDivFilter === 'ALL' || (s.division && String(s.division).trim().toUpperCase() === manualDivFilter);
+                  const matchName = !manualSearchName || (s.name && s.name.toLowerCase().includes(manualSearchName.toLowerCase()));
+                  return matchDiv && matchName;
+                });
+
+                return (
+                  <div className="glass-panel" style={styles.cardPadding}>
+                    {/* Breadcrumb + Back */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => setManualSemFolder(null)}
+                        className="btn btn-secondary"
+                        style={{ gap: '8px', fontSize: '0.82rem', padding: '8px 14px' }}
+                      >
+                        ← All Semesters
+                      </button>
+                      <h3 style={{ ...styles.cardTitle, margin: 0 }}>Semester {manualSemFolder}</h3>
+                    </div>
+
+                    {/* Division Tabs (if divisions exist) */}
+                    {hasDivisions && (
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
+                        {divList.map(div => (
+                          <button
+                            key={div}
+                            onClick={() => setManualDivFilter(div)}
+                            style={{
+                              padding: '6px 16px', borderRadius: '20px', fontSize: '0.82rem',
+                              fontWeight: '600', cursor: 'pointer', border: 'none',
+                              background: manualDivFilter === div
+                                ? 'linear-gradient(135deg, #f59e0b, #d97706)'
+                                : 'rgba(255,255,255,0.05)',
+                              color: manualDivFilter === div ? '#fff' : 'var(--text-secondary)',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            {div === 'ALL' ? 'All Divisions' : `Division ${div}`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Search */}
+                    <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
+                      <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
+                        <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                        <input
+                          className="glass-input"
+                          style={{ paddingLeft: '36px', width: '100%', boxSizing: 'border-box' }}
+                          placeholder="Search by name..."
+                          value={manualSearchName}
+                          onChange={e => setManualSearchName(e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Students Table */}
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ ...styles.table, minWidth: '600px' }}>
+                        <thead>
+                          <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
+                            <th style={styles.tableTh}>Roll No</th>
+                            <th style={styles.tableTh}>Name</th>
+                            <th style={styles.tableTh}>Enrollment No</th>
+                            {hasDivisions && <th style={styles.tableTh}>Division</th>}
+                            <th style={styles.tableTh}>Mobile</th>
+                            <th style={styles.tableTh}>Status</th>
+                            <th style={styles.tableTh}>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredStudents.length === 0 ? (
+                            <tr>
+                              <td colSpan={hasDivisions ? 7 : 6} style={{ ...styles.noDataRow, textAlign: 'center' }}>No students found.</td>
+                            </tr>
+                          ) : filteredStudents.map(student => {
+                            const todayRecord = manualTodayLogs.find(l =>
+                              (l.enrollment_no && l.enrollment_no === student.enrollment_no) ||
+                              (l.roll_no && l.roll_no === student.roll_no)
+                            );
+                            const isPresent = todayRecord && todayRecord.status === 'Success';
+                            const isManual = todayRecord && todayRecord.device_id === 'Manual';
+                            const isPhone = isPresent && !isManual;
+                            const isActionPending = manualActionMsg.id === student.id;
+
+                            return (
+                              <tr key={student.id} style={{ transition: 'background 0.15s' }}>
+                                <td style={{ ...styles.tableTd, fontWeight: '700', color: 'var(--primary)' }}>{student.roll_no || '-'}</td>
+                                <td style={{ ...styles.tableTd, fontWeight: '600' }}>{student.name}</td>
+                                <td style={styles.tableTd}>{student.enrollment_no || '-'}</td>
+                                {hasDivisions && (
+                                  <td style={styles.tableTd}>
+                                    {student.division ? (
+                                      <span style={{ padding: '2px 8px', background: 'rgba(245,158,11,0.15)', borderRadius: '6px', color: '#fbbf24', fontSize: '0.78rem', fontWeight: '700' }}>
+                                        {student.division}
+                                      </span>
+                                    ) : '-'}
+                                  </td>
+                                )}
+                                <td style={styles.tableTd}>{student.mobile || '-'}</td>
+                                <td style={styles.tableTd}>
+                                  {isPhone ? (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', background: 'rgba(34,197,94,0.12)', color: '#4ade80', fontSize: '0.78rem', fontWeight: '700' }}>
+                                      <Smartphone size={12} /> Phone
+                                    </span>
+                                  ) : isManual ? (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', background: 'rgba(245,158,11,0.15)', color: '#fbbf24', fontSize: '0.78rem', fontWeight: '700' }}>
+                                      <ClipboardList size={12} /> Manual
+                                    </span>
+                                  ) : (
+                                    <span style={{ padding: '4px 12px', borderRadius: '20px', background: 'rgba(239,68,68,0.1)', color: '#f87171', fontSize: '0.78rem', fontWeight: '600' }}>
+                                      Absent
+                                    </span>
+                                  )}
+                                </td>
+                                <td style={styles.tableTd}>
+                                  {isActionPending && manualActionMsg.text ? (
+                                    <span style={{ fontSize: '0.8rem', color: manualActionMsg.type === 'success' ? '#4ade80' : '#f87171', fontWeight: '600' }}>
+                                      {manualActionMsg.text}
+                                    </span>
+                                  ) : isPhone ? (
+                                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Already via Phone</span>
+                                  ) : isManual ? (
+                                    <button
+                                      onClick={() => handleManualUnmark(student)}
+                                      disabled={manualLoading}
+                                      style={{
+                                        padding: '6px 14px', borderRadius: '10px', fontSize: '0.8rem', fontWeight: '600',
+                                        border: '1px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.08)',
+                                        color: '#f87171', cursor: 'pointer', transition: 'all 0.15s ease'
+                                      }}
+                                      title="Mark Absent (Undo Manual)"
+                                    >
+                                      Mark Absent
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => handleManualMark(student)}
+                                      disabled={manualLoading}
+                                      style={{
+                                        padding: '6px 14px', borderRadius: '10px', fontSize: '0.8rem', fontWeight: '700',
+                                        border: 'none', background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                                        color: '#fff', cursor: 'pointer', boxShadow: '0 4px 12px rgba(245,158,11,0.3)',
+                                        transition: 'all 0.15s ease'
+                                      }}
+                                      title="Mark Present Manually"
+                                    >
+                                      Mark Present
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
         </main>
       </div>
 
@@ -1520,18 +2013,18 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
             >✕</button>
 
             <h3 style={{ ...styles.cardTitle, marginBottom: '8px' }}>
-              Select Semester
+              Select Semester {selectedSemester && availableDivisions.length > 0 ? '& Division' : ''}
             </h3>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '24px' }}>
-              Please choose which semester this {semesterModal === 'qr' ? 'QR Code' : 'OTP'} session is for:
+              Please choose which semester {selectedSemester && availableDivisions.length > 0 ? 'and division ' : ''}this {semesterModal === 'qr' ? 'QR Code' : 'OTP'} session is for:
             </p>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: '24px' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: selectedSemester && availableDivisions.length > 0 ? '16px' : '24px' }}>
               {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
                 <button
                   key={s}
                   type="button"
-                  onClick={() => setSelectedSemester(String(s))}
+                  onClick={() => handleSelectSemesterForModal(String(s))}
                   style={{
                     padding: '12px 8px', borderRadius: '10px', fontWeight: '600',
                     fontSize: '0.9rem', cursor: 'pointer', transition: 'all 0.15s ease',
@@ -1544,6 +2037,45 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 </button>
               ))}
             </div>
+
+            {selectedSemester && availableDivisions.length > 0 && (
+              <div style={{ marginBottom: '24px', paddingTop: '16px', borderTop: '1px solid var(--border-light)', textAlign: 'left' }}>
+                <div style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '10px', textAlign: 'center' }}>
+                  Select Division (Sem {selectedSemester}):
+                </div>
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDivision('ALL')}
+                    style={{
+                      padding: '8px 14px', borderRadius: '8px', fontWeight: '600',
+                      fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.15s ease',
+                      border: selectedDivision === 'ALL' ? '2px solid var(--primary)' : '1px solid var(--border-light)',
+                      background: selectedDivision === 'ALL' ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
+                      color: selectedDivision === 'ALL' ? '#a855f7' : 'var(--text-primary)'
+                    }}
+                  >
+                    All Divisions
+                  </button>
+                  {availableDivisions.map(d => (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setSelectedDivision(d)}
+                      style={{
+                        padding: '8px 18px', borderRadius: '8px', fontWeight: '600',
+                        fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.15s ease',
+                        border: selectedDivision === d ? '2px solid var(--primary)' : '1px solid var(--border-light)',
+                        background: selectedDivision === d ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
+                        color: selectedDivision === d ? '#a855f7' : 'var(--text-primary)'
+                      }}
+                    >
+                      Div {d}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div style={{ display: 'flex', gap: '12px' }}>
               <button
@@ -1559,7 +2091,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 onClick={confirmSemesterAndGenerate}
                 className="btn btn-primary"
                 style={{ flex: 1 }}
-                disabled={!selectedSemester}
+                disabled={!selectedSemester || (availableDivisions.length > 0 && !selectedDivision)}
               >
                 Generate Code →
               </button>
@@ -1580,7 +2112,9 @@ const styles = {
     flexDirection: 'column',
     gap: '30px',
     minHeight: '100vh',
-    width: '100%'
+    width: '100%',
+    boxSizing: 'border-box',
+    overflowX: 'hidden'
   },
   navBar: {
     display: 'flex',

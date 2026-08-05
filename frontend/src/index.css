@@ -83,6 +83,9 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  /* Fix black tap highlight shadow on mobile (iOS & Android) */
+  -webkit-tap-highlight-color: transparent !important;
+  -webkit-touch-callout: none;
 }
 
 html,
@@ -180,6 +183,16 @@ body {
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   text-decoration: none;
+  /* No tap flash on mobile */
+  -webkit-tap-highlight-color: transparent !important;
+  outline: none;
+  touch-action: manipulation;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent !important;
+  outline: none;
+  touch-action: manipulation;
 }
 
 .btn-primary {
@@ -1253,5 +1266,184 @@ img[src="/logo.png"] {
   .semester-folder-grid {
     grid-template-columns: repeat(2, 1fr) !important;
     gap: 10px !important;
+  }
+}
+
+/* ==========================================================================
+   COMPREHENSIVE MOBILE RESPONSIVENESS IMPROVEMENTS
+   ========================================================================== */
+
+/* ── 1. Kill the black tap shadow on ALL interactive elements ── */
+a, button, input, select, textarea,
+div[onClick], div[style*="cursor: 'pointer'"],
+div[style*="cursor:pointer"],
+[role="button"] {
+  -webkit-tap-highlight-color: transparent !important;
+  -webkit-touch-callout: none !important;
+  outline: none !important;
+  touch-action: manipulation;
+}
+
+/* ── 2. dashboardContainer safe-area insets (notched phones) ── */
+@supports (padding: max(0px)) {
+  .faculty-dashboard-root,
+  .admin-dashboard-root {
+    padding-left: max(0px, env(safe-area-inset-left));
+    padding-right: max(0px, env(safe-area-inset-right));
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+  }
+}
+
+/* ── 3. Mobile-specific improvements ── */
+@media (max-width: 768px) {
+
+  /* Remove outer scroll caused by 100vw on mobile */
+  html, body, #root {
+    overflow-x: hidden !important;
+    width: 100% !important;
+  }
+
+  /* Dashboard containers: proper padding + no overflow */
+  .faculty-dashboard-root {
+    padding: 14px 12px !important;
+    overflow-x: hidden !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    box-sizing: border-box !important;
+  }
+
+  .admin-dashboard-root {
+    padding: 12px 10px !important;
+    overflow-x: hidden !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Nav bar mobile improvements */
+  nav.glass-panel {
+    padding: 10px 14px !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    border-radius: 0 !important;
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 100 !important;
+  }
+
+  nav.glass-panel > div {
+    flex-wrap: wrap !important;
+  }
+
+  /* Stat cards stack nicely */
+  .grid-3-cols {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+  }
+
+  /* Present/Absent/TotalSessions stat card text size */
+  div[style*="statVal"],
+  div[style*="fontSize: '2rem'"] {
+    font-size: 1.5rem !important;
+  }
+
+  /* Modal overlay: full height, safe scrolling */
+  div[style*="position: 'fixed'"][style*="inset: 0"],
+  div[style*="position: fixed"][style*="inset: 0"] {
+    padding: 10px !important;
+    align-items: flex-end !important;
+  }
+
+  /* Modal content: almost full screen from bottom */
+  div[style*="maxWidth: '520px'"],
+  div[style*="maxWidth: '600px'"],
+  div[style*="maxWidth: '560px'"] {
+    max-width: 100% !important;
+    width: 100% !important;
+    max-height: 92vh !important;
+    border-radius: 20px 20px 0 0 !important;
+    padding: 20px 16px 24px !important;
+    margin-bottom: 0 !important;
+  }
+
+  /* Semester folder grid: 4-per-row on tablet, 2-per-row on mobile, already handled */
+
+  /* Touch targets: minimum 44px for accessibility */
+  button, .btn, .tab,
+  input[type="button"], input[type="submit"] {
+    min-height: 44px !important;
+    touch-action: manipulation !important;
+  }
+
+  /* Sidebar horizontal scroll nav: bigger touch targets */
+  aside.faculty-sidebar button,
+  aside.admin-sidebar button {
+    min-height: 48px !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+    padding: 10px 14px !important;
+    font-size: 0.88rem !important;
+  }
+
+  /* Glass panel: prevent bleeding outside */
+  .glass-panel {
+    max-width: 100% !important;
+    overflow: hidden !important;
+  }
+
+  /* Table wrapper: horizontal scroll with momentum */
+  .custom-table-container {
+    -webkit-overflow-scrolling: touch !important;
+    overflow-x: auto !important;
+    width: 100% !important;
+  }
+
+  /* Fix forms inside modals */
+  form, .form-container {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
+
+  /* Live feed row: make it fit */
+  div[style*="liveFeedRow"],
+  div[style*="display: 'flex'"][style*="gap: '12px'"] {
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+  }
+}
+
+/* ── 4. Extra small screens (phones < 480px) ── */
+@media (max-width: 480px) {
+
+  /* Stat cards: single column on very small screens */
+  .grid-3-cols {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  /* Semester tabs in modal: 4 per row so they fit */
+  .semester-folder-grid {
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 6px !important;
+  }
+
+  /* Reduce nav title size */
+  h1[style], div[style*="navTitle"] {
+    font-size: 1rem !important;
+  }
+
+  /* Report filter select dropdowns full-width */
+  select.glass-input, select {
+    width: 100% !important;
+    font-size: 0.85rem !important;
+  }
+
+  /* Padding on main content area */
+  main[style*="contentPane"] {
+    padding: 0 !important;
+  }
+
+  div[style*="tabContent"] {
+    gap: 16px !important;
   }
 }

@@ -58,7 +58,7 @@ router.post('/toggle-settings', authenticateJWT, async (req, res) => {
 
 // POST start new QR session (Faculty only)
 router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, res) => {
-  const { semester } = req.body;
+  const { semester, division } = req.body;
   const today = getLocalDateString();
   try {
     // 1. Check if global QR generation is enabled by Admin
@@ -92,10 +92,18 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
       created_by_faculty_id: req.user.id,
       date: today,
       tokens: JSON.stringify(tokens),
-      semester: semester ? parseInt(semester) : null
+      semester: semester ? parseInt(semester) : null,
+      division: (division && String(division).trim() !== '') ? String(division).trim().toUpperCase() : null
     }]).select().single();
     
-    if (error) throw error;
+    if (error) {
+      if (error.code === 'PGRST204' || (error.message && (error.message.includes('division') || error.message.includes('schema cache')))) {
+        return res.status(400).json({ 
+          error: "Supabase DB Error: 'division' column qr_sessions table me nahi hai.\n\nKripya Supabase Dashboard -> SQL Editor me ye command run karein:\n\nALTER TABLE qr_sessions ADD COLUMN IF NOT EXISTS division TEXT;\nALTER TABLE otp ADD COLUMN IF NOT EXISTS division TEXT;" 
+        });
+      }
+      throw error;
+    }
 
     res.status(201).json({
       message: 'QR session started successfully',
@@ -104,7 +112,9 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
         createdAt,
         expiresAt,
         tokens,
-        secondsLeft: 120
+        secondsLeft: 120,
+        semester: result.semester || null,
+        division: result.division || null
       }
     });
   } catch (err) {
@@ -141,7 +151,9 @@ router.get('/active', authenticateJWT, async (req, res) => {
           createdAt: latestSession.created_at,
           expiresAt: latestSession.expires_at,
           tokens: JSON.parse(latestSession.tokens),
-          facultyName: latestSession.faculty?.name || 'Admin'
+          facultyName: latestSession.faculty?.name || 'Admin',
+          semester: latestSession.semester || null,
+          division: latestSession.division || null
         },
         secondsLeft: Math.max(0, Math.floor((expireTime - now) / 1000))
       });

@@ -27,6 +27,12 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   // Student CRUD State
   const [students, setStudents] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [totalListSemFilter, setTotalListSemFilter] = useState('');
+  const [totalListDivFilter, setTotalListDivFilter] = useState('');
+  const [statsSemFolder, setStatsSemFolder] = useState(null);
+  const [statsDivFilter, setStatsDivFilter] = useState('ALL');
+  const [stuSemFilter, setStuSemFilter] = useState('');
+  const [stuDivFilter, setStuDivFilter] = useState('');
   const [studentForm, setStudentForm] = useState({
     id: null,
     enrollment_no: '',
@@ -110,6 +116,10 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
   // Attendance live monitor & reports
   const [liveLogs, setLiveLogs] = useState([]);
+  const [monitorSemFolder, setMonitorSemFolder] = useState(null);
+  const [monitorDivFilter, setMonitorDivFilter] = useState('ALL');
+  const [monitorSearchName, setMonitorSearchName] = useState('');
+  const [monitorSearchEnroll, setMonitorSearchEnroll] = useState('');
   const [reportType, setReportType] = useState('today'); // 'today', 'yesterday', 'monthly', 'student_wise'
   const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
   const [reportStudentId, setReportStudentId] = useState('');
@@ -142,6 +152,27 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     }
   };
 
+  // Helper to sort students by Semester -> Division -> Roll Number (e.g. Sem 1: roll 1, 2, 3... Sem 2: roll 1, 2, 3...)
+  const sortStudentList = (list) => {
+    if (!Array.isArray(list)) return [];
+    return [...list].sort((a, b) => {
+      const semA = parseInt(a.semester, 10) || 0;
+      const semB = parseInt(b.semester, 10) || 0;
+      if (semA !== semB) return semA - semB;
+
+      const divA = (a.division || '').trim().toUpperCase();
+      const divB = (b.division || '').trim().toUpperCase();
+      if (divA !== divB) return divA.localeCompare(divB);
+
+      const rollA = String(a.roll_no || '').trim();
+      const rollB = String(b.roll_no || '').trim();
+      if (!rollA && !rollB) return String(a.name || '').localeCompare(String(b.name || ''));
+      if (!rollA) return 1;
+      if (!rollB) return -1;
+      return rollA.localeCompare(rollB, undefined, { numeric: true, sensitivity: 'base' });
+    });
+  };
+
   // Fetch student records
   const fetchStudents = async () => {
     setStudentsLoading(true);
@@ -151,7 +182,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       });
       if (res.ok) {
         const data = await res.json();
-        setStudents(data);
+        setStudents(sortStudentList(data));
       }
     } catch (err) {
       console.error('Error fetching students:', err);
@@ -295,6 +326,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       query = `?startDate=${startOfMonth}&endDate=${todayStr}`;
     } else if (reportType === 'student_wise') {
       query = `?studentId=${reportStudentId}`;
+    } else if (reportType === 'custom_date') {
+      query = `?date=${reportDate || new Date().toISOString().split('T')[0]}`;
     }
 
     try {
@@ -398,7 +431,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     if (activeTab === 'reports') {
       fetchReportData();
     }
-  }, [reportType, reportStudentId]);
+  }, [reportType, reportStudentId, reportDate]);
 
   // Leaflet Map Initialization & Sync
   useEffect(() => {
@@ -1172,7 +1205,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     doc.setFontSize(10);
     doc.setFont('Helvetica', 'normal');
     doc.setTextColor(100);
-    doc.text(`Report Scope: ${reportType.toUpperCase()}`, 14, 28);
+    const scopeStr = reportType === 'custom_date' ? `CHOSEN DATE (${reportDate})` : reportType.toUpperCase();
+    doc.text(`Report Scope: ${scopeStr}`, 14, 28);
     doc.text(`Generated On: ${new Date().toLocaleString()}`, 14, 34);
 
     // Filter information
@@ -1213,15 +1247,19 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       }
     });
 
-    doc.save(`Attendance_Report_${reportType}_${new Date().toISOString().split('T')[0]}.pdf`);
+    const fileScope = reportType === 'custom_date' ? `CustomDate_${reportDate}` : reportType;
+    doc.save(`Attendance_Report_${fileScope}_${new Date().toISOString().split('T')[0]}.pdf`);
   };
 
   const handleExportExcel = () => {
+    const fileScope = reportType === 'custom_date' ? `CustomDate_${reportDate}` : reportType;
     const cleanData = filteredReportData.map(row => ({
+      'Roll No': row.roll_no || '-',
       'Enrollment No': row.enrollment_no,
       'Name': row.name,
       'Course': row.course,
       'Semester': row.semester,
+      'Division': row.division || '-',
       'Faculty': row.faculty_name || 'Admin',
       'Session/OTP': row.qr_session_id ? `QR Session #${row.qr_session_id}` : `${row.otp || 'N/A'} (OTP)`,
       'Date': row.date,
@@ -1233,15 +1271,18 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     const worksheet = XLSX.utils.json_to_sheet(cleanData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance logs');
-    XLSX.writeFile(workbook, `Attendance_Report_${reportType}_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.writeFile(workbook, `Attendance_Report_${fileScope}_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const handleExportCSV = () => {
+    const fileScope = reportType === 'custom_date' ? `CustomDate_${reportDate}` : reportType;
     const cleanData = filteredReportData.map(row => ({
+      'Roll No': row.roll_no || '-',
       'Enrollment No': row.enrollment_no,
       'Name': row.name,
       'Course': row.course,
       'Semester': row.semester,
+      'Division': row.division || '-',
       'Faculty': row.faculty_name || 'Admin',
       'Session/OTP': row.qr_session_id ? `QR Session #${row.qr_session_id}` : `${row.otp || 'N/A'} (OTP)`,
       'Date': row.date,
@@ -1253,17 +1294,22 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     const worksheet = XLSX.utils.json_to_sheet(cleanData);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance logs');
-    XLSX.writeFile(workbook, `Attendance_Report_${reportType}_${new Date().toISOString().split('T')[0]}.csv`);
+    XLSX.writeFile(workbook, `Attendance_Report_${fileScope}_${new Date().toISOString().split('T')[0]}.csv`);
   };
 
-  const filteredStudents = students.filter(
-    (s) =>
-      s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      s.enrollment_no.includes(searchQuery)
-  );
+  const filteredStudents = sortStudentList(students.filter(
+    (s) => {
+      const matchSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        s.enrollment_no.includes(searchQuery);
+      const matchSem = !stuSemFilter || String(s.semester) === String(stuSemFilter);
+      const matchDiv = !stuDivFilter || 
+        (stuDivFilter === 'none' ? !s.division || s.division.trim() === '' : String(s.division).toLowerCase() === stuDivFilter.toLowerCase());
+      return matchSearch && matchSem && matchDiv;
+    }
+  ));
 
   return (
-    <div style={styles.container}>
+    <div style={styles.container} className="admin-dashboard-root">
       {/* Top Header */}
       <header className="glass-panel" style={styles.header}>
         <div style={styles.logoGroup}>
@@ -1349,7 +1395,11 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
               <div 
                 className="glass-panel stat-card" 
                 style={{ cursor: 'pointer', border: activeStatsList === 'total' ? '1.5px solid #3b82f6' : '1px solid rgba(255,255,255,0.08)' }} 
-                onClick={() => setActiveStatsList(prev => prev === 'total' ? null : 'total')}
+                onClick={() => {
+                  setActiveStatsList(prev => prev === 'total' ? null : 'total');
+                  setStatsSemFolder(null);
+                  setStatsDivFilter('ALL');
+                }}
               >
                 <div className="stat-card-info">
                   <h4>Total Students</h4>
@@ -1362,15 +1412,15 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
               <div 
                 className="glass-panel stat-card" 
-                style={{ cursor: 'pointer', border: activeStatsList === 'present' ? '1.5px solid #3b82f6' : '1px solid rgba(255,255,255,0.08)' }} 
+                style={{ cursor: 'pointer', border: activeStatsList === 'present' ? '1.5px solid #10b981' : '1px solid rgba(255,255,255,0.08)' }} 
                 onClick={() => setActiveStatsList(prev => prev === 'present' ? null : 'present')}
               >
                 <div className="stat-card-info">
                   <h4>Present Today</h4>
-                  <p style={{ color: '#3b82f6' }}>{statsLoading ? '...' : stats.presentToday}</p>
+                  <p style={{ color: '#10b981' }}>{statsLoading ? '...' : stats.presentToday}</p>
                 </div>
-                <div className="stat-card-icon" style={{ background: 'rgba(59, 130, 246, 0.15)' }}>
-                  <CheckCircle size={24} color="#3b82f6" />
+                <div className="stat-card-icon" style={{ background: 'rgba(16, 185, 129, 0.15)' }}>
+                  <CheckCircle size={24} color="#10b981" />
                 </div>
               </div>
 
@@ -1430,44 +1480,196 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   </h3>
                   <button 
                     className="btn btn-secondary" 
-                    onClick={() => setActiveStatsList(null)} 
+                    onClick={() => { setActiveStatsList(null); setStatsSemFolder(null); setStatsDivFilter('ALL'); }} 
                     style={{ padding: '6px 12px', fontSize: '0.8rem', borderRadius: '8px' }}
                   >
                     Close Panel
                   </button>
                 </div>
 
+                {activeStatsList === 'total' && (
+                  statsSemFolder === null ? (
+                    <div>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '16px' }}>
+                        Click on any Semester Folder to view registered students for that semester.
+                      </p>
+                      <div className="semester-folder-grid">
+                        {[1, 2, 3, 4, 5, 6, 7, 8].map(sem => {
+                          const semStudents = students.filter(s => String(s.semester) === String(sem));
+                          const semDivs = Array.from(new Set(
+                            semStudents.filter(s => s.division && s.division.trim() !== '').map(s => String(s.division).trim().toUpperCase())
+                          )).sort();
+
+                          return (
+                            <div
+                              key={sem}
+                              onClick={() => { setStatsSemFolder(sem); setStatsDivFilter('ALL'); }}
+                              style={{
+                                background: 'rgba(59, 130, 246, 0.08)',
+                                border: '1px solid rgba(59, 130, 246, 0.3)',
+                                borderRadius: '16px',
+                                padding: '18px 16px',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '10px'
+                              }}
+                            >
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Folder size={30} color="#3b82f6" />
+                                <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '12px', background: 'rgba(59, 130, 246, 0.2)', color: '#60a5fa', fontWeight: '600' }}>
+                                  {semStudents.length} Students
+                                </span>
+                              </div>
+
+                              <div>
+                                <div style={{ fontWeight: '700', fontSize: '1.05rem', color: 'var(--text-primary)' }}>
+                                  Sem {sem} Folder
+                                </div>
+                                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                  Semester {sem} Registered List
+                                </div>
+                                {semDivs.length > 0 ? (
+                                  <div style={{ fontSize: '0.75rem', color: '#60a5fa', marginTop: '5px', fontWeight: '600' }}>
+                                    Divisions: {semDivs.map(d => `Div ${d}`).join(', ')}
+                                  </div>
+                                ) : (
+                                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '5px', fontStyle: 'italic' }}>
+                                    No Divisions Available
+                                  </div>
+                                )}
+                              </div>
+
+                              <button
+                                type="button"
+                                className="btn btn-primary"
+                                style={{ width: '100%', padding: '6px 0', fontSize: '0.8rem', marginTop: '4px', background: 'linear-gradient(135deg, #3b82f6, #2563eb)' }}
+                              >
+                                📂 Open Sem {sem} Folder
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                        <button
+                          onClick={() => { setStatsSemFolder(null); setStatsDivFilter('ALL'); }}
+                          className="btn btn-secondary"
+                          style={{ padding: '6px 14px', fontSize: '0.85rem', borderRadius: '8px' }}
+                        >
+                          ← Back to All Folders
+                        </button>
+
+                        <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                          Showing registered students for <strong>Semester {statsSemFolder}</strong>
+                        </div>
+                      </div>
+
+                      {/* Division Selector if semester has divisions */}
+                      {(() => {
+                        const semDivisions = Array.from(new Set(
+                          students.filter(s => String(s.semester) === String(statsSemFolder) && s.division && s.division.trim() !== '')
+                            .map(s => String(s.division).trim().toUpperCase())
+                        )).sort();
+
+                        if (semDivisions.length > 0) {
+                          return (
+                            <div style={{ marginBottom: '16px', padding: '12px 16px', background: 'var(--panel-bg)', borderRadius: '10px', border: '1px solid var(--border-light)' }}>
+                              <div style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span>🏷️ Select Division for Semester {statsSemFolder}:</span>
+                              </div>
+                              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                                <button
+                                  type="button"
+                                  onClick={() => setStatsDivFilter('ALL')}
+                                  style={{
+                                    padding: '6px 16px', borderRadius: '8px', fontWeight: '600',
+                                    fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s ease',
+                                    border: statsDivFilter === 'ALL' ? '2px solid #3b82f6' : '1px solid rgba(255,255,255,0.1)',
+                                    background: statsDivFilter === 'ALL' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255,255,255,0.05)',
+                                    color: statsDivFilter === 'ALL' ? '#60a5fa' : 'var(--text-primary)'
+                                  }}
+                                >
+                                  All Divisions
+                                </button>
+                                {semDivisions.map(div => (
+                                  <button
+                                    key={div}
+                                    type="button"
+                                    onClick={() => setStatsDivFilter(div)}
+                                    style={{
+                                      padding: '6px 18px', borderRadius: '8px', fontWeight: '600',
+                                      fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s ease',
+                                      border: statsDivFilter === div ? '2px solid #3b82f6' : '1px solid rgba(255,255,255,0.1)',
+                                      background: statsDivFilter === div ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255,255,255,0.05)',
+                                      color: statsDivFilter === div ? '#60a5fa' : 'var(--text-primary)'
+                                    }}
+                                  >
+                                    Div {div}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        }
+                        return null;
+                      })()}
+
+                      <div className="custom-table-container" style={{ maxHeight: '400px', overflowY: 'auto', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
+                        <table className="custom-table">
+                          <thead>
+                            <tr>
+                              <th>Roll No</th>
+                              <th>Enrollment No</th>
+                              <th>Name</th>
+                              <th>Course</th>
+                              <th>Semester</th>
+                              <th>Division</th>
+                              <th>Mobile No</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(() => {
+                              const totalFiltered = sortStudentList(students.filter(s => {
+                                const matchSem = String(s.semester) === String(statsSemFolder);
+                                const matchDiv = statsDivFilter === 'ALL' || (s.division && String(s.division).trim().toUpperCase() === statsDivFilter);
+                                return matchSem && matchDiv;
+                              }));
+                              if (totalFiltered.length === 0) {
+                                return <tr><td colSpan="7" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)', fontStyle: 'italic' }}>No students found in Semester {statsSemFolder} {statsDivFilter !== 'ALL' ? `(Div ${statsDivFilter})` : ''}.</td></tr>;
+                              }
+                              return totalFiltered.map(s => (
+                                <tr key={s.id}>
+                                  <td style={{ fontWeight: 700, color: 'var(--primary)' }}>{s.roll_no || '-'}</td>
+                                  <td>{s.enrollment_no}</td>
+                                  <td style={{ fontWeight: 600 }}>{s.name}</td>
+                                  <td>{s.course}</td>
+                                  <td>Sem {s.semester}</td>
+                                  <td style={{ fontWeight: 600 }}>
+                                    {s.division ? (
+                                      <span style={{ padding: '2px 8px', background: 'rgba(59, 130, 246, 0.2)', borderRadius: '6px', color: '#60a5fa', fontSize: '0.8rem', fontWeight: 'bold' }}>
+                                        Div {s.division}
+                                      </span>
+                                    ) : '-'}
+                                  </td>
+                                  <td>{s.mobile}</td>
+                                </tr>
+                              ));
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )
+                )}
+
+                {activeStatsList !== 'total' && (
                 <div className="custom-table-container" style={{ maxHeight: '350px', overflowY: 'auto', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
                   <table className="custom-table">
-                    {activeStatsList === 'total' && (
-                      <>
-                        <thead>
-                          <tr>
-                            <th>Enrollment No</th>
-                            <th>Name</th>
-                            <th>Course</th>
-                            <th>Semester</th>
-                            <th>Mobile No</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {students.length === 0 ? (
-                            <tr><td colSpan="5" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)', fontStyle: 'italic' }}>No students registered.</td></tr>
-                          ) : (
-                            students.map(s => (
-                              <tr key={s.id}>
-                                <td>{s.enrollment_no}</td>
-                                <td>{s.name}</td>
-                                <td>{s.course}</td>
-                                <td>Sem {s.semester}</td>
-                                <td>{s.mobile}</td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </>
-                    )}
-
                     {activeStatsList === 'total_faculty' && (
                       <>
                         <thead>
@@ -1600,6 +1802,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     )}
                   </table>
                 </div>
+                )}
               </div>
             )}
 
@@ -1632,47 +1835,261 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                 </div>
               </div>
 
-              {/* Attendance Live Monitor */}
-              <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: 2, minWidth: '350px' }}>
-                <div className="mobile-stack-header" style={styles.cardHeaderWithAction}>
-                  <h3 style={styles.cardTitle}>Live Attendance Monitor (Today)</h3>
+              {/* Attendance Live Monitor (Semester Folders) */}
+              <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: '3 1 650px', minWidth: '350px' }}>
+                <div className="mobile-stack-header" style={{ ...styles.cardHeaderWithAction, marginBottom: '16px' }}>
+                  <h3 style={styles.cardTitle}>
+                    {monitorSemFolder ? `📁 Semester ${monitorSemFolder} Live Directory (Today)` : '📁 Live Attendance Monitor (Sem 1 to Sem 8)'}
+                  </h3>
                   <button className="btn btn-secondary" onClick={fetchLiveLogs} style={{ padding: '6px 10px', fontSize: '0.75rem' }}>
                     <RefreshCw size={12} /> Reload
                   </button>
                 </div>
 
-                <div className="custom-table-container" style={{ maxHeight: '300px', overflowY: 'auto' }}>
-                  {liveLogs.length === 0 ? (
-                    <div style={styles.emptyTableState}>Waiting for students to submit attendance...</div>
-                  ) : (
-                    <table className="custom-table">
-                      <thead>
-                        <tr>
-                          <th>Enrollment</th>
-                          <th>Name</th>
-                          <th>Time</th>
-                          <th>Distance</th>
-                          <th>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {liveLogs.map((log) => (
-                          <tr key={log.id}>
-                            <td>{log.enrollment_no}</td>
-                            <td>{log.name}</td>
-                            <td>{log.time}</td>
-                            <td>{log.distance}m</td>
-                            <td>
-                              <span className={`status-badge ${log.status.toLowerCase()}`}>
-                                {log.status === 'Success' ? 'Present' : 'Rejected'}
+                {monitorSemFolder === null ? (
+                  <>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '20px' }}>
+                      Click on any Semester Folder to select a division and view today's student attendance details for that semester.
+                    </p>
+
+                    <div className="semester-folder-grid">
+                      {[1, 2, 3, 4, 5, 6, 7, 8].map(sem => {
+                        const semLogs = liveLogs.filter(l => String(l.semester) === String(sem));
+                        const presentCount = semLogs.filter(l => l.status === 'Success').length;
+                        const rejectCount = semLogs.filter(l => l.status !== 'Success').length;
+                        const semDivs = Array.from(new Set([
+                          ...students.filter(s => String(s.semester) === String(sem) && s.division).map(s => s.division.trim().toUpperCase()),
+                          ...semLogs.filter(l => l.division).map(l => l.division.trim().toUpperCase())
+                        ])).filter(Boolean).sort();
+
+                        return (
+                          <div
+                            key={sem}
+                            onClick={() => { setMonitorSemFolder(sem); setMonitorDivFilter('ALL'); }}
+                            style={{
+                              background: 'rgba(147, 51, 234, 0.08)',
+                              border: '1px solid rgba(147, 51, 234, 0.3)',
+                              borderRadius: '16px',
+                              padding: '20px 16px',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s ease',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '10px'
+                            }}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <Folder size={32} color="#a855f7" />
+                              <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '12px', background: 'rgba(168,85,247,0.2)', color: '#c084fc', fontWeight: '600' }}>
+                                {semLogs.length} Records
                               </span>
-                            </td>
+                            </div>
+
+                            <div>
+                              <div style={{ fontWeight: '700', fontSize: '1.05rem', color: 'var(--text-primary)' }}>
+                                Sem {sem} Folder
+                              </div>
+                              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                Semester {sem} Student List
+                              </div>
+                              {semDivs.length > 0 ? (
+                                <div style={{ fontSize: '0.75rem', color: '#c084fc', marginTop: '5px', fontWeight: '600' }}>
+                                  Divisions: {semDivs.map(d => `Div ${d}`).join(', ')}
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '5px', fontStyle: 'italic' }}>
+                                  No Divisions Available
+                                </div>
+                              )}
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '8px', fontSize: '0.75rem', marginTop: '4px' }}>
+                              <span style={{ color: '#4ade80', fontWeight: '600' }}>✓ {presentCount} Present</span>
+                              <span style={{ color: '#f87171', fontWeight: '600' }}>✗ {rejectCount} Rejected</span>
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-primary"
+                              style={{ width: '100%', padding: '6px 0', fontSize: '0.8rem', marginTop: '4px' }}
+                            >
+                              📂 Open Sem {sem} Folder
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+                      <button
+                        onClick={() => { setMonitorSemFolder(null); setMonitorSearchName(''); setMonitorSearchEnroll(''); setMonitorDivFilter('ALL'); }}
+                        className="btn btn-secondary"
+                        style={{ padding: '6px 14px', fontSize: '0.85rem' }}
+                      >
+                        ← Back to All Folders
+                      </button>
+
+                      <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
+                        Showing student attendance for <strong>Semester {monitorSemFolder}</strong>
+                      </div>
+                    </div>
+
+                    {/* Division Selector for Opened Semester Folder */}
+                    {(() => {
+                      const semDivisions = Array.from(new Set([
+                        ...students.filter(s => String(s.semester) === String(monitorSemFolder) && s.division).map(s => s.division.trim().toUpperCase()),
+                        ...liveLogs.filter(l => String(l.semester) === String(monitorSemFolder) && l.division).map(l => l.division.trim().toUpperCase())
+                      ])).filter(Boolean).sort();
+
+                      if (semDivisions.length === 0) {
+                        return (
+                          <div style={{ marginBottom: '16px', fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                            ℹ️ No divisions available in Semester {monitorSemFolder}. Showing all semester records.
+                          </div>
+                        );
+                      }
+
+                      return (
+                        <div style={{ marginBottom: '16px', padding: '12px 16px', background: 'var(--panel-bg)', borderRadius: '10px', border: '1px solid var(--border-light)' }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span>🏷️ Select Division for Semester {monitorSemFolder}:</span>
+                          </div>
+                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                            <button
+                              type="button"
+                              onClick={() => setMonitorDivFilter('ALL')}
+                              style={{
+                                padding: '6px 16px', borderRadius: '8px', fontWeight: '600',
+                                fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s ease',
+                                border: monitorDivFilter === 'ALL' ? '2px solid var(--primary)' : '1px solid var(--border-light)',
+                                background: monitorDivFilter === 'ALL' ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
+                                color: monitorDivFilter === 'ALL' ? '#a855f7' : 'var(--text-primary)'
+                              }}
+                            >
+                              All Divisions
+                            </button>
+                            {semDivisions.map(div => (
+                              <button
+                                key={div}
+                                type="button"
+                                onClick={() => setMonitorDivFilter(div)}
+                                style={{
+                                  padding: '6px 18px', borderRadius: '8px', fontWeight: '600',
+                                  fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s ease',
+                                  border: monitorDivFilter === div ? '2px solid var(--primary)' : '1px solid var(--border-light)',
+                                  background: monitorDivFilter === div ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
+                                  color: monitorDivFilter === div ? '#a855f7' : 'var(--text-primary)'
+                                }}
+                              >
+                                Div {div}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid var(--border-light)' }}>
+                      <div style={styles.inputGroup}>
+                        <label style={styles.formLabel}>Filter by Name</label>
+                        <input
+                          type="text"
+                          placeholder="Search student name..."
+                          value={monitorSearchName}
+                          onChange={(e) => setMonitorSearchName(e.target.value)}
+                          className="glass-input"
+                          style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                        />
+                      </div>
+                      <div style={styles.inputGroup}>
+                        <label style={styles.formLabel}>Filter by Enrollment</label>
+                        <input
+                          type="text"
+                          placeholder="Search enrollment..."
+                          value={monitorSearchEnroll}
+                          onChange={(e) => setMonitorSearchEnroll(e.target.value)}
+                          className="glass-input"
+                          style={{ padding: '6px 10px', fontSize: '0.85rem' }}
+                        />
+                      </div>
+                      {(monitorSearchName || monitorSearchEnroll) && (
+                        <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+                          <button
+                            onClick={() => { setMonitorSearchName(''); setMonitorSearchEnroll(''); }}
+                            className="btn btn-secondary"
+                            style={{ padding: '6px 12px', fontSize: '0.8rem', height: '36px' }}
+                          >Clear</button>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="custom-table-container" style={{ maxHeight: '350px', overflowY: 'auto' }}>
+                      <table className="custom-table">
+                        <thead>
+                          <tr>
+                            <th>Roll No</th>
+                            <th>Student Name</th>
+                            <th>Sem & Division</th>
+                            <th>Enrollment No</th>
+                            <th>Faculty</th>
+                            <th>Time</th>
+                            <th>Distance</th>
+                            <th>Status</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
+                        </thead>
+                        <tbody>
+                          {(() => {
+                            const semLogs = liveLogs.filter(log => String(log.semester) === String(monitorSemFolder));
+                            const filtered = semLogs.filter(log => {
+                              const matchDiv = monitorDivFilter === 'ALL' || (log.division && log.division.trim().toUpperCase() === monitorDivFilter);
+                              const matchName = !monitorSearchName || (log.name && log.name.toLowerCase().includes(monitorSearchName.toLowerCase()));
+                              const matchEnroll = !monitorSearchEnroll || (log.enrollment_no && log.enrollment_no.toLowerCase().includes(monitorSearchEnroll.toLowerCase()));
+                              return matchDiv && matchName && matchEnroll;
+                            });
+
+                            if (filtered.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan={8} style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                    No attendance records found for Semester {monitorSemFolder} {monitorDivFilter !== 'ALL' ? `(Div ${monitorDivFilter})` : ''} today.
+                                  </td>
+                                </tr>
+                              );
+                            }
+
+                            return filtered.map((log) => (
+                              <tr key={log.id}>
+                                <td style={{ fontWeight: '700', color: '#a855f7' }}>{log.roll_no || '-'}</td>
+                                <td style={{ fontWeight: '600' }}>{log.name}</td>
+                                <td>
+                                  <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>Sem {log.semester || monitorSemFolder}</span>
+                                  {log.division ? (
+                                    <span style={{ marginLeft: '6px', fontSize: '0.75rem', padding: '2px 6px', background: 'rgba(147,51,234,0.2)', borderRadius: '4px', color: '#c084fc', fontWeight: 'bold' }}>
+                                      Div {log.division}
+                                    </span>
+                                  ) : (
+                                    <span style={{ marginLeft: '6px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>(No Div)</span>
+                                  )}
+                                </td>
+                                <td>{log.enrollment_no}</td>
+                                <td>{log.faculty_name || 'Admin'}</td>
+                                <td>{log.time}</td>
+                                <td>{log.distance !== undefined && log.distance !== null ? `${Math.round(log.distance)}m` : '-'}</td>
+                                <td>
+                                  <span className={`status-badge ${log.status && log.status.toLowerCase()}`}>
+                                    {log.status === 'Success' ? 'Present' : 'Rejected'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ));
+                          })()}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           </div>
@@ -1708,6 +2125,48 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   <Plus size={16} /> Add Student
                 </button>
               </div>
+            </div>
+
+            {/* Semester & Division filter dropdowns */}
+            <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '16px', alignItems: 'center', background: 'rgba(255,255,255,0.02)', padding: '10px 14px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)' }}>Filter Students:</span>
+              <select 
+                className="glass-input" 
+                style={{ width: '160px', padding: '6px 12px' }}
+                value={stuSemFilter} 
+                onChange={(e) => { setStuSemFilter(e.target.value); setStuDivFilter(''); }}
+              >
+                <option value="">All Semesters</option>
+                {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+                  <option key={s} value={s}>Sem {s}</option>
+                ))}
+              </select>
+              <select 
+                className="glass-input" 
+                style={{ width: '160px', padding: '6px 12px' }}
+                value={stuDivFilter} 
+                onChange={(e) => setStuDivFilter(e.target.value)}
+              >
+                <option value="">All Divisions</option>
+                {Array.from(new Set(
+                  students
+                    .filter(s => !stuSemFilter || String(s.semester) === String(stuSemFilter))
+                    .map(s => s.division)
+                    .filter(d => d && d.trim() !== '')
+                )).sort().map(div => (
+                  <option key={div} value={div}>Div {div}</option>
+                ))}
+                <option value="none">No Division (Blank)</option>
+              </select>
+              {(stuSemFilter || stuDivFilter) && (
+                <button 
+                  className="btn btn-secondary" 
+                  onClick={() => { setStuSemFilter(''); setStuDivFilter(''); }}
+                  style={{ padding: '4px 10px', fontSize: '0.78rem' }}
+                >
+                  Reset
+                </button>
+              )}
             </div>
 
             <div className="custom-table-container">
@@ -2101,6 +2560,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   <option value="yesterday">Yesterday's Attendance</option>
                   <option value="monthly">Current Month Summary</option>
                   <option value="student_wise">Student Specific Report</option>
+                  <option value="custom_date">Choose Date (Custom Date)</option>
                 </select>
               </div>
 
@@ -2121,11 +2581,24 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                 </div>
               )}
 
+              {reportType === 'custom_date' && (
+                <div style={styles.filterGroup}>
+                  <label style={styles.formLabel}>Select Specific Date</label>
+                  <input
+                    type="date"
+                    value={reportDate}
+                    onChange={(e) => setReportDate(e.target.value)}
+                    className="glass-input"
+                    style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', height: '42px', minWidth: '160px' }}
+                  />
+                </div>
+              )}
+
               <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
                 <button 
                   className="btn btn-success" 
                   onClick={handleDownloadPDF}
-                  disabled={filteredReportData.length === 0 || (reportType === 'student_wise' && !reportStudentId)}
+                  disabled={filteredReportData.length === 0 || (reportType === 'student_wise' && !reportStudentId) || (reportType === 'custom_date' && !reportDate)}
                   style={{ height: '42px' }}
                 >
                   <Download size={16} /> PDF
@@ -2133,7 +2606,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                 <button 
                   className="btn btn-success" 
                   onClick={handleExportExcel}
-                  disabled={filteredReportData.length === 0 || (reportType === 'student_wise' && !reportStudentId)}
+                  disabled={filteredReportData.length === 0 || (reportType === 'student_wise' && !reportStudentId) || (reportType === 'custom_date' && !reportDate)}
                   style={{ height: '42px' }}
                 >
                   <Download size={16} /> Excel
@@ -2141,7 +2614,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                 <button 
                   className="btn btn-success" 
                   onClick={handleExportCSV}
-                  disabled={filteredReportData.length === 0 || (reportType === 'student_wise' && !reportStudentId)}
+                  disabled={filteredReportData.length === 0 || (reportType === 'student_wise' && !reportStudentId) || (reportType === 'custom_date' && !reportDate)}
                   style={{ height: '42px' }}
                 >
                   <Download size={16} /> CSV
@@ -2196,15 +2669,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     className="glass-input" 
                     value={reportFilterEnroll} 
                     onChange={e => setReportFilterEnroll(e.target.value)} 
-                  />
-                </div>
-                <div style={styles.inputGroup}>
-                  <label style={styles.formLabel}>Filter by Date</label>
-                  <input 
-                    type="date" 
-                    className="glass-input" 
-                    value={reportDate} 
-                    onChange={e => setReportDate(e.target.value)} 
                   />
                 </div>
               </div>
@@ -2696,7 +3160,10 @@ const styles = {
     padding: '24px 20px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '24px'
+    gap: '24px',
+    boxSizing: 'border-box',
+    overflowX: 'hidden',
+    width: '100%'
   },
   header: {
     padding: '16px 24px',

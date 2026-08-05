@@ -32,6 +32,22 @@ router.get('/', authenticateJWT, async (req, res) => {
     const { data: students, error } = await supabase.from('students').select('*');
     if (error) throw error;
     const safeStudents = (students || []).map(({ password, ...rest }) => rest);
+    safeStudents.sort((a, b) => {
+      const semA = parseInt(a.semester, 10) || 0;
+      const semB = parseInt(b.semester, 10) || 0;
+      if (semA !== semB) return semA - semB;
+
+      const divA = (a.division || '').trim().toUpperCase();
+      const divB = (b.division || '').trim().toUpperCase();
+      if (divA !== divB) return divA.localeCompare(divB);
+
+      const rollA = String(a.roll_no || '').trim();
+      const rollB = String(b.roll_no || '').trim();
+      if (!rollA && !rollB) return String(a.name || '').localeCompare(String(b.name || ''));
+      if (!rollA) return 1;
+      if (!rollB) return -1;
+      return rollA.localeCompare(rollB, undefined, { numeric: true, sensitivity: 'base' });
+    });
     res.json(safeStudents);
   } catch (err) {
     console.error('Error fetching students:', err);
@@ -78,7 +94,7 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
     if (division && String(division).trim() !== '') newStudentObj.division = String(division).trim();
 
     const { data: result, error } = await supabase.from('students').insert([newStudentObj]).select().single();
-    
+
     if (error) throw error;
 
     res.status(201).json({
@@ -97,7 +113,12 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
     });
   } catch (err) {
     console.error('Error adding student:', err);
-    res.status(500).json({ error: 'Failed to add student' });
+    if (err.code === 'PGRST204' || (err.message && err.message.includes('schema cache'))) {
+      return res.status(400).json({
+        error: "Supabase DB Error: 'division' (ya 'roll_no') column database table me nahi hai.\n\nKripya Supabase Dashboard -> SQL Editor me ye command run karein:\n\nALTER TABLE students ADD COLUMN IF NOT EXISTS roll_no TEXT;\nALTER TABLE students ADD COLUMN IF NOT EXISTS division TEXT;"
+      });
+    }
+    res.status(500).json({ error: err.message || 'Failed to add student' });
   }
 });
 
@@ -158,7 +179,12 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
     });
   } catch (err) {
     console.error('Error updating student:', err);
-    res.status(500).json({ error: 'Failed to update student' });
+    if (err.code === 'PGRST204' || (err.message && err.message.includes('schema cache'))) {
+      return res.status(400).json({
+        error: "Supabase DB Error: 'division' (ya 'roll_no') column database table me nahi hai.\n\nKripya Supabase Dashboard -> SQL Editor me ye command run karein:\n\nALTER TABLE students ADD COLUMN IF NOT EXISTS roll_no TEXT;\nALTER TABLE students ADD COLUMN IF NOT EXISTS division TEXT;"
+      });
+    }
+    res.status(500).json({ error: err.message || 'Failed to update student' });
   }
 });
 
@@ -215,7 +241,7 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
       if (division && String(division).trim() !== '') importObj.division = String(division).trim();
 
       const { error } = await supabase.from('students').insert([importObj]);
-      
+
       if (error) throw error;
 
       results.successCount++;
