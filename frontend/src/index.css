@@ -934,10 +934,8 @@ button {
   }
 
   /* Navigation Sidebars & Tab Bars on Mobile */
-  aside.faculty-sidebar,
   aside.admin-sidebar,
-  div[style*="tabNavbar"],
-  ul[style*="sideMenuList"] {
+  div[style*="tabNavbar"] {
     display: flex !important;
     flex-direction: row !important;
     overflow-x: auto !important;
@@ -951,10 +949,8 @@ button {
     scrollbar-width: none !important;
   }
 
-  aside.faculty-sidebar::-webkit-scrollbar,
   aside.admin-sidebar::-webkit-scrollbar,
-  div[style*="tabNavbar"]::-webkit-scrollbar,
-  ul[style*="sideMenuList"]::-webkit-scrollbar {
+  div[style*="tabNavbar"]::-webkit-scrollbar {
     display: none !important;
   }
 
@@ -1384,54 +1380,51 @@ div[style*="cursor:pointer"],
     white-space: nowrap !important;
   }
 
-  /* Faculty sidebar: horizontal scrollable pill row */
+  /* Faculty sidebar: 3-column compact grid on mobile (max 3 options/row) */
   aside.faculty-sidebar {
-    display: flex !important;
-    flex-direction: row !important;
-    overflow-x: auto !important;
-    white-space: nowrap !important;
-    -webkit-overflow-scrolling: touch !important;
-    padding: 10px 12px !important;
-    gap: 8px !important;
+    display: block !important;
     width: 100% !important;
     max-width: 100% !important;
-    box-sizing: border-box !important;
-    scrollbar-width: none !important;
-    border-radius: 12px !important;
+    padding: 10px 8px !important;
     margin-bottom: 0 !important;
+    border-radius: 16px !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
   }
 
-  aside.faculty-sidebar::-webkit-scrollbar {
-    display: none !important;
-  }
-
-  aside.faculty-sidebar ul {
-    display: flex !important;
-    flex-direction: row !important;
-    gap: 8px !important;
-    padding: 0 !important;
-    margin: 0 !important;
-    list-style: none !important;
-    width: auto !important;
-  }
-
-  aside.faculty-sidebar ul li {
-    flex: 0 0 auto !important;
-    width: auto !important;
-  }
-
-  aside.faculty-sidebar ul li button {
-    white-space: nowrap !important;
-    min-height: 42px !important;
-    padding: 8px 14px !important;
-    font-size: 0.85rem !important;
-    flex-shrink: 0 !important;
-    width: auto !important;
-  }
-
-  /* Faculty sidebar title: hide on mobile to save space */
   aside.faculty-sidebar > div:first-child {
     display: none !important;
+  }
+
+  aside.faculty-sidebar ul,
+  ul[style*="sideMenuList"] {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 6px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    list-style: none !important;
+  }
+
+  aside.faculty-sidebar ul li,
+  ul[style*="sideMenuList"] li {
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: none !important;
+  }
+
+  aside.faculty-sidebar ul li button,
+  ul[style*="sideMenuList"] li button {
+    width: 100% !important;
+    justify-content: center !important;
+    padding: 8px 4px !important;
+    font-size: 0.78rem !important;
+    min-height: 40px !important;
+    gap: 4px !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
   }
 
   /* Modal: slide up from bottom */
