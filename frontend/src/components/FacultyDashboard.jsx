@@ -920,9 +920,9 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
           <ul style={{
             ...styles.sideMenuList,
             display: isMobile ? 'grid' : 'flex',
-            gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : undefined,
+            gridTemplateColumns: isMobile ? 'repeat(3, 1fr)' : undefined,
             flexDirection: isMobile ? undefined : 'column',
-            gap: isMobile ? '8px' : '8px',
+            gap: isMobile ? '6px' : '8px',
             width: '100%',
             padding: 0,
             margin: 0
@@ -933,10 +933,10 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 style={{
                   ...styles.menuItemBtn,
                   ...(activeTab === 'dashboard' ? styles.menuItemBtnActive : {}),
-                  ...(isMobile ? { padding: '10px 8px', fontSize: '0.83rem', width: '100%', justifyContent: 'center' } : {})
+                  ...(isMobile ? { padding: '8px 4px', fontSize: '0.78rem', width: '100%', justifyContent: 'center', gap: '4px' } : {})
                 }}
               >
-                <Users size={isMobile ? 16 : 18} />
+                <Users size={isMobile ? 15 : 18} />
                 Dashboard
               </button>
             </li>
@@ -946,10 +946,10 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 style={{
                   ...styles.menuItemBtn,
                   ...(activeTab === 'otp' ? styles.menuItemBtnActive : {}),
-                  ...(isMobile ? { padding: '10px 8px', fontSize: '0.83rem', width: '100%', justifyContent: 'center' } : {})
+                  ...(isMobile ? { padding: '8px 4px', fontSize: '0.78rem', width: '100%', justifyContent: 'center', gap: '4px' } : {})
                 }}
               >
-                <QrCode size={isMobile ? 16 : 18} />
+                <QrCode size={isMobile ? 15 : 18} />
                 OTP/QR
               </button>
             </li>
@@ -960,10 +960,10 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   ...styles.menuItemBtn,
                   ...(activeTab === 'manual' ? styles.menuItemBtnActive : {}),
                   ...(activeTab === 'manual' ? {} : { color: '#f59e0b' }),
-                  ...(isMobile ? { padding: '10px 8px', fontSize: '0.83rem', width: '100%', justifyContent: 'center' } : {})
+                  ...(isMobile ? { padding: '8px 4px', fontSize: '0.78rem', width: '100%', justifyContent: 'center', gap: '4px' } : {})
                 }}
               >
-                <ClipboardList size={isMobile ? 16 : 18} />
+                <ClipboardList size={isMobile ? 15 : 18} />
                 Manual
               </button>
             </li>
@@ -973,24 +973,24 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 style={{
                   ...styles.menuItemBtn,
                   ...(activeTab === 'reports' ? styles.menuItemBtnActive : {}),
-                  ...(isMobile ? { padding: '10px 8px', fontSize: '0.83rem', width: '100%', justifyContent: 'center' } : {})
+                  ...(isMobile ? { padding: '8px 4px', fontSize: '0.78rem', width: '100%', justifyContent: 'center', gap: '4px' } : {})
                 }}
               >
-                <BarChart3 size={isMobile ? 16 : 18} />
+                <BarChart3 size={isMobile ? 15 : 18} />
                 Reports
               </button>
             </li>
-            <li style={{ width: '100%', minWidth: 0, gridColumn: isMobile ? 'span 2' : undefined }}>
+            <li style={{ width: '100%', minWidth: 0 }}>
               <button
                 onClick={() => setActiveTab('settings')}
                 style={{
                   ...styles.menuItemBtn,
                   ...(activeTab === 'settings' ? styles.menuItemBtnActive : {}),
-                  ...(isMobile ? { padding: '10px 8px', fontSize: '0.83rem', width: '100%', justifyContent: 'center' } : {})
+                  ...(isMobile ? { padding: '8px 4px', fontSize: '0.78rem', width: '100%', justifyContent: 'center', gap: '4px' } : {})
                 }}
               >
-                <KeyRound size={isMobile ? 16 : 18} />
-                Account Settings
+                <KeyRound size={isMobile ? 15 : 18} />
+                Settings
               </button>
             </li>
           </ul>
