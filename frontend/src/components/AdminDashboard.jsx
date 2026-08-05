@@ -825,6 +825,68 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     }
   };
 
+  // Helper to map header columns to student properties
+  const parseHeaderToStudentField = (header, val, stuObj) => {
+    const rawH = header.trim().toLowerCase();
+    const cleanH = rawH.replace(/[^a-z0-9]/g, '');
+
+    // 1. Enrollment No (Checked FIRST so 'enrollment' doesn't accidentally match 'roll')
+    if (
+      cleanH.includes('enroll') || 
+      cleanH.includes('enrol') || 
+      cleanH.includes('registra') ||
+      cleanH.includes('regno') ||
+      cleanH === 'eno' || 
+      cleanH === 'grno' ||
+      (cleanH.includes('no') && !cleanH.includes('roll') && !cleanH.includes('mobile') && !cleanH.includes('phone'))
+    ) {
+      stuObj.enrollment_no = val;
+    } 
+    // 2. Roll No (Must explicitly exclude 'enroll'/'enrol')
+    else if (
+      !cleanH.includes('enroll') && 
+      !cleanH.includes('enrol') && 
+      (cleanH.includes('roll') || cleanH.includes('seat') || cleanH === 'rno' || cleanH === 'rnumber' || cleanH === 'rollno')
+    ) {
+      stuObj.roll_no = val;
+    } 
+    // 3. Division / Section / Class / Batch / Group
+    else if (
+      cleanH.includes('division') || 
+      cleanH.includes('divison') || 
+      cleanH.includes('divsion') || 
+      cleanH.includes('div') || 
+      cleanH.includes('sec') || 
+      cleanH.includes('section') || 
+      cleanH.includes('class') || 
+      cleanH.includes('batch') || 
+      cleanH.includes('group') || 
+      cleanH.includes('grp')
+    ) {
+      stuObj.division = val;
+    } 
+    // 4. Name
+    else if (cleanH.includes('name')) {
+      stuObj.name = val;
+    } 
+    // 5. Course / Branch / Stream
+    else if (cleanH.includes('course') || cleanH.includes('dept') || cleanH.includes('branch') || cleanH.includes('stream') || cleanH.includes('program')) {
+      stuObj.course = val;
+    } 
+    // 6. Semester / Sem
+    else if (cleanH.includes('semester') || cleanH.includes('sem')) {
+      stuObj.semester = val;
+    } 
+    // 7. Mobile / Phone
+    else if (cleanH.includes('mobile') || cleanH.includes('phone') || cleanH.includes('contact') || cleanH.includes('cell')) {
+      stuObj.mobile = val;
+    } 
+    // 8. Password
+    else if (cleanH.includes('password') || cleanH.includes('pass')) {
+      stuObj.password = val;
+    }
+  };
+
   // CSV & XLSX student import handler
   const handleImportFile = (e) => {
     const file = e.target.files[0];
@@ -855,20 +917,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             if (val.startsWith('"') && val.endsWith('"')) {
               val = val.substring(1, val.length - 1);
             }
-
-            if (header.includes('enrollment') || header.includes('enroll') || header.includes('no')) {
-              stuObj.enrollment_no = val;
-            } else if (header.includes('name')) {
-              stuObj.name = val;
-            } else if (header.includes('course') || header.includes('dept')) {
-              stuObj.course = val;
-            } else if (header.includes('semester') || header.includes('sem')) {
-              stuObj.semester = val;
-            } else if (header.includes('mobile') || header.includes('phone')) {
-              stuObj.mobile = val;
-            } else if (header.includes('password') || header.includes('pass')) {
-              stuObj.password = val;
-            }
+            parseHeaderToStudentField(header, val, stuObj);
           });
 
           if (stuObj.enrollment_no && stuObj.name) {
@@ -912,20 +961,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             const stuObj = {};
             headers.forEach((header, index) => {
               let val = values[index] !== undefined && values[index] !== null ? values[index].toString().trim() : '';
-
-              if (header.includes('enrollment') || header.includes('enroll') || header.includes('no')) {
-                stuObj.enrollment_no = val;
-              } else if (header.includes('name')) {
-                stuObj.name = val;
-              } else if (header.includes('course') || header.includes('dept')) {
-                stuObj.course = val;
-              } else if (header.includes('semester') || header.includes('sem')) {
-                stuObj.semester = val;
-              } else if (header.includes('mobile') || header.includes('phone')) {
-                stuObj.mobile = val;
-              } else if (header.includes('password') || header.includes('pass')) {
-                stuObj.password = val;
-              }
+              parseHeaderToStudentField(header, val, stuObj);
             });
 
             if (stuObj.enrollment_no && stuObj.name) {

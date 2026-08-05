@@ -218,9 +218,27 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
     const username = enrollment_no.toString().toLowerCase().trim();
 
     try {
-      const { data: existing } = await supabase.from('students').select('id').eq('enrollment_no', enrollment_no).maybeSingle();
+      const { data: existing } = await supabase.from('students').select('id').eq('enrollment_no', enrollment_no.toString().trim()).maybeSingle();
       if (existing) {
-        results.errors.push(`Row ${i + 1}: Enrollment No ${enrollment_no} already exists.`);
+        // Update existing student record if roll_no, division or other details are provided
+        const updateObj = {
+          name: name.trim(),
+          course: course.trim(),
+          semester: semester.toString().trim(),
+          mobile: mobile.toString().trim()
+        };
+        if (roll_no && String(roll_no).trim() !== '') updateObj.roll_no = String(roll_no).trim();
+        if (division && String(division).trim() !== '') updateObj.division = String(division).trim();
+        if (password && String(password).toString().trim() !== '') {
+          const rawPassword = String(password).trim();
+          updateObj.password = bcrypt.hashSync(rawPassword, 10);
+          updateObj.plain_password = rawPassword;
+        }
+
+        const { error: updateErr } = await supabase.from('students').update(updateObj).eq('id', existing.id);
+        if (updateErr) throw updateErr;
+
+        results.successCount++;
         continue;
       }
 

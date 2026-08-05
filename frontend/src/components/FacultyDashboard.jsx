@@ -259,7 +259,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   // Mark student Present manually
   const handleManualMark = async (student) => {
     setManualLoading(true);
-    setManualActionMsg({ id: student.id, text: '', type: '' });
+    setManualActionMsg({ id: null, text: '', type: '' });
     try {
       const res = await fetch('/api/attendance/manual', {
         method: 'POST',
@@ -268,10 +268,24 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       });
       const data = await res.json();
       if (res.ok) {
-        setManualActionMsg({ id: student.id, text: '✓ Marked Present', type: 'success' });
-        await fetchTodayAllAttendance();
-        await fetchLiveLogs();
-        await fetchStats();
+        setManualTodayLogs(prev => [
+          ...prev.filter(l =>
+            (!l.enrollment_no || l.enrollment_no !== student.enrollment_no) &&
+            (!l.roll_no || l.roll_no !== student.roll_no)
+          ),
+          {
+            student_id: student.id,
+            student_name: student.name,
+            enrollment_no: student.enrollment_no,
+            roll_no: student.roll_no,
+            status: 'Success',
+            device_id: 'Manual',
+            created_at: new Date().toISOString()
+          }
+        ]);
+        fetchTodayAllAttendance();
+        fetchLiveLogs();
+        fetchStats();
       } else {
         setManualActionMsg({ id: student.id, text: data.error || 'Failed', type: 'error' });
       }
@@ -279,14 +293,13 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       setManualActionMsg({ id: student.id, text: 'Network error', type: 'error' });
     } finally {
       setManualLoading(false);
-      setTimeout(() => setManualActionMsg({ id: null, text: '', type: '' }), 3000);
     }
   };
 
   // Undo manual attendance (Mark Absent)
   const handleManualUnmark = async (student) => {
     setManualLoading(true);
-    setManualActionMsg({ id: student.id, text: '', type: '' });
+    setManualActionMsg({ id: null, text: '', type: '' });
     try {
       const res = await fetch('/api/attendance/manual/undo', {
         method: 'POST',
@@ -295,10 +308,13 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       });
       const data = await res.json();
       if (res.ok) {
-        setManualActionMsg({ id: student.id, text: '✓ Marked Absent', type: 'success' });
-        await fetchTodayAllAttendance();
-        await fetchLiveLogs();
-        await fetchStats();
+        setManualTodayLogs(prev => prev.filter(l =>
+          (!l.enrollment_no || l.enrollment_no !== student.enrollment_no) &&
+          (!l.roll_no || l.roll_no !== student.roll_no)
+        ));
+        fetchTodayAllAttendance();
+        fetchLiveLogs();
+        fetchStats();
       } else {
         setManualActionMsg({ id: student.id, text: data.error || 'Failed to undo', type: 'error' });
       }
@@ -306,7 +322,6 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       setManualActionMsg({ id: student.id, text: 'Network error', type: 'error' });
     } finally {
       setManualLoading(false);
-      setTimeout(() => setManualActionMsg({ id: null, text: '', type: '' }), 3000);
     }
   };
 
@@ -2007,8 +2022,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                                   )}
                                 </td>
                                 <td style={styles.tableTd}>
-                                  {isActionPending && manualActionMsg.text ? (
-                                    <span style={{ fontSize: '0.8rem', color: manualActionMsg.type === 'success' ? '#4ade80' : '#f87171', fontWeight: '600' }}>
+                                  {isActionPending && manualActionMsg.type === 'error' && manualActionMsg.text ? (
+                                    <span style={{ fontSize: '0.8rem', color: '#f87171', fontWeight: '600' }}>
                                       {manualActionMsg.text}
                                     </span>
                                   ) : isPhone ? (

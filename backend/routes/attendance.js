@@ -38,6 +38,107 @@ function getLocalDateString(dateObj = new Date()) {
   return localD.toISOString().split('T')[0];
 }
 
+// GET check if there is an active QR or OTP session for the logged-in student (Semester & Division match)
+router.get('/check-session', authenticateJWT, async (req, res) => {
+  if (req.user.role !== 'student') {
+    return res.json({ unlocked: true });
+  }
+
+  const nowMs = Date.now();
+
+  try {
+    // Fetch exact student details directly from DB to avoid missing JWT claims
+    let studentSem = req.user.semester ? parseInt(req.user.semester, 10) : null;
+    let studentDiv = req.user.division ? String(req.user.division).trim().toUpperCase() : '';
+
+    const { data: dbStudent } = await supabase.from('students')
+      .select('semester, division')
+      .eq('id', req.user.id)
+      .maybeSingle();
+
+    if (dbStudent) {
+      if (dbStudent.semester) studentSem = parseInt(dbStudent.semester, 10);
+      if (dbStudent.division) studentDiv = String(dbStudent.division).trim().toUpperCase();
+    }
+
+    // 1. Check active QR sessions
+    const { data: activeQrSessions } = await supabase.from('qr_sessions')
+      .select('*, faculty:created_by_faculty_id(name)')
+      .order('id', { ascending: false })
+      .limit(10);
+
+    let matchingQrSession = null;
+    let qrSecondsLeft = 0;
+
+    if (activeQrSessions && activeQrSessions.length > 0) {
+      for (const sess of activeQrSessions) {
+        const expireTime = new Date(sess.expires_at).getTime();
+        if (nowMs < expireTime) {
+          const sessSem = sess.semester ? parseInt(sess.semester, 10) : null;
+          const sessDiv = sess.division ? String(sess.division).trim().toUpperCase() : null;
+
+          const semMatches = (!sessSem || (studentSem && sessSem === studentSem));
+          const divMatches = (!sessDiv || sessDiv === 'ALL' || (studentDiv && sessDiv === studentDiv));
+
+          if (semMatches && divMatches) {
+            matchingQrSession = sess;
+            qrSecondsLeft = Math.max(0, Math.floor((expireTime - nowMs) / 1000));
+            break;
+          }
+        }
+      }
+    }
+
+    // 2. Check active OTP sessions
+    const { data: activeOtps } = await supabase.from('otp')
+      .select('*')
+      .order('id', { ascending: false })
+      .limit(10);
+
+    let matchingOtpSession = null;
+    let otpSecondsLeft = 0;
+
+    if (activeOtps && activeOtps.length > 0) {
+      for (const otpSess of activeOtps) {
+        const expireTime = new Date(otpSess.expire_time).getTime();
+        if (nowMs < expireTime) {
+          const sessSem = otpSess.semester ? parseInt(otpSess.semester, 10) : null;
+          const sessDiv = otpSess.division ? String(otpSess.division).trim().toUpperCase() : null;
+
+          const semMatches = (!sessSem || (studentSem && sessSem === studentSem));
+          const divMatches = (!sessDiv || sessDiv === 'ALL' || (studentDiv && sessDiv === studentDiv));
+
+          if (semMatches && divMatches) {
+            matchingOtpSession = otpSess;
+            otpSecondsLeft = Math.max(0, Math.floor((expireTime - nowMs) / 1000));
+            break;
+          }
+        }
+      }
+    }
+
+    if (matchingQrSession || matchingOtpSession) {
+      const activeSess = matchingQrSession || matchingOtpSession;
+      return res.json({
+        unlocked: true,
+        type: matchingQrSession && matchingOtpSession ? 'BOTH' : matchingQrSession ? 'QR' : 'OTP',
+        semester: activeSess.semester || studentSem,
+        division: activeSess.division || 'ALL',
+        facultyName: activeSess.faculty?.name || 'Faculty',
+        secondsLeft: Math.max(qrSecondsLeft, otpSecondsLeft)
+      });
+    }
+
+    return res.json({
+      unlocked: false,
+      message: `No active attendance session for Semester ${studentSem || ''}${studentDiv ? ' - Div ' + studentDiv : ''}. Waiting for faculty to start a session.`
+    });
+  } catch (err) {
+    console.error('Error checking active session for student:', err);
+    res.status(500).json({ error: 'Failed to check session status' });
+  }
+});
+
 // POST submit attendance (Student only)
 router.post('/submit', authenticateJWT, async (req, res) => {
   if (req.user.role !== 'student') {
@@ -88,6 +189,20 @@ router.post('/submit', authenticateJWT, async (req, res) => {
         return res.status(400).json({ error: 'Invalid QR session. Please scan a valid QR code.' });
       }
 
+      // Check semester & division match for QR
+      if (qrSessionRecord.semester && req.user.semester) {
+        if (parseInt(qrSessionRecord.semester, 10) !== parseInt(req.user.semester, 10)) {
+          return res.status(400).json({ error: `This QR session is for Semester ${qrSessionRecord.semester}, but your profile is Semester ${req.user.semester}.` });
+        }
+      }
+      if (qrSessionRecord.division && String(qrSessionRecord.division).trim().toUpperCase() !== 'ALL') {
+        const sessDiv = String(qrSessionRecord.division).trim().toUpperCase();
+        const stuDiv = String(req.user.division || '').trim().toUpperCase();
+        if (sessDiv !== stuDiv) {
+          return res.status(400).json({ error: `This QR session is for Division ${sessDiv}, but your profile is Division ${stuDiv || 'None'}.` });
+        }
+      }
+
       // Check if session has expired (allow 10s grace period)
       const expiresTime = new Date(qrSessionRecord.expires_at).getTime();
       if (nowMs > expiresTime + 10000) {
@@ -95,7 +210,7 @@ router.post('/submit', authenticateJWT, async (req, res) => {
       }
 
       // Check token index range
-      if (tokenIndex < 0 || tokenIndex >= 6) {
+      if (tokenIndex < 0 || tokenIndex >= 8) {
         return res.status(400).json({ error: 'Invalid QR token index.' });
       }
 
@@ -147,6 +262,20 @@ router.post('/submit', authenticateJWT, async (req, res) => {
       
       if (!otpRecord) {
         return res.status(400).json({ error: 'Invalid OTP. Please enter the correct code.' });
+      }
+
+      // Check semester & division match for OTP
+      if (otpRecord.semester && req.user.semester) {
+        if (parseInt(otpRecord.semester, 10) !== parseInt(req.user.semester, 10)) {
+          return res.status(400).json({ error: `This OTP session is for Semester ${otpRecord.semester}, but your profile is Semester ${req.user.semester}.` });
+        }
+      }
+      if (otpRecord.division && String(otpRecord.division).trim().toUpperCase() !== 'ALL') {
+        const sessDiv = String(otpRecord.division).trim().toUpperCase();
+        const stuDiv = String(req.user.division || '').trim().toUpperCase();
+        if (sessDiv !== stuDiv) {
+          return res.status(400).json({ error: `This OTP session is for Division ${sessDiv}, but your profile is Division ${stuDiv || 'None'}.` });
+        }
       }
 
       // Check if OTP is expired

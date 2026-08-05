@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LogOut, User, MapPin, Navigation, History, CheckCircle2, XCircle, RefreshCw, Smartphone, Sun, Moon, QrCode, Camera } from 'lucide-react';
+import { LogOut, User, MapPin, Navigation, History, CheckCircle2, XCircle, RefreshCw, Smartphone, Sun, Moon, QrCode, Camera, ShieldAlert } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 
 export default function StudentDashboard({ user, token, onLogout, theme, toggleTheme }) {
@@ -132,10 +132,40 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     }
   };
 
+  // Active Attendance Session lock/unlock state (Semester & Division matching)
+  const [sessionStatus, setSessionStatus] = useState({
+    unlocked: false,
+    loading: true,
+    type: null,
+    message: '',
+    semester: null,
+    division: null,
+    secondsLeft: 0
+  });
+
+  const fetchSessionStatus = async () => {
+    try {
+      const res = await fetch('/api/attendance/check-session', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setSessionStatus({ ...data, loading: false });
+      }
+    } catch (err) {
+      console.error('Error checking attendance session:', err);
+    }
+  };
+
   useEffect(() => {
     fetchCollegeLocation();
     fetchHistory();
     fetchStudentTrend();
+    fetchSessionStatus();
+
+    // Poll active session status every 3 seconds to catch faculty live QR/OTP generation
+    const interval = setInterval(fetchSessionStatus, 3000);
+    return () => clearInterval(interval);
   }, []);
 
   // Automatically pre-fetch and watch GPS location in background
@@ -298,6 +328,13 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
 
   // Camera QR Scanner control methods
   const startScanner = () => {
+    if (!sessionStatus.unlocked) {
+      const msg = sessionStatus.message || `Attendance session is locked. Faculty has not started a Live QR/OTP session for Semester ${user.semester}${user.division ? ' - Div ' + user.division : ''} yet.`;
+      setScannerError(msg);
+      alert(msg);
+      return;
+    }
+
     if (cooldownTime > 0) {
       const msg = `Attendance submitted! Scan button is blocked for ${formatCooldown(cooldownTime)} on this device.`;
       setScannerError(msg);
@@ -555,8 +592,8 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                 <strong style={styles.detailValue}>{user.course}</strong>
               </div>
               <div style={styles.detailRow} className="student-profile-item">
-                <span style={styles.detailLabel}>Semester</span>
-                <strong style={styles.detailValue}>Sem {user.semester}</strong>
+                <span style={styles.detailLabel}>Semester & Div</span>
+                <strong style={styles.detailValue}>Sem {user.semester}{user.division ? ` (Div ${user.division})` : ''}</strong>
               </div>
               <div style={styles.detailRow} className="student-profile-item student-profile-item-full">
                 <span style={styles.detailLabel}>Mobile</span>
@@ -578,12 +615,62 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                   {message.type === 'success' ? <CheckCircle2 size={18} /> : <XCircle size={18} />}
                   <span>{message.text}</span>
                 </div>
-              )}
-
-              {/* QR Scanner Area */}
+              )}              {/* QR Scanner Area */}
               <div style={styles.formGroup}>
-                <label style={styles.formLabel}>Camera QR Scanner</label>
-                               {scannerOpen ? (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <label style={{ ...styles.formLabel, margin: 0 }}>Camera QR Scanner</label>
+                  {sessionStatus.unlocked ? (
+                    <span style={{ color: '#34d399', fontSize: '0.78rem', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      🔓 Session Active (Sem {sessionStatus.semester}{sessionStatus.division ? ` - Div ${sessionStatus.division}` : ''})
+                    </span>
+                  ) : (
+                    <span style={{ color: '#f87171', fontSize: '0.78rem', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      🔒 Session Locked
+                    </span>
+                  )}
+                </div>
+
+                {!sessionStatus.unlocked && !sessionStatus.loading && (
+                  <div style={{
+                    padding: '12px 14px',
+                    borderRadius: '10px',
+                    background: 'rgba(239, 68, 68, 0.08)',
+                    border: '1px solid rgba(239, 68, 68, 0.25)',
+                    color: '#f87171',
+                    fontSize: '0.85rem',
+                    marginBottom: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px'
+                  }}>
+                    <ShieldAlert size={20} style={{ flexShrink: 0 }} />
+                    <span>
+                      <strong>Session Locked:</strong> Faculty has not generated a Live QR or OTP for <strong>Semester {user.semester}{user.division ? ` (Division ${user.division})` : ''}</strong> yet. Button will unlock automatically when faculty starts a session.
+                    </span>
+                  </div>
+                )}
+
+                {sessionStatus.unlocked && (
+                  <div style={{
+                    padding: '12px 14px',
+                    borderRadius: '10px',
+                    background: 'rgba(52, 211, 153, 0.1)',
+                    border: '1px solid rgba(52, 211, 153, 0.3)',
+                    color: '#34d399',
+                    fontSize: '0.85rem',
+                    marginBottom: '12px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px'
+                  }}>
+                    <CheckCircle2 size={20} style={{ flexShrink: 0 }} />
+                    <span>
+                      <strong>Session Unlocked & Active!</strong> Live session started by {sessionStatus.facultyName || 'Faculty'} for Semester {sessionStatus.semester} {sessionStatus.division ? `(Div ${sessionStatus.division})` : ''}.
+                    </span>
+                  </div>
+                )}
+
+                {scannerOpen ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center', width: '100%' }}>
                     <div id="qr-reader-container" style={{ width: '100%', maxWidth: '320px', aspectRatio: '1/1', borderRadius: '12px', overflow: 'hidden', border: '2px solid rgba(255,255,255,0.1)', background: '#000' }} />
                     <button className="btn btn-secondary" onClick={stopScanner} style={{ width: '100%', maxWidth: '320px' }}>
@@ -595,7 +682,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                     type="button"
                     className="btn btn-primary"
                     onClick={startScanner}
-                    disabled={submitLoading || !location || cooldownTime > 0}
+                    disabled={submitLoading || !location || cooldownTime > 0 || !sessionStatus.unlocked}
                     style={{ 
                       width: '100%', 
                       display: 'flex', 
@@ -603,12 +690,21 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                       justifyContent: 'center', 
                       gap: '8px', 
                       padding: '14px',
-                      opacity: (submitLoading || !location || cooldownTime > 0) ? 0.6 : 1,
-                      cursor: cooldownTime > 0 ? 'not-allowed' : 'pointer'
+                      opacity: (submitLoading || !location || cooldownTime > 0 || !sessionStatus.unlocked) ? 0.6 : 1,
+                      cursor: (!sessionStatus.unlocked || cooldownTime > 0) ? 'not-allowed' : 'pointer',
+                      background: !sessionStatus.unlocked 
+                        ? 'rgba(239, 68, 68, 0.15)' 
+                        : undefined,
+                      border: !sessionStatus.unlocked 
+                        ? '1px solid rgba(239, 68, 68, 0.3)' 
+                        : undefined,
+                      color: !sessionStatus.unlocked ? '#f87171' : undefined
                     }}
                   >
-                    <Camera size={18} />
-                    {submitLoading 
+                    {!sessionStatus.unlocked ? <ShieldAlert size={18} /> : <Camera size={18} />}
+                    {!sessionStatus.unlocked
+                      ? `Scan Attendance QR (Locked - Waiting for Faculty)`
+                      : submitLoading 
                       ? 'Processing Scan...' 
                       : cooldownTime > 0 
                       ? `Scan Blocked (${formatCooldown(cooldownTime)})` 
