@@ -88,7 +88,10 @@ export default function App() {
     <div style={styles.container}>
       {!user ? (
         !showLogin ? (
-          <LandingPage onGetStarted={() => setShowLogin(true)} />
+          <>
+            <LandingPage onGetStarted={() => setShowLogin(true)} />
+            <PwaInstallPrompt />
+          </>
         ) : (
           <Login onLoginSuccess={handleLoginSuccess} onBack={() => setShowLogin(false)} />
         )
@@ -99,7 +102,6 @@ export default function App() {
       ) : (
         <StudentDashboard user={user} token={token} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} onUpdateUser={handleUpdateUser} />
       )}
-      <PwaInstallPrompt />
     </div>
   );
 }
