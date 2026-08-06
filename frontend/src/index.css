@@ -1619,4 +1619,50 @@ div[style*="cursor:pointer"],
   .semester-folder-grid > div {
     gap: 6px !important;
   }
+}
+
+/* Pop pop modal */
+.pop-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  z-index: 9999;
+}
+
+.pop-modal {
+  padding: 30px 40px;
+  border-radius: 20px;
+  box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+  text-align: center;
+  font-size: 1.8rem;
+  font-family: var(--font-display);
+  font-weight: 700;
+  animation: popIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+  color: white;
+}
+
+.pop-modal.success {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+
+.pop-modal.error {
+  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+}
+
+@keyframes popIn {
+  0% { transform: scale(0.5); opacity: 0; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes popFadeIn {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
 }

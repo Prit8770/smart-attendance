@@ -359,7 +359,7 @@ router.post('/student/lock', authenticateJWT, async (req, res) => {
   if (req.user.role !== 'student') return res.status(403).json({ error: 'Students only' });
   
   try {
-    const lockTime = Date.now() + (30 * 1000); // Lock for 30 seconds
+    const lockTime = Date.now() + (3 * 60 * 1000); // Lock for 3 minutes
     await supabase.from('students').update({ locked_until: lockTime.toString() }).eq('id', req.user.id);
     res.json({ success: true, locked_until: lockTime });
   } catch (err) {

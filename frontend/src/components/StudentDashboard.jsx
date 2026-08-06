@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LogOut, User, MapPin, Navigation, History, CheckCircle2, XCircle, RefreshCw, Smartphone, Sun, Moon, QrCode, Camera, ShieldAlert } from 'lucide-react';
+import { LogOut, User, MapPin, Navigation, History, CheckCircle2, XCircle, RefreshCw, Smartphone, Sun, Moon, QrCode, Camera, ShieldAlert, ZoomIn, ZoomOut } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
+import AttendanceNotification from './AttendanceNotification';
 
 export default function StudentDashboard({ user, token, onLogout, theme, toggleTheme }) {
   // Get or generate device ID for hardware cooldown
@@ -22,6 +23,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   const [historyLoading, setHistoryLoading] = useState(true);
   const [submitLoading, setSubmitLoading] = useState(false);
   const [message, setMessage] = useState({ text: '', type: '' });
+  const [popMessage, setPopMessage] = useState(null); // New state for popup
   const [attendanceData, setAttendanceData] = useState(null);
   const [trendLoading, setTrendLoading] = useState(true);
 
@@ -29,6 +31,17 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState('');
   const html5QrCodeRef = useRef(null);
+
+  // Zoom States
+  const [zoomLevel, setZoomLevel] = useState(1.0);
+  const [zoomSupported, setZoomSupported] = useState(false);
+  const [minZoom, setMinZoom] = useState(1.0);
+  const [maxZoom, setMaxZoom] = useState(3.0);
+  const videoTrackRef = useRef(null);
+  const zoomLevelRef = useRef(1.0);
+  const initialPinchDistanceRef = useRef(null);
+  const initialZoomRef = useRef(1.0);
+  const scannerContainerRef = useRef(null);
 
   // GPS refresh requirement & Device Cooldown States
   const [isGpsRefreshed, setIsGpsRefreshed] = useState(false);
@@ -249,6 +262,81 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     };
   }, [token, onLogout]);
 
+  // Apply Zoom logic
+  const applyZoom = (newZoom) => {
+    zoomLevelRef.current = newZoom;
+    setZoomLevel(newZoom);
+    if (videoTrackRef.current && zoomSupported) {
+      videoTrackRef.current.applyConstraints({
+        advanced: [{ zoom: newZoom }]
+      }).catch(e => console.warn("Native zoom failed:", e));
+    } else {
+      // Fallback CSS zoom
+      const videoEl = document.querySelector('#qr-reader-container video');
+      if (videoEl) {
+        videoEl.style.transform = `scale(${newZoom})`;
+        videoEl.style.transformOrigin = 'center center';
+        videoEl.style.transition = 'transform 0.1s ease-out';
+      }
+    }
+  };
+
+  const handleZoomIn = () => {
+    const newZoom = Math.min(zoomLevelRef.current + 0.2, maxZoom);
+    applyZoom(newZoom);
+  };
+
+  const handleZoomOut = () => {
+    const newZoom = Math.max(zoomLevelRef.current - 0.2, minZoom);
+    applyZoom(newZoom);
+  };
+
+  useEffect(() => {
+    const container = scannerContainerRef.current;
+    if (!container || !scannerOpen) return;
+
+    const handleTouchStart = (e) => {
+      if (e.touches.length === 2) {
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        initialPinchDistanceRef.current = Math.hypot(dx, dy);
+        initialZoomRef.current = zoomLevelRef.current;
+      }
+    };
+
+    const handleTouchMove = (e) => {
+      if (e.touches.length === 2 && initialPinchDistanceRef.current) {
+        e.preventDefault(); // Prevent page scrolling
+        const dx = e.touches[0].clientX - e.touches[1].clientX;
+        const dy = e.touches[0].clientY - e.touches[1].clientY;
+        const dist = Math.hypot(dx, dy);
+        const scale = dist / initialPinchDistanceRef.current;
+        
+        let newZoom = initialZoomRef.current * scale;
+        newZoom = Math.min(Math.max(newZoom, minZoom), maxZoom);
+        applyZoom(newZoom);
+      }
+    };
+
+    const handleTouchEnd = (e) => {
+      if (e.touches.length < 2) {
+        initialPinchDistanceRef.current = null;
+      }
+    };
+
+    container.addEventListener('touchstart', handleTouchStart, { passive: false });
+    container.addEventListener('touchmove', handleTouchMove, { passive: false });
+    container.addEventListener('touchend', handleTouchEnd);
+    container.addEventListener('touchcancel', handleTouchEnd);
+
+    return () => {
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+      container.removeEventListener('touchend', handleTouchEnd);
+      container.removeEventListener('touchcancel', handleTouchEnd);
+    };
+  }, [scannerOpen, minZoom, maxZoom, zoomSupported]);
+
 
   // Request browser Geolocation manual refresh
   const handleGetLocation = () => {
@@ -311,6 +399,11 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
       }
 
       setMessage({ text: 'Attendance marked successfully!', type: 'success' });
+      setPopMessage({
+        type: 'success',
+        title: 'Attendance Marked Successfully!',
+        message: 'Student attendance has been recorded successfully.'
+      });
 
       // Block Scan Attendance QR button for 2 minutes on this device
       const unlockTime = Date.now() + 2 * 60 * 1000;
@@ -321,6 +414,11 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
       fetchStudentTrend();
     } catch (err) {
       setMessage({ text: err.message, type: 'danger' });
+      setPopMessage({
+        type: 'error',
+        title: 'Attendance Rejected!',
+        message: err.message || 'Failed to submit attendance.'
+      });
     } finally {
       setSubmitLoading(false);
     }
@@ -393,13 +491,39 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
         }
       };
 
+      const setupZoomTrack = () => {
+        setTimeout(() => {
+          const videoEl = document.querySelector('#qr-reader-container video');
+          if (videoEl && videoEl.srcObject) {
+            const track = videoEl.srcObject.getVideoTracks()[0];
+            if (track) {
+              videoTrackRef.current = track;
+              const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+              if (capabilities.zoom) {
+                setZoomSupported(true);
+                setMinZoom(capabilities.zoom.min || 1.0);
+                setMaxZoom(capabilities.zoom.max || 3.0);
+                applyZoom(capabilities.zoom.min || 1.0);
+              } else {
+                setZoomSupported(false);
+                setMinZoom(1.0);
+                setMaxZoom(3.0);
+                applyZoom(1.0);
+              }
+            }
+          }
+        }, 800);
+      };
+
       // Try starting with environment (back) camera first
       html5QrCode.start(
         { facingMode: 'environment' },
         scanConfig,
         handleScanSuccess,
         () => {} // Silent verbose errors
-      ).catch(err => {
+      ).then(() => {
+        setupZoomTrack();
+      }).catch(err => {
         console.warn('Environment camera failed, falling back to front camera:', err);
         // Fallback to user (front) camera (required for laptop testing!)
         return html5QrCode.start(
@@ -407,7 +531,9 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           scanConfig,
           handleScanSuccess,
           () => {}
-        );
+        ).then(() => {
+          setupZoomTrack();
+        });
       }).catch(err2 => {
         console.error('All camera starts failed:', err2);
         setScannerError('Camera access failed. Please ensure camera permissions are allowed.');
@@ -424,6 +550,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
       }
     }
     html5QrCodeRef.current = null;
+    videoTrackRef.current = null;
     setScannerOpen(false);
   };
 
@@ -672,7 +799,26 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
 
                 {scannerOpen ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', alignItems: 'center', width: '100%' }}>
-                    <div id="qr-reader-container" style={{ width: '100%', maxWidth: '320px', aspectRatio: '1/1', borderRadius: '12px', overflow: 'hidden', border: '2px solid rgba(255,255,255,0.1)', background: '#000' }} />
+                    <div 
+                      ref={scannerContainerRef}
+                      style={{ width: '100%', maxWidth: '320px', display: 'flex', flexDirection: 'column', gap: '8px' }}
+                    >
+                      <div id="qr-reader-container" style={{ width: '100%', aspectRatio: '1/1', borderRadius: '12px', overflow: 'hidden', border: '2px solid rgba(255,255,255,0.1)', background: '#000' }} />
+                      
+                      {/* Zoom Controls */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+                        <button type="button" onClick={handleZoomOut} disabled={zoomLevel <= minZoom} style={{ background: 'transparent', border: 'none', color: zoomLevel <= minZoom ? 'var(--text-muted)' : 'var(--primary)', cursor: zoomLevel <= minZoom ? 'not-allowed' : 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <ZoomOut size={24} />
+                        </button>
+                        <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                          {zoomLevel.toFixed(1)}x {zoomSupported ? '(Native)' : '(Digital)'}
+                        </span>
+                        <button type="button" onClick={handleZoomIn} disabled={zoomLevel >= maxZoom} style={{ background: 'transparent', border: 'none', color: zoomLevel >= maxZoom ? 'var(--text-muted)' : 'var(--primary)', cursor: zoomLevel >= maxZoom ? 'not-allowed' : 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <ZoomIn size={24} />
+                        </button>
+                      </div>
+                    </div>
+
                     <button className="btn btn-secondary" onClick={stopScanner} style={{ width: '100%', maxWidth: '320px' }}>
                       Cancel Scan
                     </button>
@@ -707,7 +853,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                       : submitLoading 
                       ? 'Processing Scan...' 
                       : cooldownTime > 0 
-                      ? `Scan Blocked (${formatCooldown(cooldownTime)})` 
+                      ? 'Scan Blocked' 
                       : !isGpsRefreshed 
                       ? 'Scan Attendance QR (Click Refresh GPS first)' 
                       : 'Scan Attendance QR'}
@@ -860,6 +1006,17 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           </div>
         </div>
       </div>
+
+      {/* Attendance Notification Popup */}
+      {popMessage && (
+        <AttendanceNotification
+          type={popMessage.type}
+          title={popMessage.title}
+          message={popMessage.message}
+          duration={3000}
+          onClose={() => setPopMessage(null)}
+        />
+      )}
     </div>
   );
 }

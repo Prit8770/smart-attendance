@@ -119,9 +119,15 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const [monitorSemFolder, setMonitorSemFolder] = useState(null);
   const [monitorDivFilter, setMonitorDivFilter] = useState('ALL');
   const [monitorSearchName, setMonitorSearchName] = useState('');
-  const [monitorSearchEnroll, setMonitorSearchEnroll] = useState('');
-  const [reportType, setReportType] = useState('today'); // 'today', 'yesterday', 'monthly', 'student_wise'
+  const [monitorSearchRoll, setMonitorSearchRoll] = useState('');
+  const [reportType, setReportType] = useState('today'); // 'today', 'monthly', 'yearly', 'student_wise', 'custom_date'
   const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
+  // reportMonth: 'YYYY-MM' format, reportYear: 'YYYY' format
+  const [reportMonth, setReportMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [reportYear, setReportYear] = useState(() => String(new Date().getFullYear()));
   const [reportStudentId, setReportStudentId] = useState('');
   const [reportData, setReportData] = useState([]);
   const [reportFilterSem, setReportFilterSem] = useState('');
@@ -313,17 +319,18 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     if (reportType === 'today') {
       const todayStr = new Date().toISOString().split('T')[0];
       query = `?date=${todayStr}`;
-    } else if (reportType === 'yesterday') {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
-      const yesterdayStr = yesterday.toISOString().split('T')[0];
-      query = `?date=${yesterdayStr}`;
     } else if (reportType === 'monthly') {
-      const d = new Date();
-      // start of current month
-      const startOfMonth = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0];
-      const todayStr = d.toISOString().split('T')[0];
-      query = `?startDate=${startOfMonth}&endDate=${todayStr}`;
+      // reportMonth is 'YYYY-MM'
+      const [yr, mo] = reportMonth.split('-').map(Number);
+      const startOfMonth = new Date(yr, mo - 1, 1).toISOString().split('T')[0];
+      const endOfMonth   = new Date(yr, mo, 0).toISOString().split('T')[0]; // last day of month
+      query = `?startDate=${startOfMonth}&endDate=${endOfMonth}`;
+    } else if (reportType === 'yearly') {
+      // reportYear is 'YYYY'
+      const yr = parseInt(reportYear, 10);
+      const startOfYear = `${yr}-01-01`;
+      const endOfYear   = `${yr}-12-31`;
+      query = `?startDate=${startOfYear}&endDate=${endOfYear}`;
     } else if (reportType === 'student_wise') {
       query = `?studentId=${reportStudentId}`;
     } else if (reportType === 'custom_date') {
@@ -431,7 +438,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     if (activeTab === 'reports') {
       fetchReportData();
     }
-  }, [reportType, reportStudentId, reportDate]);
+  }, [reportType, reportStudentId, reportDate, reportMonth, reportYear]);
 
   // Leaflet Map Initialization & Sync
   useEffect(() => {
@@ -1960,7 +1967,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   <>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
                       <button
-                        onClick={() => { setMonitorSemFolder(null); setMonitorSearchName(''); setMonitorSearchEnroll(''); setMonitorDivFilter('ALL'); }}
+                        onClick={() => { setMonitorSemFolder(null); setMonitorSearchName(''); setMonitorSearchRoll(''); setMonitorDivFilter('ALL'); }}
                         className="btn btn-secondary"
                         style={{ padding: '6px 14px', fontSize: '0.85rem' }}
                       >
@@ -2029,7 +2036,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
                     <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid var(--border-light)' }}>
                       <div style={styles.inputGroup}>
-                        <label style={styles.formLabel}>Filter by Name</label>
+                        <label style={styles.formLabel}>Search by Name</label>
                         <input
                           type="text"
                           placeholder="Search student name..."
@@ -2040,20 +2047,20 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         />
                       </div>
                       <div style={styles.inputGroup}>
-                        <label style={styles.formLabel}>Filter by Enrollment</label>
+                        <label style={styles.formLabel}>Search by Roll No</label>
                         <input
                           type="text"
-                          placeholder="Search enrollment..."
-                          value={monitorSearchEnroll}
-                          onChange={(e) => setMonitorSearchEnroll(e.target.value)}
+                          placeholder="Search roll no..."
+                          value={monitorSearchRoll}
+                          onChange={(e) => setMonitorSearchRoll(e.target.value)}
                           className="glass-input"
                           style={{ padding: '6px 10px', fontSize: '0.85rem' }}
                         />
                       </div>
-                      {(monitorSearchName || monitorSearchEnroll) && (
+                      {(monitorSearchName || monitorSearchRoll) && (
                         <div style={{ display: 'flex', alignItems: 'flex-end' }}>
                           <button
-                            onClick={() => { setMonitorSearchName(''); setMonitorSearchEnroll(''); }}
+                            onClick={() => { setMonitorSearchName(''); setMonitorSearchRoll(''); }}
                             className="btn btn-secondary"
                             style={{ padding: '6px 12px', fontSize: '0.8rem', height: '36px' }}
                           >Clear</button>
@@ -2081,8 +2088,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                             const filtered = semLogs.filter(log => {
                               const matchDiv = monitorDivFilter === 'ALL' || (log.division && log.division.trim().toUpperCase() === monitorDivFilter);
                               const matchName = !monitorSearchName || (log.name && log.name.toLowerCase().includes(monitorSearchName.toLowerCase()));
-                              const matchEnroll = !monitorSearchEnroll || (log.enrollment_no && log.enrollment_no.toLowerCase().includes(monitorSearchEnroll.toLowerCase()));
-                              return matchDiv && matchName && matchEnroll;
+                              const matchRoll = !monitorSearchRoll || (log.roll_no && String(log.roll_no).toLowerCase().includes(monitorSearchRoll.toLowerCase()));
+                              return matchDiv && matchName && matchRoll;
                             });
 
                             if (filtered.length === 0) {
@@ -2593,12 +2600,43 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px' }}
                 >
                   <option value="today">Today's Attendance</option>
-                  <option value="yesterday">Yesterday's Attendance</option>
-                  <option value="monthly">Current Month Summary</option>
+                  <option value="monthly">Monthly Attendance</option>
+                  <option value="yearly">Yearly Attendance</option>
                   <option value="student_wise">Student Specific Report</option>
                   <option value="custom_date">Choose Date (Custom Date)</option>
                 </select>
               </div>
+
+              {/* Monthly picker */}
+              {reportType === 'monthly' && (
+                <div style={styles.filterGroup}>
+                  <label style={styles.formLabel}>Select Month</label>
+                  <input
+                    type="month"
+                    value={reportMonth}
+                    onChange={(e) => setReportMonth(e.target.value)}
+                    className="glass-input"
+                    style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', height: '42px', minWidth: '160px' }}
+                  />
+                </div>
+              )}
+
+              {/* Yearly picker */}
+              {reportType === 'yearly' && (
+                <div style={styles.filterGroup}>
+                  <label style={styles.formLabel}>Select Year</label>
+                  <select
+                    value={reportYear}
+                    onChange={(e) => setReportYear(e.target.value)}
+                    className="glass-input"
+                    style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', height: '42px' }}
+                  >
+                    {Array.from({ length: 6 }, (_, i) => String(new Date().getFullYear() - i)).map(yr => (
+                      <option key={yr} value={yr}>{yr}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
 
               {reportType === 'student_wise' && (
                 <div style={styles.filterGroup}>
