@@ -722,62 +722,97 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               </>
             )}
 
-            {/* Absent / Rejected Modal */}
-            {dashModal === 'absent' && (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                  <XCircle size={24} color="#ef4444" />
-                  <h2 style={{ ...styles.cardTitle, margin: 0 }}>Rejected / Absent</h2>
-                  <span style={{ marginLeft: 'auto', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    {liveLogs.filter(l => l.status !== 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).length} students
-                  </span>
-                </div>
+            {/* Absent Today Modal */}
+            {dashModal === 'absent' && (() => {
+              const presentEnrollments = new Set(
+                (liveLogs || [])
+                  .filter(l => l.status === 'Success' && l.enrollment_no)
+                  .map(l => String(l.enrollment_no).trim().toLowerCase())
+              );
 
-                {/* Semester Folder Buttons (4 per row Desktop, 2 per row Mobile) */}
-                <div className="semester-folder-grid" style={{ gap: '6px', marginBottom: '16px' }}>
-                  <button
-                    onClick={() => setDashModalSem('')}
-                    style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === '' ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: 'black', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
-                  ><Folder size={12} /> All</button>
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+              const rejectedLogsMap = new Map();
+              (liveLogs || []).forEach(l => {
+                if (l.status !== 'Success' && l.enrollment_no) {
+                  rejectedLogsMap.set(String(l.enrollment_no).trim().toLowerCase(), l);
+                }
+              });
+
+              const absentList = (studentsList || []).filter(s => {
+                const enrollKey = String(s.enrollment_no || '').trim().toLowerCase();
+                if (!enrollKey || presentEnrollments.has(enrollKey)) return false;
+                if (dashModalSem !== '' && String(s.semester) !== dashModalSem) return false;
+                return true;
+              });
+
+              return (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                    <XCircle size={24} color="#ef4444" />
+                    <h2 style={{ ...styles.cardTitle, margin: 0 }}>Absent Students Today</h2>
+                    <span style={{ marginLeft: 'auto', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                      {absentList.length} students
+                    </span>
+                  </div>
+
+                  {/* Semester Folder Buttons (4 per row Desktop, 2 per row Mobile) */}
+                  <div className="semester-folder-grid" style={{ gap: '6px', marginBottom: '16px' }}>
                     <button
-                      key={s}
-                      onClick={() => setDashModalSem(String(s))}
-                      style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === String(s) ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: 'black', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
-                    ><Folder size={12} /> Sem {s}</button>
-                  ))}
-                </div>
-
-                {liveLogs.filter(l => l.status !== 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).length === 0 ? (
-                  <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '30px 0' }}>No rejected attendance logs found for selected semester folder.</p>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {liveLogs.filter(l => l.status !== 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).map((l, i) => (
-                      <div key={l.id} style={{
-                        display: 'flex', alignItems: 'center', gap: '12px',
-                        padding: '12px 14px', borderRadius: '10px',
-                        background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)'
-                      }}>
-                        <div style={{
-                          width: '32px', height: '32px', borderRadius: '50%',
-                          background: 'rgba(239,68,68,0.2)', display: 'flex',
-                          alignItems: 'center', justifyContent: 'center',
-                          fontSize: '0.8rem', fontWeight: '700', color: '#f87171', flexShrink: 0
-                        }}>{i + 1}</div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.9rem' }}>{l.name}</div>
-                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{l.roll_no ? `Roll: ${l.roll_no} • ` : ''}{l.enrollment_no} • {l.course} Sem {l.semester}{l.division ? ` (Div ${l.division})` : ''}</div>
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: '0.78rem', color: '#f87171', fontWeight: '600' }}>✗ Rejected</div>
-                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.time}</div>
-                        </div>
-                      </div>
+                      onClick={() => setDashModalSem('')}
+                      style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === '' ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: 'black', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                    ><Folder size={12} /> All</button>
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+                      <button
+                        key={s}
+                        onClick={() => setDashModalSem(String(s))}
+                        style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === String(s) ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: 'black', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                      ><Folder size={12} /> Sem {s}</button>
                     ))}
                   </div>
-                )}
-              </>
-            )}
+
+                  {absentList.length === 0 ? (
+                    <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '30px 0' }}>
+                      {studentsList.length === 0 ? 'Loading students list...' : 'No absent students found for selected semester folder.'}
+                    </p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '60vh', overflowY: 'auto' }}>
+                      {absentList.map((s, i) => {
+                        const enrollKey = String(s.enrollment_no || '').trim().toLowerCase();
+                        const rejLog = rejectedLogsMap.get(enrollKey);
+                        return (
+                          <div key={s.id || enrollKey || i} style={{
+                            display: 'flex', alignItems: 'center', gap: '12px',
+                            padding: '12px 14px', borderRadius: '10px',
+                            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)'
+                          }}>
+                            <div style={{
+                              width: '32px', height: '32px', borderRadius: '50%',
+                              background: 'rgba(239,68,68,0.2)', display: 'flex',
+                              alignItems: 'center', justifyContent: 'center',
+                              fontSize: '0.8rem', fontWeight: '700', color: '#f87171', flexShrink: 0
+                            }}>{i + 1}</div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.9rem' }}>{s.name}</div>
+                              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                                {s.roll_no ? `Roll: ${s.roll_no} • ` : ''}{s.enrollment_no} • {s.course} Sem {s.semester}{s.division ? ` (Div ${s.division})` : ''}
+                                {s.mobile ? ` • Ph: ${s.mobile}` : ''}
+                              </div>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                              <div style={{ fontSize: '0.78rem', color: '#f87171', fontWeight: '600' }}>
+                                {rejLog ? `✗ Rejected (${rejLog.status || 'Failed'})` : '✗ Absent'}
+                              </div>
+                              {rejLog?.time && (
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Attempt: {rejLog.time}</div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Active Session Modal */}
             {dashModal === 'session' && (
