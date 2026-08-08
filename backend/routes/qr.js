@@ -126,9 +126,12 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
 // GET the active QR session (for dashboard polling/reload synchronization)
 router.get('/active', authenticateJWT, async (req, res) => {
   try {
+    const { data: faculties } = await supabase.from('faculty').select('id, name');
+    const facMap = new Map((faculties || []).map(f => [String(f.id), f.name]));
+
     // Find the latest generated session
     let sessionQuery = supabase.from('qr_sessions')
-      .select('*, faculty:created_by_faculty_id(name)')
+      .select('*')
       .order('id', { ascending: false })
       .limit(1);
     if (req.user && req.user.role === 'faculty') {
@@ -144,6 +147,7 @@ router.get('/active', authenticateJWT, async (req, res) => {
     const expireTime = new Date(latestSession.expires_at).getTime();
 
     if (now < expireTime) {
+      const facultyName = facMap.get(String(latestSession.created_by_faculty_id)) || 'Faculty';
       res.json({
         active: true,
         session: {
@@ -151,7 +155,7 @@ router.get('/active', authenticateJWT, async (req, res) => {
           createdAt: latestSession.created_at,
           expiresAt: latestSession.expires_at,
           tokens: JSON.parse(latestSession.tokens),
-          facultyName: latestSession.faculty?.name || 'Admin',
+          facultyName: facultyName,
           semester: latestSession.semester || null,
           division: latestSession.division || null
         },
@@ -170,8 +174,11 @@ router.get('/active', authenticateJWT, async (req, res) => {
 router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) => {
   const today = getLocalDateString();
   try {
+    const { data: faculties } = await supabase.from('faculty').select('id, name');
+    const facMap = new Map((faculties || []).map(f => [String(f.id), f.name]));
+
     let sessionsQuery = supabase.from('qr_sessions')
-      .select('id, created_at, expires_at, date, faculty:created_by_faculty_id(name)')
+      .select('*')
       .eq('date', today)
       .order('id', { ascending: false });
     if (req.user.role === 'faculty') {
@@ -190,12 +197,17 @@ router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) =>
         .eq('qr_session_id', sess.id)
         .eq('status', 'Success');
 
+      const facultyName = facMap.get(String(sess.created_by_faculty_id)) || 'Faculty';
+
       return {
         id: sess.id,
         created_at: sess.created_at,
         expires_at: sess.expires_at,
         date: sess.date,
-        faculty_name: sess.faculty?.name || 'Admin',
+        semester: sess.semester || null,
+        division: sess.division || null,
+        created_by_faculty_id: sess.created_by_faculty_id,
+        faculty_name: facultyName,
         presentCount: count || 0
       };
     }));
@@ -208,3 +220,4 @@ router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) =>
 });
 
 module.exports = router;
+

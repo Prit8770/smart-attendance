@@ -8,6 +8,13 @@ export default function PwaInstallPrompt() {
   const [showIosTip, setShowIosTip] = useState(false);
 
   useEffect(() => {
+    // If any account is logged in, do not show PWA prompt
+    if (localStorage.getItem('attendance_user')) {
+      setShowPrompt(false);
+      setShowIosTip(false);
+      return;
+    }
+
     // Check if already installed in standalone display mode
     const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
     if (isStandalone) {
@@ -22,6 +29,7 @@ export default function PwaInstallPrompt() {
     // Listen for Chrome/Android/Edge beforeinstallprompt event
     const handleBeforeInstallPrompt = (e) => {
       e.preventDefault();
+      if (localStorage.getItem('attendance_user')) return;
       setDeferredPrompt(e);
       setShowPrompt(true);
     };
@@ -31,7 +39,9 @@ export default function PwaInstallPrompt() {
     // If on iOS and not standalone, show iOS install banner after 3 seconds
     if (isIosDevice && !isStandalone) {
       const timer = setTimeout(() => {
-        setShowIosTip(true);
+        if (!localStorage.getItem('attendance_user')) {
+          setShowIosTip(true);
+        }
       }, 3000);
       return () => clearTimeout(timer);
     }
@@ -52,6 +62,11 @@ export default function PwaInstallPrompt() {
     setDeferredPrompt(null);
     setShowPrompt(false);
   };
+
+  // Strictly do not render if any account is logged in
+  if (typeof window !== 'undefined' && localStorage.getItem('attendance_user')) {
+    return null;
+  }
 
   if (!showPrompt && !showIosTip) {
     return null;

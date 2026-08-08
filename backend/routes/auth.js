@@ -349,9 +349,59 @@ router.post('/update-profile', authenticateJWT, async (req, res) => {
   }
 });
 
-// Check current user details
-router.get('/me', authenticateJWT, (req, res) => {
-  res.json({ user: req.user });
+// Check current user details with full profile details
+router.get('/me', authenticateJWT, async (req, res) => {
+  try {
+    if (req.user.role === 'faculty') {
+      const { data: faculty } = await supabase.from('faculty').select('*').eq('id', req.user.id).maybeSingle();
+      if (faculty) {
+        return res.json({
+          user: {
+            id: faculty.id,
+            name: faculty.name,
+            username: faculty.username,
+            employee_no: faculty.employee_no,
+            department: faculty.department,
+            mobile: faculty.mobile,
+            role: 'faculty'
+          }
+        });
+      }
+    } else if (req.user.role === 'student') {
+      const { data: student } = await supabase.from('students').select('*').eq('id', req.user.id).maybeSingle();
+      if (student) {
+        return res.json({
+          user: {
+            id: student.id,
+            name: student.name,
+            enrollment_no: student.enrollment_no,
+            roll_no: student.roll_no,
+            course: student.course,
+            semester: student.semester,
+            division: student.division,
+            mobile: student.mobile,
+            device_id: student.device_id,
+            role: 'student'
+          }
+        });
+      }
+    } else if (req.user.role === 'admin') {
+      const override = getAdminOverride();
+      return res.json({
+        user: {
+          id: req.user.id,
+          name: override ? override.name : req.user.name,
+          email: override ? override.email : req.user.email,
+          role: 'admin'
+        }
+      });
+    }
+
+    res.json({ user: req.user });
+  } catch (err) {
+    console.error('Error fetching /me profile:', err);
+    res.json({ user: req.user });
+  }
 });
 
 // Student specific endpoints

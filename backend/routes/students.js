@@ -272,6 +272,29 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
   res.json(results);
 });
 
+// POST bulk delete students
+router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
+  const { studentIds } = req.body;
+
+  if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+    return res.status(400).json({ error: 'No student IDs provided for deletion.' });
+  }
+
+  try {
+    // Delete attendance records for all specified student IDs first
+    await supabase.from('attendance').delete().in('student_id', studentIds);
+    // Delete students
+    const { error } = await supabase.from('students').delete().in('id', studentIds);
+
+    if (error) throw error;
+
+    res.json({ success: true, message: `Successfully deleted ${studentIds.length} student(s).` });
+  } catch (err) {
+    console.error('Bulk delete error:', err);
+    res.status(500).json({ error: 'Failed to delete selected students.' });
+  }
+});
+
 // DELETE student
 router.delete('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   ShieldCheck, MapPin, Smartphone, ChevronRight, Zap, 
-  CheckCircle2, Users, Lock, TrendingUp, Moon, Sun
+  CheckCircle2, Users, Lock, TrendingUp, Moon, Sun, GraduationCap
 } from 'lucide-react';
 
 const LandingPage = ({ onGetStarted }) => {
@@ -28,10 +28,18 @@ const LandingPage = ({ onGetStarted }) => {
       {/* Navbar/Header */}
       <header style={styles.header} className="animate-fade-in-up">
         <div style={styles.logoContainer}>
-          <div style={styles.logoIcon}>
-            <img src="/logo.png" alt="LJCCA" style={{ width: '48px', height: '48px', objectFit: 'contain' }} />
+          <div style={{
+            background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+            borderRadius: '12px',
+            padding: '8px 10px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 4px 14px rgba(245, 158, 11, 0.4)'
+          }}>
+            <GraduationCap size={26} color="#001b3d" />
           </div>
-          <h1 style={styles.logoText}>Smart<span style={{color: 'var(--primary)'}}>Attend</span></h1>
+          <h1 style={styles.logoText}>Edu<span style={{color: '#f59e0b'}}>Mark</span></h1>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button 
@@ -46,8 +54,8 @@ const LandingPage = ({ onGetStarted }) => {
           }}>
             How it Works
           </button>
-          <button className="btn landing-login-btn" onClick={onGetStarted} style={styles.loginBtn}>
-            Login Portal
+          <button className="btn btn-primary landing-login-btn" onClick={onGetStarted}>
+            Sign In Portal
           </button>
         </div>
       </header>
@@ -58,19 +66,19 @@ const LandingPage = ({ onGetStarted }) => {
           
           {/* Left Text Content */}
           <div style={styles.heroTextContent} className="animate-fade-in-up delay-1">
-            <div style={styles.badge} className="glass-panel shimmer-wrapper">
-              <Zap size={16} color="var(--accent)" className="spin-slow" />
-              <span>Next-Gen College Attendance System</span>
+            <div style={styles.badge} className="edumark-badge">
+              <Zap size={16} color="#f59e0b" className="spin-slow" />
+              <span>EduMark Academic Management Platform</span>
             </div>
             
             <h2 style={styles.heroTitle}>
-              Seamless Attendance with <br />
-              <span style={styles.gradientText} className="animate-gradient-text">GPS & OTP Security</span>
+              Transform Academic Management <br />
+              <span style={{ color: '#f59e0b' }}>with Intelligence & Security</span>
             </h2>
             
             <p style={styles.heroSubtitle}>
-              Eliminate proxy attendance and streamline classroom management. 
-              Experience a secure, fast, and highly reliable way to track student presence in real-time.
+              The most comprehensive platform for universities to track attendance, manage 
+              examinations, and analyze student performance with AI-powered insights.
             </p>
             
             <div style={styles.actionGroup}>
@@ -182,7 +190,7 @@ const LandingPage = ({ onGetStarted }) => {
 
         {/* Features Grid */}
         <div style={styles.sectionHeader}>
-          <h3 style={styles.sectionTitle}>Why SmartAttend?</h3>
+          <h3 style={styles.sectionTitle}>Why EduMark?</h3>
         </div>
         <div style={styles.featuresGrid}>
           <div className="glass-panel feature-card-hover shimmer-wrapper" style={styles.featureCard}>
@@ -195,25 +203,25 @@ const LandingPage = ({ onGetStarted }) => {
 
           <div className="glass-panel feature-card-hover shimmer-wrapper" style={styles.featureCard}>
             <div style={{...styles.iconWrapper, background: 'rgba(16, 185, 129, 0.15)', color: 'var(--success)'}} className="feature-icon-wrapper">
-              <Lock size={28} />
+              <ShieldCheck size={28} />
             </div>
-            <h3 style={styles.featureTitle}>Dynamic Rolling OTPs</h3>
-            <p style={styles.featureDesc}>Faculty generates a time-sensitive OTP that expires and refreshes quickly, preventing attendance fraud from remote locations.</p>
+            <h3 style={styles.featureTitle}>Anti-Proxy Protection</h3>
+            <p style={styles.featureDesc}>Combines real-time location mapping with dynamic timed OTPs & 15-second rotating QR codes to stop proxy attempts.</p>
           </div>
 
           <div className="glass-panel feature-card-hover shimmer-wrapper" style={styles.featureCard}>
             <div style={{...styles.iconWrapper, background: 'rgba(14, 165, 233, 0.15)', color: 'var(--accent)'}} className="feature-icon-wrapper">
               <TrendingUp size={28} />
             </div>
-            <h3 style={styles.featureTitle}>Real-time Analytics</h3>
-            <p style={styles.featureDesc}>Intuitive dashboards for students, faculties, and administrators. Track overall attendance trends and identify students falling behind.</p>
+            <h3 style={styles.featureTitle}>Instant Analytics</h3>
+            <p style={styles.featureDesc}>Provides real-time dashboards for admins and faculty with auto-calculated student attendance percentages and exportable reports.</p>
           </div>
         </div>
         
-        {/* Bottom CTA */}
-        <div className="glass-panel shimmer-wrapper" style={styles.ctaBanner}>
-          <div style={styles.ctaContent}>
-            <h3 style={styles.ctaTitle}>Ready to modernize your classroom?</h3>
+        {/* Bottom CTA Banner */}
+        <div className="glass-panel shimmer-wrapper animate-fade-in-up" style={styles.ctaBanner}>
+          <div>
+            <h3 style={styles.ctaTitle}>Ready to Transform Your Campus Attendance?</h3>
             <p style={styles.ctaDesc}>Join the portal now and experience seamless attendance tracking.</p>
           </div>
           <button className="btn btn-primary pulse-primary" onClick={onGetStarted} style={styles.ctaButton}>
@@ -226,10 +234,27 @@ const LandingPage = ({ onGetStarted }) => {
       {/* Footer */}
       <footer style={styles.footer}>
         <div style={styles.logoContainer}>
-          <img src="/logo.png" alt="LJCCA" style={{ width: '32px', height: '32px', objectFit: 'contain' }} />
-          <span style={{...styles.logoText, fontSize: '1.2rem'}}>Smart<span style={{color: 'var(--primary)'}}>Attend</span></span>
+          <div style={{
+            background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+            borderRadius: '10px',
+            padding: '6px 8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 4px 12px rgba(245, 158, 11, 0.4)'
+          }}>
+            <GraduationCap size={20} color="#001b3d" />
+          </div>
+          <span style={{ ...styles.logoText, fontSize: '1.4rem' }}>
+            Edu<span style={{ color: '#f59e0b' }}>Mark</span>
+          </span>
         </div>
-        <p style={{ marginTop: '10px' }}>© {new Date().getFullYear()} College Attendance System. Built for security.</p>
+        <p style={{ marginTop: '10px', fontSize: '0.9rem', color: '#93c5fd' }}>
+          © {new Date().getFullYear()} EduMark Academic Management System.
+        </p>
+        <p style={{ marginTop: '6px', fontSize: '0.88rem', fontWeight: '700', color: '#f59e0b', letterSpacing: '0.02em' }}>
+          This Module Built and Designed By Dabhi Prit And Jadav Dashrath
+        </p>
       </footer>
     </div>
   );
