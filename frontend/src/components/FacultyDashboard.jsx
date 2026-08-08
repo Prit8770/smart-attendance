@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   Users, KeyRound, QrCode, BarChart3, Download, Search, CheckCircle,
   XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Sun, Moon, Menu, X, Folder, Calendar,
-  ClipboardList, UserCheck, UserX, Smartphone, HandIcon
+  ClipboardList, UserCheck, UserX, Smartphone, HandIcon, GraduationCap, User, Settings, MapPin, Plus, Trash2, Edit
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -1898,12 +1898,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                         className="btn btn-secondary"
                         style={{ padding: '6px 14px', fontSize: '0.85rem' }}
                       >
-                        ← Back to All Semester Folders
+                        ← Back
                       </button>
-
-                      <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                        Attendance Records for <strong>Semester {selectedSemFolder}</strong>
-                      </div>
                     </div>
 
                     {/* Date Filter Bar */}

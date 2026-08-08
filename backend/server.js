@@ -46,7 +46,7 @@ app.use((err, req, res, next) => {
 });
 
 // Start Server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`=================================================`);
   console.log(`  College Attendance Server running on port ${PORT}`);
   console.log(`=================================================`);

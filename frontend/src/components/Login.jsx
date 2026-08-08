@@ -59,18 +59,33 @@ export default function Login({ onLoginSuccess, onBack }) {
     }
 
     try {
-      const response = await fetch(`${endpoint}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+      let response;
+      try {
+        response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify(payload)
+        });
+      } catch (netErr) {
+        // Fallback: direct connection to backend server port 5000 if proxy or relative request failed
+        const backendOrigin = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
+          ? `http://${window.location.hostname}:5000` 
+          : 'http://127.0.0.1:5000';
+        response = await fetch(`${backendOrigin}${endpoint}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify(payload)
+        });
+      }
 
       let data;
       try {
         data = await response.json();
       } catch (e) {
         if (!response.ok) {
-          throw new Error('Backend server is unreachable or returned an invalid response. Please ensure the backend server is running.');
+          throw new Error('Backend server is unreachable or returned an invalid response.');
         }
         throw new Error('Invalid JSON response received from server.');
       }
@@ -85,7 +100,11 @@ export default function Login({ onLoginSuccess, onBack }) {
 
       onLoginSuccess(data.user, data.token);
     } catch (err) {
-      setError(err.message);
+      if (err.name === 'TypeError' || err.message === 'Failed to fetch' || (err.message && err.message.toLowerCase().includes('fetch'))) {
+        setError('Server is offline or unreachable. Please make sure the backend server (node backend/server.js) is running on port 5000.');
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }

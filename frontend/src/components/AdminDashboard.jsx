@@ -1890,20 +1890,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
               <div 
                 className="glass-panel stat-card" 
-                style={{ cursor: 'pointer', border: activeStatsList === 'qrsessions' ? '1.5px solid #9333ea' : '1px solid rgba(255,255,255,0.08)' }} 
-                onClick={() => setActiveStatsList(prev => prev === 'qrsessions' ? null : 'qrsessions')}
-              >
-                <div className="stat-card-info">
-                  <h4>QR Sessions Run</h4>
-                  <p>{statsLoading ? '...' : stats.qrSessionsGenerated}</p>
-                </div>
-                <div className="stat-card-icon" style={{ background: 'rgba(147, 51, 234, 0.15)' }}>
-                  <QrCode size={24} color="#9333ea" />
-                </div>
-              </div>
-
-              <div 
-                className="glass-panel stat-card" 
                 style={{ cursor: 'pointer', border: activeStatsList === 'total_faculty' ? '1.5px solid #eab308' : '1px solid rgba(255,255,255,0.08)' }} 
                 onClick={() => setActiveStatsList(prev => prev === 'total_faculty' ? null : 'total_faculty')}
               >
@@ -3198,35 +3184,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             )}
 {/* OTP Active & Live Monitor Row */}
             <div style={styles.dashboardRow}>
-              {/* Active QR Session Card */}
-              <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: 1, minWidth: '300px' }}>
-                <h3 style={styles.cardTitle}>Active QR Session</h3>
-                <div style={styles.activeOtpContainer}>
-                  {stats.activeQrSession || activeQrSessionDetails ? (
-                    <div style={{ textAlign: 'center' }}>
-                      <p style={{ color: '#10b981', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                        <Clock size={16} /> Session Active
-                      </p>
-                      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '8px' }}>
-                        Scan count updates in real-time.
-                      </p>
-                      <button className="btn btn-secondary" style={{ marginTop: '14px' }} onClick={() => setActiveTab('otp')}>
-                        View QR Display
-                      </button>
-                    </div>
-                  ) : (
-                    <div style={{ textAlign: 'center' }}>
-                      <p style={{ color: 'var(--text-muted)', marginBottom: '16px' }}>No active QR session.</p>
-                      <button className="btn btn-primary" onClick={() => setActiveTab('otp')}>
-                        Start QR Attendance
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-
               {/* All Attendance Records Directory (Matching Faculty Panel Photo 2!) */}
-              <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: '3 1 650px', minWidth: '350px', padding: isMobile ? '12px 8px' : '28px' }}>
+              <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: 1, width: '100%', padding: isMobile ? '12px 8px' : '28px' }}>
                 <div className="mobile-stack-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
                   <div>
                     <h3 style={styles.cardTitle}>
@@ -3344,12 +3303,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         className="btn btn-secondary"
                         style={{ padding: '6px 14px', fontSize: '0.85rem' }}
                       >
-                        ← Back to All Semester Folders
+                        ← Back
                       </button>
-
-                      <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                        Faculty Directory for <strong>Semester {selectedSemFolder}</strong>
-                      </div>
                     </div>
 
                     <div className="semester-folder-grid" style={{ display: 'grid', width: '100%', boxSizing: 'border-box' }}>
@@ -3900,31 +3855,31 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                 <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)' }}>Filter Students:</span>
                 <select 
                   className="glass-input" 
-                  style={{ width: '160px', padding: '6px 12px' }}
+                  style={{ width: '160px', padding: '6px 12px', background: '#001b3d', color: '#ffffff', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px' }}
                   value={stuSemFilter} 
                   onChange={(e) => { setStuSemFilter(e.target.value); setStuDivFilter(''); }}
                 >
-                  <option value="">All Semesters</option>
+                  <option value="" style={{ background: '#001b3d', color: '#ffffff' }}>All Semesters</option>
                   {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
-                    <option key={s} value={s}>Sem {s}</option>
+                    <option key={s} value={s} style={{ background: '#001b3d', color: '#ffffff' }}>Sem {s}</option>
                   ))}
                 </select>
                 <select 
                   className="glass-input" 
-                  style={{ width: '160px', padding: '6px 12px' }}
+                  style={{ width: '160px', padding: '6px 12px', background: '#001b3d', color: '#ffffff', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px' }}
                   value={stuDivFilter} 
                   onChange={(e) => setStuDivFilter(e.target.value)}
                 >
-                  <option value="">All Divisions</option>
+                  <option value="" style={{ background: '#001b3d', color: '#ffffff' }}>All Divisions</option>
                   {Array.from(new Set(
                     students
                       .filter(s => !stuSemFilter || String(s.semester) === String(stuSemFilter))
                       .map(s => s.division)
                       .filter(d => d && d.trim() !== '')
                   )).sort().map(div => (
-                    <option key={div} value={div}>Div {div}</option>
+                    <option key={div} value={div} style={{ background: '#001b3d', color: '#ffffff' }}>Div {div}</option>
                   ))}
-                  <option value="none">No Division (Blank)</option>
+                  <option value="none" style={{ background: '#001b3d', color: '#ffffff' }}>No Division (Blank)</option>
                 </select>
                 {(stuSemFilter || stuDivFilter) && (
                   <button 

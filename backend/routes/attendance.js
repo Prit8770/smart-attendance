@@ -734,7 +734,8 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
       );
     }
     const presentToday = new Set(filteredPresent.map(r => r.student_id)).size;
-    const absentToday = Math.max(0, (totalStudents || 0) - presentToday);
+    const totalSessionsToday = (otpsGenerated || 0) + (qrSessionsGenerated || 0) + (presentToday > 0 ? 1 : 0);
+    const absentToday = totalSessionsToday > 0 ? Math.max(0, (totalStudents || 0) - presentToday) : 0;
     const otpsRemaining = Math.max(0, 5 - (otpsGenerated || 0));
 
     let activeOtp = null;
