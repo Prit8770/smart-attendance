@@ -27,15 +27,45 @@ export default function App() {
   };
 
   useEffect(() => {
-    // Check if user session exists in localStorage
+    // Check if user session exists in localStorage and is valid
     const savedToken = localStorage.getItem('attendance_token');
-    const savedUser = localStorage.getItem('attendance_user');
+    const savedUserStr = localStorage.getItem('attendance_user');
 
-    if (savedToken && savedUser) {
-      setToken(savedToken);
-      setUser(JSON.parse(savedUser));
+    if (savedToken && savedUserStr) {
+      try {
+        const parsed = JSON.parse(savedUserStr);
+        setUser(parsed);
+        setToken(savedToken);
+      } catch (e) {}
+
+      fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${savedToken}` }
+      })
+      .then(res => {
+        if (res.ok) return res.json();
+        throw new Error('Token expired or invalid');
+      })
+      .then(data => {
+        if (data.user) {
+          setUser(data.user);
+          setToken(savedToken);
+          localStorage.setItem('attendance_user', JSON.stringify(data.user));
+        } else {
+          handleLogout();
+        }
+      })
+      .catch(() => {
+        localStorage.removeItem('attendance_token');
+        localStorage.removeItem('attendance_user');
+        setUser(null);
+        setToken(null);
+      })
+      .finally(() => {
+        setInitializing(false);
+      });
+    } else {
+      setInitializing(false);
     }
-    setInitializing(false);
   }, []);
 
   const handleLoginSuccess = (loggedInUser, userToken) => {
@@ -88,7 +118,10 @@ export default function App() {
     <div style={styles.container}>
       {!user ? (
         !showLogin ? (
-          <LandingPage onGetStarted={() => setShowLogin(true)} />
+          <>
+            <LandingPage onGetStarted={() => setShowLogin(true)} />
+            <PwaInstallPrompt />
+          </>
         ) : (
           <Login onLoginSuccess={handleLoginSuccess} onBack={() => setShowLogin(false)} />
         )
@@ -99,7 +132,6 @@ export default function App() {
       ) : (
         <StudentDashboard user={user} token={token} onLogout={handleLogout} theme={theme} toggleTheme={toggleTheme} onUpdateUser={handleUpdateUser} />
       )}
-      <PwaInstallPrompt />
     </div>
   );
 }

@@ -155,25 +155,17 @@ router.post('/submit', authenticateJWT, async (req, res) => {
     const now = new Date();
     const nowMs = now.getTime();
 
-    // Hardware/Device Cooldown Check (15 minutes)
+    // Daily Device Attendance Limit Check (Maximum 5 attendance submissions per device per day)
     if (deviceId && deviceId !== 'Manual') {
-      const { data: lastDeviceAttendance } = await supabase.from('attendance')
-        .select('date, time')
+      const todayStr = getLocalDateString(now);
+      const { count: deviceCountToday } = await supabase.from('attendance')
+        .select('*', { count: 'exact', head: true })
         .eq('device_id', deviceId)
-        .eq('status', 'Success')
-        .order('id', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .eq('date', todayStr)
+        .eq('status', 'Success');
 
-      if (lastDeviceAttendance) {
-        const [year, month, day] = lastDeviceAttendance.date.split('-');
-        const [hours, minutes, seconds] = lastDeviceAttendance.time.split(':');
-        const lastTime = new Date(year, month - 1, day, hours, minutes, seconds);
-        const diffMs = nowMs - lastTime.getTime();
-        const cooldownMs = 15 * 60 * 1000; // 15 minutes cooldown
-        if (diffMs > 0 && diffMs < cooldownMs) {
-          return res.status(400).json({ error: 'This device has already been used for attendance recently.' });
-        }
+      if (deviceCountToday !== null && deviceCountToday >= 5) {
+        return res.status(400).json({ error: 'Daily device limit reached. A single device can mark attendance a maximum of 5 times per day.' });
       }
     }
 
@@ -254,6 +246,21 @@ router.post('/submit', authenticateJWT, async (req, res) => {
         }
       }
 
+      // Check duplicate device submission for THIS QR session
+      if (deviceId && deviceId !== 'Manual') {
+        const { data: deviceDup } = await supabase.from('attendance')
+          .select('id')
+          .eq('device_id', deviceId)
+          .eq('qr_session_id', sessionId)
+          .eq('status', 'Success')
+          .limit(1)
+          .maybeSingle();
+
+        if (deviceDup) {
+          return res.status(400).json({ error: 'This device has already been used to mark attendance for this QR session.' });
+        }
+      }
+
       attendanceLinkCol = 'qr_session_id';
       attendanceLinkId = sessionId;
     } else {
@@ -297,6 +304,21 @@ router.post('/submit', authenticateJWT, async (req, res) => {
           return res.status(400).json({ error: 'You have already marked attendance successfully for this OTP.' });
         } else {
           return res.status(400).json({ error: 'You already have a failed submission for this OTP.' });
+        }
+      }
+
+      // Check duplicate device submission for THIS OTP session
+      if (deviceId && deviceId !== 'Manual') {
+        const { data: deviceDup } = await supabase.from('attendance')
+          .select('id')
+          .eq('device_id', deviceId)
+          .eq('otp_id', otpRecord.id)
+          .eq('status', 'Success')
+          .limit(1)
+          .maybeSingle();
+
+        if (deviceDup) {
+          return res.status(400).json({ error: 'This device has already been used to mark attendance for this OTP session.' });
         }
       }
 
@@ -363,19 +385,26 @@ router.post('/manual', authenticateJWT, requireAdmin, async (req, res) => {
 
   try {
     const today = getLocalDateString();
-    const { data: existing } = await supabase.from('attendance')
+    let dupQuery = supabase.from('attendance')
       .select('id, device_id, status')
       .eq('student_id', student_id)
-      .eq('date', today)
-      .eq('status', 'Success')
-      .limit(1)
-      .maybeSingle();
+      .eq('status', 'Success');
+
+    if (qr_session_id) {
+      dupQuery = dupQuery.eq('qr_session_id', qr_session_id);
+    } else if (otp_id) {
+      dupQuery = dupQuery.eq('otp_id', otp_id);
+    } else {
+      dupQuery = dupQuery.eq('date', today);
+    }
+
+    const { data: existing } = await dupQuery.limit(1).maybeSingle();
 
     if (existing) {
       if (existing.device_id && existing.device_id !== 'Manual') {
-        return res.status(400).json({ error: 'Student already marked attendance via Smartphone today.' });
+        return res.status(400).json({ error: 'Student already marked attendance via Smartphone for this session.' });
       } else {
-        return res.status(400).json({ error: 'Student is already marked present today.' });
+        return res.status(400).json({ error: 'Student is already marked present for this session.' });
       }
     }
 
@@ -442,19 +471,26 @@ router.post('/manual', authenticateJWT, requireAdmin, async (req, res) => {
 
 // POST undo manual attendance (Mark Absent)
 router.post('/manual/undo', authenticateJWT, requireAdmin, async (req, res) => {
-  const { student_id, date } = req.body;
+  const { student_id, qr_session_id, otp_id, date } = req.body;
   if (!student_id) {
     return res.status(400).json({ error: 'Student ID is required.' });
   }
   try {
     const targetDate = date || getLocalDateString();
-    const { data: toDelete, error: findErr } = await supabase.from('attendance')
+    let query = supabase.from('attendance')
       .select('id, device_id')
       .eq('student_id', student_id)
-      .eq('date', targetDate)
-      .eq('device_id', 'Manual')
-      .limit(1)
-      .maybeSingle();
+      .eq('device_id', 'Manual');
+
+    if (qr_session_id) {
+      query = query.eq('qr_session_id', qr_session_id);
+    } else if (otp_id) {
+      query = query.eq('otp_id', otp_id);
+    } else {
+      query = query.eq('date', targetDate);
+    }
+
+    const { data: toDelete, error: findErr } = await query.limit(1).maybeSingle();
 
     if (findErr || !toDelete) {
       return res.status(400).json({ error: 'Only manual attendance records can be undone or student is already absent.' });
@@ -499,42 +535,66 @@ router.get('/history/student', authenticateJWT, async (req, res) => {
 router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
   const today = getLocalDateString();
   try {
+    const { data: faculties } = await supabase.from('faculty').select('id, name');
+    const facMap = new Map((faculties || []).map(f => [String(f.id), f.name]));
+
+    const { data: qrSessions } = await supabase.from('qr_sessions').select('id, created_by_faculty_id, semester, division');
+    const qrMap = new Map((qrSessions || []).map(q => [String(q.id), q]));
+
+    const { data: otps } = await supabase.from('otp').select('id, generated_by, otp, semester, division');
+    const otpMap = new Map((otps || []).map(o => [String(o.id), o]));
+
     const { data: logs } = await supabase.from('attendance')
       .select(`
-        id, time, distance, status, date, qr_session_id, device_id,
-        student:student_id (*),
-        otp:otp_id (otp, generated_by, faculty:generated_by(name)),
-        qr_session:qr_session_id (created_by_faculty_id, faculty:created_by_faculty_id(name))
+        id, time, distance, status, date, qr_session_id, otp_id, device_id,
+        student:student_id (*)
       `)
       .eq('date', today)
       .order('time', { ascending: false });
 
     let filteredLogs = logs || [];
     if (req.user.role === 'faculty') {
-      filteredLogs = filteredLogs.filter(log => 
-        (log.qr_session && String(log.qr_session.created_by_faculty_id) === String(req.user.id)) ||
-        (log.otp && String(log.otp.generated_by) === String(req.user.id)) ||
-        (log.device_id === 'Manual' && !log.qr_session && !log.otp)
-      );
+      filteredLogs = filteredLogs.filter(log => {
+        const qrSess = log.qr_session_id ? qrMap.get(String(log.qr_session_id)) : null;
+        const otpSess = log.otp_id ? otpMap.get(String(log.otp_id)) : null;
+        return (qrSess && String(qrSess.created_by_faculty_id) === String(req.user.id)) ||
+               (otpSess && String(otpSess.generated_by) === String(req.user.id)) ||
+               (log.device_id === 'Manual');
+      });
     }
 
-    const flatLogs = filteredLogs.map(log => ({
-      id: log.id,
-      enrollment_no: log.student?.enrollment_no,
-      roll_no: log.student?.roll_no,
-      division: log.student?.division,
-      name: log.student?.name,
-      course: log.student?.course,
-      semester: log.student?.semester,
-      mobile: log.student?.mobile,
-      time: log.time,
-      distance: log.distance,
-      status: log.status,
-      device_id: log.device_id,
-      otp: log.otp?.otp,
-      qr_session_id: log.qr_session_id,
-      faculty_name: log.qr_session?.faculty?.name || log.otp?.faculty?.name || (log.device_id === 'Manual' ? 'Faculty (Manual)' : 'Admin')
-    }));
+    const flatLogs = filteredLogs.map(log => {
+      const qrSess = log.qr_session_id ? qrMap.get(String(log.qr_session_id)) : null;
+      const otpSess = log.otp_id ? otpMap.get(String(log.otp_id)) : null;
+      
+      let facName = 'Faculty';
+      if (qrSess) {
+        facName = facMap.get(String(qrSess.created_by_faculty_id)) || facName;
+      } else if (otpSess) {
+        facName = facMap.get(String(otpSess.generated_by)) || facName;
+      } else if (log.device_id === 'Manual') {
+        facName = 'Faculty (Manual)';
+      }
+
+      return {
+        id: log.id,
+        enrollment_no: log.student?.enrollment_no,
+        roll_no: log.student?.roll_no,
+        division: log.student?.division,
+        name: log.student?.name,
+        course: log.student?.course,
+        semester: log.student?.semester,
+        mobile: log.student?.mobile,
+        time: log.time,
+        distance: log.distance,
+        status: log.status,
+        device_id: log.device_id,
+        otp_id: log.otp_id,
+        otp: otpSess?.otp || null,
+        qr_session_id: log.qr_session_id,
+        faculty_name: facName
+      };
+    });
 
     res.json(flatLogs);
   } catch (err) {
@@ -608,6 +668,7 @@ router.get('/reports', authenticateJWT, requireAdmin, async (req, res) => {
       distance: log.distance,
       status: log.status,
       device_id: log.device_id,
+      otp_id: log.otp_id,
       otp: log.otp?.otp,
       qr_session_id: log.qr_session_id,
       faculty_name: log.qr_session?.faculty?.name || log.otp?.faculty?.name || (log.device_id === 'Manual' ? 'Faculty (Manual)' : 'Admin')
@@ -624,42 +685,58 @@ router.get('/reports', authenticateJWT, requireAdmin, async (req, res) => {
 router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
   const today = getLocalDateString();
   try {
-    // 1. Total Students
-    const { count: totalStudents } = await supabase.from('students').select('*', { count: 'exact', head: true });
-    
-    // 1b. Total Faculty
-    const { count: totalFaculty } = await supabase.from('faculty').select('*', { count: 'exact', head: true });
-    
-    // 2. Present Today (Success logs count unique student_id)
-    const { data: presentRows } = await supabase.from('attendance')
-      .select('student_id, qr_session:qr_session_id(created_by_faculty_id), otp:otp_id(generated_by)')
-      .eq('date', today).eq('status', 'Success');
-    let filteredPresent = presentRows || [];
-    if (req.user.role === 'faculty') {
+    const isFaculty = req.user.role === 'faculty';
+    const facId = req.user.id;
+
+    let otpsQuery = supabase.from('otp').select('*', { count: 'exact', head: true }).eq('date', today);
+    if (isFaculty) otpsQuery = otpsQuery.eq('generated_by', facId);
+
+    let latestOtpQuery = supabase.from('otp').select('*').order('id', { ascending: false }).limit(1);
+    if (isFaculty) latestOtpQuery = latestOtpQuery.eq('generated_by', facId);
+
+    let qrCountQuery = supabase.from('qr_sessions').select('*', { count: 'exact', head: true }).eq('date', today);
+    if (isFaculty) qrCountQuery = qrCountQuery.eq('created_by_faculty_id', facId);
+
+    let latestQrQuery = supabase.from('qr_sessions').select('*').order('id', { ascending: false }).limit(1);
+    if (isFaculty) latestQrQuery = latestQrQuery.eq('created_by_faculty_id', facId);
+
+    const [
+      resStudents,
+      resFaculty,
+      resPresent,
+      resOtpsGenerated,
+      resLatestOtp,
+      resQrCount,
+      resLatestQr
+    ] = await Promise.all([
+      supabase.from('students').select('*', { count: 'exact', head: true }),
+      supabase.from('faculty').select('*', { count: 'exact', head: true }),
+      supabase.from('attendance').select('student_id, qr_session:qr_session_id(created_by_faculty_id), otp:otp_id(generated_by)').eq('date', today).eq('status', 'Success'),
+      otpsQuery,
+      latestOtpQuery.maybeSingle(),
+      qrCountQuery,
+      latestQrQuery.maybeSingle()
+    ]);
+
+    const totalStudents = resStudents.count || 0;
+    const totalFaculty = resFaculty.count || 0;
+    const presentRows = resPresent.data || [];
+    const otpsGenerated = resOtpsGenerated.count || 0;
+    const latestOtp = resLatestOtp.data || null;
+    const qrSessionsGenerated = resQrCount.count || 0;
+    const latestQr = resLatestQr.data || null;
+
+    let filteredPresent = presentRows;
+    if (isFaculty) {
       filteredPresent = filteredPresent.filter(r => 
-        (r.qr_session && String(r.qr_session.created_by_faculty_id) === String(req.user.id)) ||
-        (r.otp && String(r.otp.generated_by) === String(req.user.id))
+        (r.qr_session && String(r.qr_session.created_by_faculty_id) === String(facId)) ||
+        (r.otp && String(r.otp.generated_by) === String(facId))
       );
     }
     const presentToday = new Set(filteredPresent.map(r => r.student_id)).size;
-
-    // 3. Absent Today
     const absentToday = Math.max(0, (totalStudents || 0) - presentToday);
-
-    // 4. Legacy OTPs generated today
-    let otpsQuery = supabase.from('otp').select('*', { count: 'exact', head: true }).eq('date', today);
-    if (req.user.role === 'faculty') {
-      otpsQuery = otpsQuery.eq('generated_by', req.user.id);
-    }
-    const { count: otpsGenerated } = await otpsQuery;
     const otpsRemaining = Math.max(0, 5 - (otpsGenerated || 0));
 
-    // 5. Legacy Active OTP info
-    let latestOtpQuery = supabase.from('otp').select('*').order('id', { ascending: false }).limit(1);
-    if (req.user.role === 'faculty') {
-      latestOtpQuery = latestOtpQuery.eq('generated_by', req.user.id);
-    }
-    const { data: latestOtp } = await latestOtpQuery.maybeSingle();
     let activeOtp = null;
     if (latestOtp) {
       const now = new Date().getTime();
@@ -669,23 +746,6 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
       }
     }
 
-    // 6. QR Sessions generated today
-    let qrSessionsGenerated = 0;
-    if (req.user.role === 'faculty') {
-      const { count } = await supabase.from('qr_sessions').select('*', { count: 'exact', head: true })
-        .eq('date', today).eq('created_by_faculty_id', req.user.id);
-      qrSessionsGenerated = count || 0;
-    } else {
-      const { count } = await supabase.from('qr_sessions').select('*', { count: 'exact', head: true }).eq('date', today);
-      qrSessionsGenerated = count || 0;
-    }
-
-    // 7. Active QR session info
-    let latestQrQuery = supabase.from('qr_sessions').select('*').order('id', { ascending: false }).limit(1);
-    if (req.user.role === 'faculty') {
-      latestQrQuery = latestQrQuery.eq('created_by_faculty_id', req.user.id);
-    }
-    const { data: latestQr } = await latestQrQuery.maybeSingle();
     let activeQrSession = null;
     if (latestQr) {
       const now = new Date().getTime();

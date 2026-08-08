@@ -104,11 +104,21 @@ export default function Login({ onLoginSuccess, onBack }) {
           </button>
         )}
         <div style={styles.header}>
-          <div style={styles.logoContainer}>
-            <img src="/logo.png" alt="LJCCA Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+          <div style={{
+            width: '64px',
+            height: '64px',
+            background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+            borderRadius: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            margin: '0 auto 16px auto',
+            boxShadow: '0 6px 20px rgba(245, 158, 11, 0.4)'
+          }}>
+            <GraduationCap size={32} color="#001b3d" />
           </div>
-          <h2 style={styles.title}>Smart Attendance</h2>
-          <p style={styles.subtitle}>GPS + OTP Verification Portal</p>
+          <h2 style={{ fontSize: '1.9rem', fontWeight: '800', margin: '4px 0 6px', color: '#ffffff' }}>Edu<span style={{ color: '#f59e0b' }}>Mark</span></h2>
+          <p style={{ color: '#93c5fd', fontSize: '0.9rem', margin: 0 }}>Sign in to access your academic dashboard</p>
         </div>
 
         {/* Tab Selector */}
@@ -263,6 +273,9 @@ export default function Login({ onLoginSuccess, onBack }) {
             {loading ? 'Logging in...' : (loginRole === 'student' && cooldownTime > 0) ? `Login Blocked (${formatCooldown(cooldownTime)})` : 'Sign In'}
           </button>
         </form>
+        <p style={{ marginTop: '22px', textAlign: 'center', fontSize: '0.82rem', color: '#93c5fd', lineHeight: '1.4' }}>
+          EduMark © {new Date().getFullYear()} • <span style={{ color: '#f59e0b', fontWeight: '700' }}>This Module Built and Designed By Dabhi Prit And Jadav Dashrath</span>
+        </p>
       </div>
     </div>
   );
@@ -381,9 +394,10 @@ const styles = {
     transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
   },
   activeTab: {
-    background: 'var(--primary)',
-    color: '#ffffff',
-    boxShadow: '0 4px 12px rgba(139, 92, 246, 0.3)',
+    background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+    color: '#001b3d',
+    fontWeight: '700',
+    boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
   },
   form: {
     display: 'flex',

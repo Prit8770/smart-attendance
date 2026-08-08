@@ -26,7 +26,7 @@ router.get('/today', authenticateJWT, requireAdmin, async (req, res) => {
   const today = getLocalDateString();
   try {
     let otpsQuery = supabase.from('otp')
-      .select('id, otp, generated_time, expire_time, date')
+      .select('id, otp, generated_time, expire_time, date, semester, division')
       .eq('date', today)
       .order('id', { ascending: false });
     if (req.user && req.user.role === 'faculty') {

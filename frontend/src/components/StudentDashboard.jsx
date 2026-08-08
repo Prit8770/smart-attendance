@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LogOut, User, MapPin, Navigation, History, CheckCircle2, XCircle, RefreshCw, Smartphone, Sun, Moon, QrCode, Camera, ShieldAlert, ZoomIn, ZoomOut } from 'lucide-react';
+import { LogOut, User, MapPin, Navigation, History, CheckCircle2, XCircle, RefreshCw, Smartphone, Sun, Moon, QrCode, Camera, ShieldAlert, ZoomIn, ZoomOut, GraduationCap } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import AttendanceNotification from './AttendanceNotification';
 
@@ -682,8 +682,20 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
       {/* Top Header */}
       <header className="glass-panel student-portal-header" style={styles.header}>
         <div style={styles.logoGroup}>
-          <Smartphone size={24} color="#9333ea" />
-          <h1 style={styles.headerTitle} className="student-portal-title">Student Portal</h1>
+          <div style={{
+            background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+            borderRadius: '10px',
+            padding: '6px 8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 4px 12px rgba(245, 158, 11, 0.4)'
+          }}>
+            <GraduationCap size={22} color="#001b3d" />
+          </div>
+          <h1 style={{ ...styles.headerTitle, display: 'flex', alignItems: 'center', gap: '4px' }} className="student-portal-title">
+            Edu<span style={{ color: '#f59e0b' }}>Mark</span> <span style={{ fontSize: '0.8rem', background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', padding: '2px 8px', borderRadius: '12px', marginLeft: '6px' }}>Student Portal</span>
+          </h1>
         </div>
         <div style={styles.headerActions} className="student-portal-header-actions">
           <span style={styles.welcomeText} className="student-welcome-text">Welcome, <strong>{user.name}</strong></span>

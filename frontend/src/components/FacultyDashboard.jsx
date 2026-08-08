@@ -1,13 +1,24 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Users, KeyRound, QrCode, BarChart3, Download, Search, CheckCircle,
-  XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Sun, Moon, Menu, X, Folder,
+  XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Sun, Moon, Menu, X, Folder, Calendar,
   ClipboardList, UserCheck, UserX, Smartphone, HandIcon
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import QRCode from 'qrcode';
+
+// Global Division Normalizer and Matcher Helpers
+const normalizeDiv = (d) => String(d || '').replace(/div/gi, '').trim().toUpperCase();
+
+const isDivMatch = (studentDiv, sessionDiv) => {
+  const normTarget = normalizeDiv(sessionDiv);
+  if (!normTarget || normTarget === 'ALL' || normTarget.includes('ALL')) return true;
+  const normStudent = normalizeDiv(studentDiv);
+  if (!normStudent) return false;
+  return normStudent === normTarget;
+};
 
 export default function FacultyDashboard({ user, token, onLogout, theme, toggleTheme }) {
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'otp', 'reports', 'settings', 'manual'
@@ -20,16 +31,29 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Stats
-  const [stats, setStats] = useState({
-    totalStudents: 0,
-    presentToday: 0,
-    absentToday: 0,
-    qrSessionsGenerated: 0,
-    activeQrSession: null,
-    trend: []
+  // Stats with Instant Local Hydration on Refresh
+  const [stats, setStats] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cached_faculty_stats') || localStorage.getItem('cached_faculty_stats');
+      if (cached) return JSON.parse(cached);
+    } catch(e) {}
+    return {
+      totalStudents: 0,
+      presentToday: 0,
+      absentToday: 0,
+      qrSessionsGenerated: 0,
+      activeQrSession: null,
+      trend: []
+    };
   });
-  const [statsLoading, setStatsLoading] = useState(true);
+  const [statsLoading, setStatsLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cached_faculty_stats') || localStorage.getItem('cached_faculty_stats');
+      return !cached;
+    } catch(e) {
+      return true;
+    }
+  });
 
   // QR & OTP State
   const [activeQrSessionDetails, setActiveQrSessionDetails] = useState(null);
@@ -47,10 +71,13 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   const [folderDivFilter, setFolderDivFilter] = useState('ALL');
   const [folderSearchName, setFolderSearchName] = useState('');
   const [folderSearchEnroll, setFolderSearchEnroll] = useState('');
-  const [folderSearchDate, setFolderSearchDate] = useState('');
+  const [folderSearchDate, setFolderSearchDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [selectedSessionFolder, setSelectedSessionFolder] = useState(null);
 
   // Manual Attendance state
-  const [manualSemFolder, setManualSemFolder] = useState(null);
+  const [manualSessionFolder, setManualSessionFolder] = useState(null); // null | 1 | 2 | 3 | 4 | 5
+  const [manualFolderSem, setManualFolderSem] = useState('');
+  const [manualFolderDiv, setManualFolderDiv] = useState('ALL');
   const [manualDivFilter, setManualDivFilter] = useState('ALL');
   const [manualSearchName, setManualSearchName] = useState('');
   const [manualTodayLogs, setManualTodayLogs] = useState([]); // today's attendance (all)
@@ -80,13 +107,25 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   const [settingsMessage, setSettingsMessage] = useState({ text: '', type: '' });
   const [settingsLoading, setSettingsLoading] = useState(false);
 
-  // Attendance live monitor & reports
-  const [liveLogs, setLiveLogs] = useState([]);
+  // Attendance live monitor & reports with instant hydration
+  const [liveLogs, setLiveLogs] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cached_faculty_livelogs');
+      if (cached) return JSON.parse(cached);
+    } catch(e) {}
+    return [];
+  });
   const [reportType, setReportType] = useState('today'); // 'today', 'yesterday', 'monthly', 'student_wise'
   const [reportDate, setReportDate] = useState(new Date().toISOString().split('T')[0]);
   const [reportStudentId, setReportStudentId] = useState('');
   const [reportData, setReportData] = useState([]);
-  const [studentsList, setStudentsList] = useState([]); // for student-wise report dropdown
+  const [studentsList, setStudentsList] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cached_faculty_students');
+      if (cached) return JSON.parse(cached);
+    } catch(e) {}
+    return [];
+  });
 
   // Client-side search filters for report table
   const [filterEnrollment, setFilterEnrollment] = useState('');
@@ -95,12 +134,108 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
   // Dashboard modal state: null | 'present' | 'absent' | 'session'
   const [dashModal, setDashModal] = useState(null);
+  const [facultySessionsToday, setFacultySessionsToday] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cached_faculty_sessions');
+      if (cached) return JSON.parse(cached);
+    } catch(e) {}
+    return [];
+  });
+  const [dashModalSession, setDashModalSession] = useState('ALL');
 
   // Semester & Division selection before generating QR/OTP
   const [semesterModal, setSemesterModal] = useState(null); // null | 'qr' | 'otp'
   const [selectedSemester, setSelectedSemester] = useState('');
   const [selectedDivision, setSelectedDivision] = useState('');
   const [availableDivisions, setAvailableDivisions] = useState([]);
+
+  // Date logs and Session directory tab
+  const [dateLogs, setDateLogs] = useState([]);
+  const [sessionFolderTab, setSessionFolderTab] = useState('present'); // 'present' | 'absent'
+  const [fetchedFacultyUser, setFetchedFacultyUser] = useState(null);
+
+  useEffect(() => {
+    if (token) {
+      fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then(res => res.ok ? res.json() : null)
+        .then(data => {
+          if (data && data.user) {
+            setFetchedFacultyUser(data.user);
+            try {
+              localStorage.setItem('attendance_user', JSON.stringify(data.user));
+              if (data.user.id || data.user.username) {
+                localStorage.setItem(`cached_faculty_${data.user.id || data.user.username}`, JSON.stringify(data.user));
+              }
+            } catch (e) {}
+          }
+        })
+        .catch(err => console.error('Error fetching faculty profile:', err));
+    }
+  }, [token]);
+
+  // Compute active user with multi-layer fallback to ensure subjects NEVER vanish on refresh
+  const activeUser = (() => {
+    if (fetchedFacultyUser && (fetchedFacultyUser.department || (Array.isArray(fetchedFacultyUser.subjects) && fetchedFacultyUser.subjects.length > 0))) {
+      return fetchedFacultyUser;
+    }
+
+    const rawDept = user?.department || '';
+    let userSubs = Array.isArray(user?.subjects) ? user.subjects : [];
+    if (userSubs.length === 0 && rawDept.includes('||SUB:')) {
+      try {
+        const jsonStr = rawDept.split('||SUB:')[1].split('||')[0];
+        const parsed = JSON.parse(jsonStr);
+        if (Array.isArray(parsed)) userSubs = parsed;
+      } catch(e) {}
+    }
+    if (userSubs.length > 0) {
+      if (user?.id || user?.username) {
+        try {
+          localStorage.setItem(`cached_faculty_${user.id || user.username}`, JSON.stringify(user));
+        } catch (e) {}
+      }
+      return user;
+    }
+
+    if (user?.id || user?.username) {
+      try {
+        const cachedStr = localStorage.getItem(`cached_faculty_${user.id || user.username}`);
+        if (cachedStr) {
+          const cached = JSON.parse(cachedStr);
+          if (cached && (cached.department || (Array.isArray(cached.subjects) && cached.subjects.length > 0))) {
+            return { ...user, ...cached };
+          }
+        }
+      } catch(e) {}
+    }
+
+    try {
+      const globalStr = localStorage.getItem('attendance_user');
+      if (globalStr) {
+        const gUser = JSON.parse(globalStr);
+        if (gUser && (gUser.department || (Array.isArray(gUser.subjects) && gUser.subjects.length > 0))) {
+          return { ...user, ...gUser };
+        }
+      }
+    } catch(e) {}
+
+    return user;
+  })();
+
+  useEffect(() => {
+    if (folderSearchDate && token) {
+      fetch(`/api/attendance/report?type=custom_date&date=${folderSearchDate}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) setDateLogs(data);
+        })
+        .catch(err => console.error(err));
+    }
+  }, [folderSearchDate, token]);
 
   // Fetch Dashboard Statistics
   const fetchStats = async () => {
@@ -111,6 +246,10 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       if (res.ok) {
         const data = await res.json();
         setStats(data);
+        try {
+          sessionStorage.setItem('cached_faculty_stats', JSON.stringify(data));
+          localStorage.setItem('cached_faculty_stats', JSON.stringify(data));
+        } catch(e) {}
       }
     } catch (err) {
       console.error('Error fetching stats:', err);
@@ -177,6 +316,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       if (res.ok) {
         const data = await res.json();
         setLiveLogs(data);
+        try { sessionStorage.setItem('cached_faculty_livelogs', JSON.stringify(data)); } catch(e) {}
       }
     } catch (err) {
       console.error('Error fetching live logs:', err);
@@ -192,6 +332,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       if (res.ok) {
         const data = await res.json();
         setStudentsList(data);
+        try { sessionStorage.setItem('cached_faculty_students', JSON.stringify(data)); } catch(e) {}
       }
     } catch (err) {
       console.error('Error fetching students:', err);
@@ -231,16 +372,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
     }
   };
 
-  // Run on mount
-  useEffect(() => {
-    fetchStats();
-    fetchActiveSessions();
-    fetchLiveLogs();
-    fetchStudents();
-    fetchQrSettings();
-    fetchTodayAllAttendance();
-  }, []);
-
+  // Fetch today's sessions started by this faculty
   // Fetch today's attendance for ALL students (for manual attendance tab)
   const fetchTodayAllAttendance = async () => {
     try {
@@ -249,79 +381,217 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       });
       if (res.ok) {
         const data = await res.json();
-        setManualTodayLogs(data);
+        setManualTodayLogs(Array.isArray(data) ? data : (data.logs || data.reports || []));
       }
     } catch (err) {
       console.error('Error fetching today attendance for manual tab:', err);
     }
   };
 
-  // Mark student Present manually
-  const handleManualMark = async (student) => {
-    setManualLoading(true);
-    setManualActionMsg({ id: null, text: '', type: '' });
+  const fetchTodaySessions = async () => {
     try {
-      const res = await fetch('/api/attendance/manual', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ student_id: student.id })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setManualTodayLogs(prev => [
-          ...prev.filter(l =>
-            (!l.enrollment_no || l.enrollment_no !== student.enrollment_no) &&
-            (!l.roll_no || l.roll_no !== student.roll_no)
-          ),
-          {
-            student_id: student.id,
-            student_name: student.name,
-            enrollment_no: student.enrollment_no,
-            roll_no: student.roll_no,
-            status: 'Success',
-            device_id: 'Manual',
-            created_at: new Date().toISOString()
-          }
-        ]);
-        fetchTodayAllAttendance();
-        fetchLiveLogs();
-        fetchStats();
-      } else {
-        setManualActionMsg({ id: student.id, text: data.error || 'Failed', type: 'error' });
+      const [qrRes, otpRes] = await Promise.all([
+        fetch('/api/qr/today', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/otp/today', { headers: { Authorization: `Bearer ${token}` } })
+      ]);
+
+      let qrSessions = [];
+      let otpSessions = [];
+
+      if (qrRes.ok) {
+        qrSessions = await qrRes.json();
       }
+      if (otpRes.ok) {
+        const otpData = await otpRes.json();
+        otpSessions = otpData.otps || [];
+      }
+
+      const formattedQr = (qrSessions || []).map((s) => {
+        let sem = s.semester;
+        let div = s.division;
+        let subj = s.subject;
+        try {
+          const cached = localStorage.getItem(`qr_target_${s.id}`);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (!sem) sem = parsed.semester;
+            if (!div) div = parsed.division;
+            if (!subj) subj = parsed.subject;
+          }
+        } catch (e) {}
+        return {
+          id: `qr_${s.id}`,
+          qr_session_id: s.id,
+          otp_id: null,
+          type: 'QR',
+          created_at: s.created_at,
+          semester: sem || null,
+          division: div || null,
+          subject: subj || null
+        };
+      });
+
+      const formattedOtp = (otpSessions || []).map((s) => {
+        let sem = s.semester;
+        let div = s.division;
+        let subj = s.subject;
+        try {
+          const cached = localStorage.getItem(`otp_target_${s.id}`);
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (!sem) sem = parsed.semester;
+            if (!div) div = parsed.division;
+            if (!subj) subj = parsed.subject;
+          }
+        } catch (e) {}
+        return {
+          id: `otp_${s.id}`,
+          qr_session_id: null,
+          otp_id: s.id,
+          type: 'OTP',
+          created_at: s.generated_time || s.date,
+          semester: sem || null,
+          division: div || null,
+          subject: subj || null
+        };
+      });
+
+      const combined = [...formattedQr, ...formattedOtp].sort((a, b) =>
+        new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      );
+
+      const finalSessions = combined.map((sess, idx) => {
+        const divText = sess.division && String(sess.division).trim().toUpperCase() !== 'ALL'
+          ? `Div ${sess.division}`
+          : 'All Div';
+        const semText = sess.semester ? `Sem ${sess.semester} ${divText}` : 'Sem ?';
+        return {
+          ...sess,
+          sessionNumber: idx + 1,
+          displayText: `Session ${idx + 1}`
+        };
+      });
+
+      setFacultySessionsToday(finalSessions);
+      try { sessionStorage.setItem('cached_faculty_sessions', JSON.stringify(finalSessions)); } catch(e) {}
     } catch (err) {
-      setManualActionMsg({ id: student.id, text: 'Network error', type: 'error' });
-    } finally {
-      setManualLoading(false);
+      console.error('Error fetching today sessions:', err);
     }
   };
 
-  // Undo manual attendance (Mark Absent)
-  const handleManualUnmark = async (student) => {
-    setManualLoading(true);
+  // Run on mount
+  useEffect(() => {
+    fetchStats();
+    fetchActiveSessions();
+    fetchLiveLogs();
+    fetchStudents();
+    fetchQrSettings();
+    fetchTodayAllAttendance();
+    fetchTodaySessions();
+  }, []);
+
+  useEffect(() => {
+    if (dashModal) {
+      fetchStudents();
+      fetchTodaySessions();
+      fetchLiveLogs();
+    }
+  }, [dashModal]);
+
+
+  // Mark student Present manually for a specific session (Instant 0ms Optimistic Update)
+  const handleManualMark = async (student, session) => {
     setManualActionMsg({ id: null, text: '', type: '' });
+    
+    const tempId = `temp_${Date.now()}_${student.id}`;
+    const optimisticRecord = {
+      id: tempId,
+      student_id: student.id,
+      enrollment_no: student.enrollment_no,
+      roll_no: student.roll_no,
+      name: student.name,
+      status: 'Success',
+      device_id: 'Manual',
+      qr_session_id: session?.qr_session_id || null,
+      otp_id: session?.otp_id || null,
+      date: new Date().toISOString().split('T')[0],
+      time: new Date().toLocaleTimeString('en-US', { hour12: false })
+    };
+
+    // Instant local state update (0ms UI latency)
+    setManualTodayLogs(prev => {
+      const safePrev = Array.isArray(prev) ? prev : [];
+      return [...safePrev, optimisticRecord];
+    });
+
     try {
-      const res = await fetch('/api/attendance/manual/undo', {
+      const payload = { student_id: student.id };
+      if (session?.qr_session_id) payload.qr_session_id = session.qr_session_id;
+      if (session?.otp_id) payload.otp_id = session.otp_id;
+
+      const res = await fetch('/api/attendance/manual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ student_id: student.id })
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (res.ok) {
-        setManualTodayLogs(prev => prev.filter(l =>
-          (!l.enrollment_no || l.enrollment_no !== student.enrollment_no) &&
-          (!l.roll_no || l.roll_no !== student.roll_no)
-        ));
         fetchTodayAllAttendance();
         fetchLiveLogs();
         fetchStats();
       } else {
+        setManualTodayLogs(prev => (Array.isArray(prev) ? prev : []).filter(l => l.id !== tempId));
+        setManualActionMsg({ id: student.id, text: data.error || 'Failed', type: 'error' });
+      }
+    } catch (err) {
+      setManualTodayLogs(prev => (Array.isArray(prev) ? prev : []).filter(l => l.id !== tempId));
+      setManualActionMsg({ id: student.id, text: 'Network error', type: 'error' });
+    }
+  };
+
+  // Undo manual attendance (Mark Absent) for a specific session (Instant 0ms Optimistic Update)
+  const handleManualUnmark = async (student, session) => {
+    setManualActionMsg({ id: null, text: '', type: '' });
+
+    let removedLogs = [];
+    setManualTodayLogs(prev => {
+      const safePrev = Array.isArray(prev) ? prev : [];
+      removedLogs = safePrev.filter(l => {
+        const matchStudent = (l.student_id && String(l.student_id) === String(student.id)) ||
+          (l.enrollment_no && l.enrollment_no === student.enrollment_no) ||
+          (l.roll_no && l.roll_no === student.roll_no);
+        if (!matchStudent) return false;
+        if (session?.qr_session_id && String(l.qr_session_id) === String(session?.qr_session_id)) return true;
+        if (session?.otp_id && String(l.otp_id) === String(session?.otp_id)) return true;
+        if (!session?.qr_session_id && !session?.otp_id && l.device_id === 'Manual') return true;
+        return false;
+      });
+
+      return safePrev.filter(l => !removedLogs.includes(l));
+    });
+
+    try {
+      const payload = { student_id: student.id };
+      if (session?.qr_session_id) payload.qr_session_id = session.qr_session_id;
+      if (session?.otp_id) payload.otp_id = session.otp_id;
+
+      const res = await fetch('/api/attendance/manual/undo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (res.ok) {
+        fetchTodayAllAttendance();
+        fetchLiveLogs();
+        fetchStats();
+      } else {
+        setManualTodayLogs(prev => [...(Array.isArray(prev) ? prev : []), ...removedLogs]);
         setManualActionMsg({ id: student.id, text: data.error || 'Failed to undo', type: 'error' });
       }
     } catch (err) {
+      setManualTodayLogs(prev => [...(Array.isArray(prev) ? prev : []), ...removedLogs]);
       setManualActionMsg({ id: student.id, text: 'Network error', type: 'error' });
-    } finally {
-      setManualLoading(false);
     }
   };
 
@@ -334,7 +604,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       fetchStats();
       fetchLiveLogs();
       fetchQrSettings();
-      if (activeTab === 'manual') fetchTodayAllAttendance();
+      if (activeTab === 'manual') { fetchTodaySessions(); fetchTodayAllAttendance(); }
     }, intervalTime);
 
     return () => clearInterval(interval);
@@ -400,21 +670,84 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
     }
   }, [activeQrSessionDetails, tokenIndex]);
 
+  const [selectedSubject, setSelectedSubject] = useState('');
+
+  // Extract unique semester numbers assigned to this faculty member
+  const assignedSemesters = (() => {
+    const semSet = new Set();
+    const rawDept = activeUser?.department || '';
+    let subs = Array.isArray(activeUser?.subjects) ? activeUser.subjects : [];
+    
+    if (subs.length === 0 && rawDept.includes('||SUB:')) {
+      try {
+        const jsonStr = rawDept.split('||SUB:')[1].split('||')[0];
+        const parsed = JSON.parse(jsonStr);
+        if (Array.isArray(parsed)) subs = parsed;
+      } catch(e) {}
+    }
+
+    subs.forEach(s => {
+      if (s && s.semester) {
+        const semNum = String(s.semester).replace(/\D/g, '');
+        if (semNum) semSet.add(semNum);
+      }
+    });
+
+    const list = Array.from(semSet).sort((a, b) => Number(a) - Number(b));
+    if (list.length > 0) return list;
+
+    // Fallback: extract semesters from today's/past sessions or logs conducted by this faculty
+    const sessionSemSet = new Set();
+    (facultySessionsToday || []).forEach(sess => {
+      if (sess.semester) {
+        const num = String(sess.semester).replace(/\D/g, '');
+        if (num) sessionSemSet.add(num);
+      }
+    });
+    (liveLogs || []).forEach(log => {
+      if (log.semester) {
+        const num = String(log.semester).replace(/\D/g, '');
+        if (num) sessionSemSet.add(num);
+      }
+    });
+
+    return Array.from(sessionSemSet).sort((a, b) => Number(a) - Number(b));
+  })();
+
+  // Filter teaching subjects for the currently selected semester
+  const availableSubjectsForSem = (() => {
+    if (!selectedSemester) return [];
+    const rawDept = activeUser?.department || '';
+    let subs = Array.isArray(activeUser?.subjects) ? activeUser.subjects : [];
+    
+    if (subs.length === 0 && rawDept.includes('||SUB:')) {
+      try {
+        const jsonStr = rawDept.split('||SUB:')[1].split('||')[0];
+        const parsed = JSON.parse(jsonStr);
+        if (Array.isArray(parsed)) subs = parsed;
+      } catch(e) {}
+    }
+
+    return subs.filter(s => s && s.subjectName && String(s.semester).replace(/\D/g, '') === String(selectedSemester).replace(/\D/g, ''));
+  })();
+
   // Actions
-  const handleStartQrSession = async (sem, div = null) => {
+  const handleStartQrSession = async (sem, div = null, subj = null) => {
     try {
       const res = await fetch('/api/qr/start-session', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ semester: sem, division: div })
+        body: JSON.stringify({ semester: sem, division: div, subject: subj })
       });
       const data = await res.json();
       if (res.ok) {
-        setActiveQrSessionDetails({ ...data.session, semester: sem, division: div });
+        try { localStorage.setItem(`qr_target_${data.session.id}`, JSON.stringify({ semester: sem, division: div, subject: subj })); } catch(e){}
+        setActiveQrSessionDetails({ ...data.session, semester: sem, division: div, subject: subj });
         setQrSessionTimer(120);
         setTokenIndex(0);
         setQrCodeTimer(15);
         fetchStats();
+        fetchTodaySessions();
         setActiveTab('otp'); // Switch to view code
       } else {
         alert(data.error || 'Failed to start QR session');
@@ -424,19 +757,21 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
     }
   };
 
-  const handleGenerateOtp = async (sem, div = null) => {
+  const handleGenerateOtp = async (sem, div = null, subj = null) => {
     try {
       const res = await fetch('/api/otp/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ semester: sem, division: div })
+        body: JSON.stringify({ semester: sem, division: div, subject: subj })
       });
       const data = await res.json();
       if (res.ok) {
-        setActiveOtpDetails({ ...data.otp, semester: sem, division: div });
+        try { localStorage.setItem(`otp_target_${data.otp.id}`, JSON.stringify({ semester: sem, division: div, subject: subj })); } catch(e){}
+        setActiveOtpDetails({ ...data.otp, semester: sem, division: div, subject: subj });
         setOtpCountdown(120);
         setOtpRemaining(prev => Math.max(0, prev - 1));
         fetchStats();
+        fetchTodaySessions();
         setActiveTab('otp'); // Switch to view code
       } else {
         alert(data.error || 'Failed to generate OTP');
@@ -451,6 +786,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
     fetchStudents();
     setSelectedSemester('');
     setSelectedDivision('');
+    setSelectedSubject('');
     setAvailableDivisions([]);
     setSemesterModal(type);
   };
@@ -466,20 +802,10 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
     }
     const sortedDivs = Array.from(divs).sort();
 
-    if (sortedDivs.length === 0) {
-      // Jis sem me division na ho, wahan direct sem select karte hi QR/OTP generate ho jaye
-      setSemesterModal(null);
-      setSelectedSemester('');
-      setSelectedDivision('');
-      setAvailableDivisions([]);
-      if (semesterModal === 'qr') handleStartQrSession(semStr, null);
-      else if (semesterModal === 'otp') handleGenerateOtp(semStr, null);
-    } else {
-      // Jis sem me division ho, wahan division select karne ka option dedo
-      setSelectedSemester(semStr);
-      setAvailableDivisions(sortedDivs);
-      setSelectedDivision('');
-    }
+    setSelectedSemester(semStr);
+    setAvailableDivisions(sortedDivs);
+    setSelectedDivision(sortedDivs.length > 0 ? '' : 'ALL');
+    setSelectedSubject('');
   };
 
   const confirmSemesterAndGenerate = () => {
@@ -488,15 +814,24 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       alert('Please select a division (or All Divisions) for this semester!');
       return;
     }
+    const availSubjs = availableSubjectsForSem;
+    if (availSubjs.length > 0 && !selectedSubject) {
+      alert('Please select a teaching subject for this semester!');
+      return;
+    }
     const sem = selectedSemester;
     const div = (selectedDivision && selectedDivision !== 'ALL') ? selectedDivision : null;
+    const subj = selectedSubject || (availSubjs[0] ? (availSubjs[0].shortName || availSubjs[0].subjectName) : null);
+    
     setSemesterModal(null);
     setSelectedSemester('');
     setSelectedDivision('');
+    setSelectedSubject('');
     setAvailableDivisions([]);
+
     if (sem) {
-      if (semesterModal === 'qr') handleStartQrSession(sem, div);
-      else if (semesterModal === 'otp') handleGenerateOtp(sem, div);
+      if (semesterModal === 'qr') handleStartQrSession(sem, div, subj);
+      else if (semesterModal === 'otp') handleGenerateOtp(sem, div, subj);
     }
   };
 
@@ -651,8 +986,10 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               width: '100%', maxWidth: '520px',
               borderRadius: isMobile ? '20px 20px 0 0' : '20px',
               padding: isMobile ? '18px 14px 24px' : '28px',
-              maxHeight: isMobile ? '92vh' : '80vh',
-              overflowY: 'auto', position: 'relative'
+              maxHeight: isMobile ? '92vh' : '82vh',
+              display: 'flex',
+              flexDirection: 'column',
+              overflow: 'hidden', position: 'relative'
             }}
             onClick={e => e.stopPropagation()}
           >
@@ -666,118 +1003,350 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
             >✕</button>
 
             {/* Present Today Modal */}
-            {dashModal === 'present' && (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                  <CheckCircle size={24} color="#3b82f6" />
-                  <h2 style={{ ...styles.cardTitle, margin: 0 }}>Present Today</h2>
-                  <span style={{ marginLeft: 'auto', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    {liveLogs.filter(l => l.status === 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).length} students
-                  </span>
-                </div>
+            {dashModal === 'present' && (() => {
+              const hasStartedSessions = facultySessionsToday.length > 0;
+              const activeSessionId = (dashModalSession && dashModalSession !== 'ALL' && facultySessionsToday.some(s => s.id === dashModalSession))
+                ? dashModalSession
+                : (facultySessionsToday[facultySessionsToday.length - 1]?.id || facultySessionsToday[0]?.id || null);
 
-                {/* Semester Folder Buttons (4 per row Desktop, 2 per row Mobile) */}
-                <div className="semester-folder-grid" style={{ gap: '6px', marginBottom: '16px' }}>
-                  <button
-                    onClick={() => setDashModalSem('')}
-                    style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === '' ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: 'black', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
-                  ><Folder size={12} /> All</button>
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
-                    <button
-                      key={s}
-                      onClick={() => setDashModalSem(String(s))}
-                      style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === String(s) ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: 'black', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
-                    ><Folder size={12} /> Sem {s}</button>
-                  ))}
-                </div>
+              const selectedSess = facultySessionsToday.find(s => s.id === activeSessionId);
+              const displaySem = selectedSess?.semester;
 
-                {liveLogs.filter(l => l.status === 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).length === 0 ? (
-                  <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '30px 0' }}>No present students found for selected semester folder.</p>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {liveLogs.filter(l => l.status === 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).map((l, i) => (
-                      <div key={l.id} style={{
-                        display: 'flex', alignItems: 'center', gap: '12px',
-                        padding: '12px 14px', borderRadius: '10px',
-                        background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.3)'
-                      }}>
-                        <div style={{
-                          width: '32px', height: '32px', borderRadius: '50%',
-                          background: 'rgba(59, 130, 246, 0.25)', display: 'flex',
-                          alignItems: 'center', justifyContent: 'center',
-                          fontSize: '0.8rem', fontWeight: '700', color: '#3b82f6', flexShrink: 0
-                        }}>{i + 1}</div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.9rem' }}>{l.name}</div>
-                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{l.roll_no ? `Roll: ${l.roll_no} • ` : ''}{l.enrollment_no} • {l.course} Sem {l.semester}{l.division ? ` (Div ${l.division})` : ''}</div>
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: '0.78rem', color: '#3b82f6', fontWeight: '600' }}>✓ Present</div>
-                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.time}</div>
-                        </div>
-                      </div>
-                    ))}
+              let filteredPresent = [];
+              if (hasStartedSessions && selectedSess) {
+                if (selectedSess.qr_session_id) {
+                  filteredPresent = liveLogs.filter(l => l.status === 'Success' && String(l.qr_session_id) === String(selectedSess.qr_session_id));
+                } else if (selectedSess.otp_id) {
+                  filteredPresent = liveLogs.filter(l => l.status === 'Success' && String(l.otp_id) === String(selectedSess.otp_id));
+                }
+
+                if (selectedSess.semester) {
+                  filteredPresent = filteredPresent.filter(l => String(l.semester) === String(selectedSess.semester));
+                }
+                if (selectedSess.division && String(selectedSess.division).trim().toUpperCase() !== 'ALL') {
+                  filteredPresent = filteredPresent.filter(l => String(l.division || '').trim().toUpperCase() === String(selectedSess.division).trim().toUpperCase());
+                }
+              }
+
+              return (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                    <CheckCircle size={24} color="#3b82f6" />
+                    <h2 style={{ ...styles.cardTitle, margin: 0 }}>Present Today</h2>
+                    <span style={{ marginLeft: 'auto', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                      {hasStartedSessions ? `${filteredPresent.length} students` : '0 students'}
+                    </span>
                   </div>
-                )}
-              </>
-            )}
 
-            {/* Absent / Rejected Modal */}
-            {dashModal === 'absent' && (
-              <>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                  <XCircle size={24} color="#ef4444" />
-                  <h2 style={{ ...styles.cardTitle, margin: 0 }}>Rejected / Absent</h2>
-                  <span style={{ marginLeft: 'auto', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                    {liveLogs.filter(l => l.status !== 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).length} students
-                  </span>
-                </div>
+                  {/* Session-wise Filter Buttons */}
+                  {hasStartedSessions ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
+                      {facultySessionsToday.map(sess => (
+                        <button
+                          key={sess.id}
+                          onClick={() => setDashModalSession(sess.id)}
+                          style={{
+                            padding: '6px 12px', fontSize: '0.78rem', borderRadius: '6px',
+                            border: activeSessionId === sess.id ? '1px solid var(--primary)' : '1px solid var(--border-light)',
+                            background: activeSessionId === sess.id ? 'var(--primary)' : 'rgba(255,255,255,0.08)',
+                            color: '#ffffff', fontWeight: 'bold', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '4px'
+                          }}
+                        >
+                          <Folder size={12} /> {sess.displayText}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '16px', fontStyle: 'italic', textAlign: 'center', background: 'rgba(255,255,255,0.03)', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                      ℹ️ No sessions started today yet.
+                    </div>
+                  )}
 
-                {/* Semester Folder Buttons (4 per row Desktop, 2 per row Mobile) */}
-                <div className="semester-folder-grid" style={{ gap: '6px', marginBottom: '16px' }}>
-                  <button
-                    onClick={() => setDashModalSem('')}
-                    style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === '' ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: 'black', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
-                  ><Folder size={12} /> All</button>
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
-                    <button
-                      key={s}
-                      onClick={() => setDashModalSem(String(s))}
-                      style={{ padding: '6px 4px', fontSize: '0.78rem', borderRadius: '6px', border: '1px solid var(--border-light)', background: dashModalSem === String(s) ? 'var(--primary)' : 'rgba(255,255,255,0.05)', color: 'black', fontWeight: 'bold', cursor: 'pointer', textAlign: 'center', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
-                    ><Folder size={12} /> Sem {s}</button>
-                  ))}
-                </div>
-
-                {liveLogs.filter(l => l.status !== 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).length === 0 ? (
-                  <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '30px 0' }}>No rejected attendance logs found for selected semester folder.</p>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                    {liveLogs.filter(l => l.status !== 'Success' && (dashModalSem === '' || String(l.semester) === dashModalSem)).map((l, i) => (
-                      <div key={l.id} style={{
-                        display: 'flex', alignItems: 'center', gap: '12px',
-                        padding: '12px 14px', borderRadius: '10px',
-                        background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)'
-                      }}>
-                        <div style={{
-                          width: '32px', height: '32px', borderRadius: '50%',
-                          background: 'rgba(239,68,68,0.2)', display: 'flex',
-                          alignItems: 'center', justifyContent: 'center',
-                          fontSize: '0.8rem', fontWeight: '700', color: '#f87171', flexShrink: 0
-                        }}>{i + 1}</div>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.9rem' }}>{l.name}</div>
-                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>{l.roll_no ? `Roll: ${l.roll_no} • ` : ''}{l.enrollment_no} • {l.course} Sem {l.semester}{l.division ? ` (Div ${l.division})` : ''}</div>
-                        </div>
-                        <div style={{ textAlign: 'right' }}>
-                          <div style={{ fontSize: '0.78rem', color: '#f87171', fontWeight: '600' }}>✗ Rejected</div>
-                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.time}</div>
-                        </div>
+                  {/* Target Session Banner Info */}
+                  {selectedSess && (
+                    <div style={{
+                      background: 'rgba(59, 130, 246, 0.1)',
+                      border: '1px solid rgba(59, 130, 246, 0.25)',
+                      borderRadius: '8px',
+                      padding: '8px 12px',
+                      marginBottom: '14px',
+                      fontSize: '0.8rem',
+                      color: 'var(--text-primary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '10px'
+                    }}>
+                      <div>
+                        <strong>Targeted Class:</strong> Sem {displaySem || 'N/A'}{' '}
+                        {selectedSess.division && String(selectedSess.division).trim().toUpperCase() !== 'ALL'
+                          ? `(Division ${selectedSess.division})`
+                          : '(All Divisions)'}
                       </div>
-                    ))}
+                      {selectedSess.subject && (
+                        <div style={{ fontWeight: '700', color: '#60a5fa', display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap', marginLeft: 'auto' }}>
+                          📚 {selectedSess.subject}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {!hasStartedSessions ? (
+                    <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '40px 0' }}>
+                      <p style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '6px', color: 'var(--text-primary)' }}>No session started today yet.</p>
+                      <p style={{ fontSize: '0.85rem' }}>Start a QR Code or OTP session from the dashboard to view present students.</p>
+                    </div>
+                  ) : filteredPresent.length === 0 ? (
+                    <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '30px 0' }}>
+                      No present students found for this session.
+                    </p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '55vh', overflowY: 'auto', paddingRight: '4px' }}>
+                      {filteredPresent.map((l, i) => (
+                        <div key={l.id} style={{
+                          display: 'flex', alignItems: 'center', gap: '12px',
+                          padding: '12px 14px', borderRadius: '10px',
+                          background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.3)'
+                        }}>
+                          <div style={{
+                            width: '32px', height: '32px', borderRadius: '50%',
+                            background: 'rgba(59, 130, 246, 0.25)', display: 'flex',
+                            alignItems: 'center', justifyContent: 'center',
+                            fontSize: '0.8rem', fontWeight: '700', color: '#3b82f6', flexShrink: 0
+                          }}>{i + 1}</div>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.9rem' }}>{l.name}</div>
+                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                              {l.roll_no ? `Roll: ${l.roll_no} • ` : ''}{l.course} Sem {l.semester}{l.division ? ` (Div ${l.division})` : ''}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: 'right' }}>
+                            <div style={{ fontSize: '0.78rem', color: '#3b82f6', fontWeight: '600' }}>✓ Present</div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.time}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+
+            {/* Absent Today Modal */}
+            {dashModal === 'absent' && (() => {
+              const hasStartedSessions = facultySessionsToday.length > 0;
+              const activeSessionId = (dashModalSession && dashModalSession !== 'ALL' && facultySessionsToday.some(s => s.id === dashModalSession))
+                ? dashModalSession
+                : (facultySessionsToday[facultySessionsToday.length - 1]?.id || facultySessionsToday[0]?.id || null);
+
+              const selectedSess = facultySessionsToday.find(s => s.id === activeSessionId);
+
+              let absentList = [];
+              let targetSem = null;
+              let targetDiv = null;
+              let displaySem = 'N/A';
+              const rejectedLogsMap = new Map();
+
+              if (hasStartedSessions && selectedSess) {
+                targetSem = selectedSess?.semester;
+                targetDiv = selectedSess?.division;
+
+                if (!targetSem && activeQrSessionDetails && String(activeQrSessionDetails.id) === String(selectedSess.qr_session_id)) {
+                  targetSem = activeQrSessionDetails.semester;
+                  targetDiv = activeQrSessionDetails.division;
+                } else if (!targetSem && activeOtpDetails && String(activeOtpDetails.id) === String(selectedSess.otp_id)) {
+                  targetSem = activeOtpDetails.semester;
+                  targetDiv = activeOtpDetails.division;
+                }
+
+                if (!targetSem) {
+                  const sampleLog = (liveLogs || []).find(l => 
+                    (selectedSess.qr_session_id && String(l.qr_session_id) === String(selectedSess.qr_session_id)) ||
+                    (selectedSess.otp_id && String(l.otp_id) === String(selectedSess.otp_id))
+                  );
+                  if (sampleLog?.semester) {
+                    targetSem = sampleLog.semester;
+                    if (!targetDiv) targetDiv = sampleLog.division;
+                  }
+                }
+
+                let targetStudents = [];
+                if (targetSem) {
+                  const targetSemNum = String(targetSem).replace(/\D/g, '');
+                  targetStudents = (studentsList || []).filter(s => {
+                    const sSemNum = String(s.semester || '').replace(/\D/g, '');
+                    if (sSemNum !== targetSemNum) return false;
+                    return isDivMatch(s.division, targetDiv);
+                  });
+                } else {
+                  targetStudents = (studentsList || []).filter(s => isDivMatch(s.division, targetDiv));
+                }
+
+                displaySem = targetSem || (targetStudents.length > 0 ? targetStudents[0].semester : 'N/A');
+
+                const presentEnrollments = new Set();
+
+                (liveLogs || []).forEach(l => {
+                  if (
+                    (selectedSess.qr_session_id && String(l.qr_session_id) === String(selectedSess.qr_session_id)) ||
+                    (selectedSess.otp_id && String(l.otp_id) === String(selectedSess.otp_id))
+                  ) {
+                    const key = String(l.enrollment_no || '').trim().toLowerCase();
+                    if (l.status === 'Success') {
+                      presentEnrollments.add(key);
+                    } else if (l.status === 'Rejected' || l.status === 'Location Mismatch') {
+                      if (!rejectedLogsMap.has(key)) rejectedLogsMap.set(key, l);
+                    }
+                  }
+                });
+
+                const absentMap = new Map();
+                targetStudents.forEach(st => {
+                  const enrollKey = String(st.enrollment_no || '').trim().toLowerCase();
+                  if (!presentEnrollments.has(enrollKey)) {
+                    absentMap.set(enrollKey, st);
+                  }
+                });
+
+                rejectedLogsMap.forEach((rejLog, enrollKey) => {
+                  if (!presentEnrollments.has(enrollKey) && !absentMap.has(enrollKey)) {
+                    const rejSem = String(rejLog.semester || '').replace(/\D/g, '');
+                    const targetSemNum = String(displaySem || '').replace(/\D/g, '');
+                    const semMatches = !targetSemNum || !rejSem || rejSem === targetSemNum;
+                    const divMatches = isDivMatch(rejLog.division, targetDiv);
+                    if (semMatches && divMatches) {
+                      absentMap.set(enrollKey, {
+                        id: rejLog.id || enrollKey,
+                        name: rejLog.name || 'Student',
+                        enrollment_no: rejLog.enrollment_no || enrollKey,
+                        roll_no: rejLog.roll_no || '',
+                        course: rejLog.course || '',
+                        semester: rejLog.semester || displaySem || '',
+                        division: rejLog.division || targetDiv || '',
+                        mobile: '',
+                        rejLog: rejLog
+                      });
+                    }
+                  }
+                });
+
+                absentList = Array.from(absentMap.values());
+              }
+
+              return (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                    <XCircle size={24} color="#ef4444" />
+                    <h2 style={{ ...styles.cardTitle, margin: 0 }}>Absent Students Today</h2>
+                    <span style={{ marginLeft: 'auto', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                      {hasStartedSessions ? `${absentList.length} students` : '0 students'}
+                    </span>
                   </div>
-                )}
-              </>
-            )}
+
+                  {/* Session-wise Filter Buttons */}
+                  {hasStartedSessions ? (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
+                      {facultySessionsToday.map(sess => (
+                        <button
+                          key={sess.id}
+                          onClick={() => setDashModalSession(sess.id)}
+                          style={{
+                            padding: '6px 12px', fontSize: '0.78rem', borderRadius: '6px',
+                            border: activeSessionId === sess.id ? '1px solid var(--primary)' : '1px solid var(--border-light)',
+                            background: activeSessionId === sess.id ? 'var(--primary)' : 'rgba(255,255,255,0.08)',
+                            color: '#ffffff', fontWeight: 'bold', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '4px'
+                          }}
+                        >
+                          <Folder size={12} /> {sess.displayText}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '16px', fontStyle: 'italic', textAlign: 'center', background: 'rgba(255,255,255,0.03)', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                      ℹ️ No sessions started today yet.
+                    </div>
+                  )}
+
+                  {/* Target Session Banner Info */}
+                  {selectedSess && (
+                    <div style={{
+                      background: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.25)',
+                      borderRadius: '8px',
+                      padding: '8px 12px',
+                      marginBottom: '14px',
+                      fontSize: '0.8rem',
+                      color: 'var(--text-primary)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '10px'
+                    }}>
+                      <div>
+                        <strong>Targeted Class:</strong> Sem {displaySem || 'N/A'}{' '}
+                        {selectedSess.division && String(selectedSess.division).trim().toUpperCase() !== 'ALL'
+                          ? `(Division ${selectedSess.division})`
+                          : '(All Divisions)'}
+                      </div>
+                      {selectedSess.subject && (
+                        <div style={{ fontWeight: '700', color: '#f87171', display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
+                          📚 {selectedSess.subject}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {!hasStartedSessions ? (
+                    <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '40px 0' }}>
+                      <p style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '6px', color: 'var(--text-primary)' }}>No session started today yet.</p>
+                      <p style={{ fontSize: '0.85rem' }}>Start a QR Code or OTP session from the dashboard to view absent students.</p>
+                    </div>
+                  ) : absentList.length === 0 ? (
+                    <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '30px 0' }}>
+                      {studentsList.length === 0 ? 'Loading students list...' : 'All students in targeted class are present for this session!'}
+                    </p>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', maxHeight: '55vh', overflowY: 'auto', paddingRight: '4px' }}>
+                      {absentList.map((s, i) => {
+                        const enrollKey = String(s.enrollment_no || '').trim().toLowerCase();
+                        const rejLog = rejectedLogsMap.get(enrollKey);
+                        return (
+                          <div key={s.id || enrollKey || i} style={{
+                            display: 'flex', alignItems: 'center', gap: '12px',
+                            padding: '12px 14px', borderRadius: '10px',
+                            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)'
+                          }}>
+                            <div style={{
+                              width: '32px', height: '32px', borderRadius: '50%',
+                              background: 'rgba(239,68,68,0.2)', display: 'flex',
+                              alignItems: 'center', justifyContent: 'center',
+                              fontSize: '0.8rem', fontWeight: '700', color: '#f87171', flexShrink: 0
+                            }}>{i + 1}</div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.9rem' }}>{s.name}</div>
+                              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                                {s.roll_no ? `Roll: ${s.roll_no} • ` : ''}{s.course} Sem {s.semester}{s.division ? ` (Div ${s.division})` : ''}
+                                {s.mobile ? ` • Ph: ${s.mobile}` : ''}
+                              </div>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                              <div style={{ fontSize: '0.78rem', color: '#f87171', fontWeight: '600' }}>
+                                {rejLog ? `✗ Rejected (${rejLog.status || 'Failed'})` : '✗ Absent'}
+                              </div>
+                              {rejLog?.time && (
+                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Attempt: {rejLog.time}</div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Active Session Modal */}
             {dashModal === 'session' && (
@@ -875,21 +1444,105 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       <nav
         style={{
           ...styles.navBar,
-          padding: isMobile ? '10px 14px' : '16px 24px',
+          padding: isMobile ? '10px 14px' : '14px 24px',
           borderRadius: isMobile ? '12px' : '16px',
-          position: isMobile ? 'sticky' : 'relative',
-          top: isMobile ? 0 : 'auto',
-          zIndex: isMobile ? 200 : 'auto',
+          flexShrink: 0,
           flexWrap: 'wrap',
           gap: isMobile ? '8px' : '0'
         }}
-        className="glass-panel"
+        className="glass-panel faculty-header"
       >
-        <div style={{ ...styles.navLeft, gap: isMobile ? '10px' : '16px' }}>
-          <div style={{ ...styles.logoBadge, width: isMobile ? '36px' : '42px', height: isMobile ? '36px' : '42px', fontSize: isMobile ? '1rem' : '1.2rem' }}>F</div>
+        <div style={{ ...styles.navLeft, gap: isMobile ? '10px' : '16px', alignItems: 'center' }}>
+          <div style={{
+            background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+            borderRadius: '10px',
+            padding: '6px 8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: '0 4px 12px rgba(245, 158, 11, 0.4)'
+          }}>
+            <GraduationCap size={22} color="#001b3d" />
+          </div>
           <div>
-            <h1 style={{ ...styles.navTitle, fontSize: isMobile ? '1rem' : '1.2rem' }}>Faculty Hub</h1>
-            <p style={{ ...styles.navSubTitle, fontSize: isMobile ? '0.72rem' : '0.8rem' }}>{user.name} • {user.department}</p>
+            {(() => {
+              const rawDept = activeUser?.department || '';
+              const cleanDept = rawDept.includes('||SUB:') ? rawDept.split('||SUB:')[0].trim() : (rawDept || 'BCA');
+              
+              let userSubs = Array.isArray(activeUser?.subjects) ? activeUser.subjects : [];
+              if (userSubs.length === 0 && rawDept.includes('||SUB:')) {
+                try {
+                  const jsonStr = rawDept.split('||SUB:')[1].split('||')[0];
+                  const parsed = JSON.parse(jsonStr);
+                  if (Array.isArray(parsed)) userSubs = parsed;
+                } catch(e) {}
+              }
+
+              const validSubs = userSubs.filter(s => s && s.subjectName && String(s.subjectName).trim() !== '');
+
+              return (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <h1 style={{ ...styles.navTitle, fontSize: isMobile ? '1rem' : '1.25rem', margin: 0, fontWeight: '700' }}>Faculty Hub</h1>
+                    <span
+                      style={{
+                        fontSize: '0.7rem',
+                        padding: '2px 8px',
+                        borderRadius: '6px',
+                        background: 'rgba(59, 130, 246, 0.15)',
+                        color: '#60a5fa',
+                        border: '1px solid rgba(59, 130, 246, 0.3)',
+                        fontWeight: '700',
+                        letterSpacing: '0.5px'
+                      }}
+                    >
+                      {cleanDept}
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: isMobile ? '0.82rem' : '0.9rem', fontWeight: '600', color: 'var(--text-primary)' }}>
+                      👨‍🏫 {activeUser?.name || 'Faculty Member'}
+                    </span>
+
+                    {validSubs.length > 0 ? (
+                      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                        <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>•</span>
+                        {validSubs.map((sItem, sIdx) => {
+                          const displayName = (sItem.shortName && String(sItem.shortName).trim() !== '') 
+                            ? String(sItem.shortName).trim() 
+                            : sItem.subjectName;
+                          return (
+                            <span
+                              key={sIdx}
+                              title={sItem.shortName ? `${sItem.subjectName} (${sItem.shortName})` : sItem.subjectName}
+                              style={{
+                                fontSize: '0.73rem',
+                                padding: '2px 9px',
+                                borderRadius: '12px',
+                                background: 'rgba(168, 85, 247, 0.12)',
+                                color: '#c084fc',
+                                border: '1px solid rgba(168, 85, 247, 0.28)',
+                                fontWeight: '600',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                            >
+                              📚 {displayName} <span style={{ opacity: 0.85, fontWeight: '700', color: '#a855f7' }}>(Sem {sItem.semester || '1'})</span>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        • No teaching subjects assigned
+                      </span>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
         <div style={{ ...styles.navRight, gap: isMobile ? '8px' : '14px' }}>
@@ -911,24 +1564,27 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       <div style={{
         ...styles.mainGrid,
         gridTemplateColumns: isMobile ? '100%' : '260px 1fr',
-        gap: isMobile ? '12px' : '30px',
+        gap: isMobile ? '12px' : '24px',
         width: '100%',
         maxWidth: '100%',
         minWidth: 0,
-        boxSizing: 'border-box'
+        boxSizing: 'border-box',
+        flex: 1,
+        minHeight: 0,
+        overflow: 'hidden'
       }}>
         {/* Sidebar Nav */}
         <aside
           style={{
             ...styles.sidebar,
+            flexShrink: 0,
             padding: isMobile ? '10px' : '24px 16px',
             borderRadius: isMobile ? '16px' : '16px',
             display: 'block',
             width: '100%',
             maxWidth: '100%',
             minWidth: 0,
-            boxSizing: 'border-box',
-            overflow: 'hidden'
+            boxSizing: 'border-box'
           }}
           className="glass-panel faculty-sidebar"
         >
@@ -970,7 +1626,12 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
             </li>
             <li style={{ width: '100%', minWidth: 0 }}>
               <button
-                onClick={() => { setActiveTab('manual'); fetchTodayAllAttendance(); }}
+                onClick={() => {
+                  setActiveTab('manual');
+                  fetchTodaySessions();
+                  fetchLiveLogs();
+                  fetchTodayAllAttendance();
+                }}
                 style={{
                   ...styles.menuItemBtn,
                   ...(activeTab === 'manual' ? styles.menuItemBtnActive : {}),
@@ -1012,7 +1673,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
         </aside>
 
         {/* Content Pane */}
-        <main style={{ ...styles.contentPane, minWidth: 0, width: '100%' }}>
+        <main style={{ ...styles.contentPane, minWidth: 0, width: '100%', flex: 1, height: '100%', maxHeight: '100%', overflowY: 'auto', paddingRight: '6px' }}>
           {activeTab === 'dashboard' && (
             <div style={{ ...styles.tabContent, gap: isMobile ? '16px' : '30px' }}>
               {/* Statistics Grid */}
@@ -1029,8 +1690,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     <span style={styles.statLabel}>Present Today</span>
                     <CheckCircle size={20} color="#3b82f6" />
                   </div>
-                  <div style={styles.statVal}>{stats.presentToday}</div>
-                  <div style={styles.statSubText}>Students marked present</div>
+                  <div style={styles.statVal}>{facultySessionsToday.length > 0 ? stats.presentToday : 0}</div>
+                  <div style={styles.statSubText}>{facultySessionsToday.length > 0 ? 'Students marked present' : 'No session started today'}</div>
                   <div style={{ marginTop: '8px', fontSize: '0.75rem', color: 'var(--primary)', fontWeight: '500' }}>
                     Click to view list →
                   </div>
@@ -1047,8 +1708,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     <span style={styles.statLabel}>Absent Today</span>
                     <XCircle size={20} color="#ef4444" />
                   </div>
-                  <div style={styles.statVal}>{stats.absentToday}</div>
-                  <div style={styles.statSubText}>Out of {stats.totalStudents} total</div>
+                  <div style={styles.statVal}>{facultySessionsToday.length > 0 ? stats.absentToday : 0}</div>
+                  <div style={styles.statSubText}>{facultySessionsToday.length > 0 ? `Out of ${stats.totalStudents} total` : 'No session started today'}</div>
                   <div style={{ marginTop: '8px', fontSize: '0.75rem', color: '#ef4444', fontWeight: '500' }}>
                     Click to view list →
                   </div>
@@ -1150,285 +1811,521 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 </div>
               </div>
 
-              {/* Live Monitor / Semester Folders */}
+              {/* All Attendance Records Directory */}
               <div className="glass-panel" style={{ ...styles.cardPadding, padding: isMobile ? '12px 8px' : '28px' }}>
-                <div className="mobile-stack-header" style={styles.flexSpaceBetween}>
-                  <h3 style={styles.cardTitle}>
-                    {selectedSemFolder ? `📁 Semester ${selectedSemFolder} Folder Directory` : '📁 Semester Attendance Folders (Sem 1 to Sem 8)'}
-                  </h3>
-                  <div style={styles.badgeSuccess}>Live Polling</div>
+                <div className="mobile-stack-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+                  <div>
+                    <h3 style={styles.cardTitle}>
+                      {selectedSemFolder
+                        ? (selectedSessionFolder ? `📁 ${selectedSessionFolder.title} Directory` : `📁 Semester ${selectedSemFolder} Attendance Directory`)
+                        : '📁 All Attendance Records Directory'}
+                    </h3>
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '2px', marginBottom: '6px' }}>
+                      {selectedSemFolder
+                        ? 'Select a date or session folder to view present and absent student records.'
+                        : 'Click on your assigned semester folder to view date-wise session attendance archives.'}
+                    </p>
+                  </div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    📅 Date Archive
+                  </div>
                 </div>
 
                 {selectedSemFolder === null ? (
                   <>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '20px' }}>
-                      Click on any Semester Folder to open and view student attendance list for that semester.
-                    </p>
-
-                    {/* 8 Semester Folder Cards (4 per row Desktop, 2 per row Mobile) */}
-                    <div className="semester-folder-grid" style={{ display: 'grid', width: '100%', boxSizing: 'border-box' }}>
-                      {[1, 2, 3, 4, 5, 6, 7, 8].map(sem => {
-                        const semLogs = liveLogs.filter(l => String(l.semester) === String(sem));
-                        const presentCount = semLogs.filter(l => l.status === 'Success').length;
-                        const rejectCount = semLogs.filter(l => l.status !== 'Success').length;
-                        const semDivs = Array.from(new Set([
-                          ...(Array.isArray(studentsList) ? studentsList.filter(s => String(s.semester) === String(sem) && s.division).map(s => String(s.division).trim().toUpperCase()) : []),
-                          ...semLogs.filter(l => l.division).map(l => String(l.division).trim().toUpperCase())
-                        ])).filter(Boolean).sort();
-
-                        return (
-                          <div
-                            key={sem}
-                            onClick={() => { setSelectedSemFolder(sem); setFolderDivFilter('ALL'); }}
-                            style={{
-                              background: 'rgba(147, 51, 234, 0.08)',
-                              border: '1px solid rgba(147, 51, 234, 0.3)',
-                              borderRadius: '16px',
-                              padding: isMobile ? '12px 10px' : '20px 16px',
-                              cursor: 'pointer',
-                              transition: 'all 0.2s ease',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              gap: isMobile ? '6px' : '10px',
-                              minWidth: 0,
-                              width: '100%',
-                              boxSizing: 'border-box',
-                              overflow: 'hidden'
-                            }}
-                          >
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '4px' }}>
-                              <Folder size={isMobile ? 24 : 32} color="#a855f7" style={{ flexShrink: 0 }} />
-                              <span style={{
-                                fontSize: isMobile ? '0.68rem' : '0.75rem',
-                                padding: isMobile ? '2px 6px' : '3px 8px',
-                                borderRadius: '12px',
-                                background: 'rgba(168,85,247,0.2)',
-                                color: '#c084fc',
-                                fontWeight: '600',
-                                flexShrink: 0,
-                                whiteSpace: 'nowrap'
-                              }}>
-                                {semLogs.length} Records
-                              </span>
-                            </div>
-
-                            <div style={{ minWidth: 0 }}>
-                              <div style={{ fontWeight: '700', fontSize: isMobile ? '0.92rem' : '1.05rem', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                Sem {sem} Folder
-                              </div>
-                              <div style={{ fontSize: isMobile ? '0.7rem' : '0.78rem', color: 'var(--text-muted)', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                Semester {sem} Student List
-                              </div>
-                              {semDivs.length > 0 ? (
-                                <div style={{ fontSize: isMobile ? '0.68rem' : '0.75rem', color: '#c084fc', marginTop: '4px', fontWeight: '600', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                  Divisions: {semDivs.map(d => `Div ${d}`).join(', ')}
-                                </div>
-                              ) : (
-                                <div style={{ fontSize: isMobile ? '0.68rem' : '0.75rem', color: 'var(--text-muted)', marginTop: '4px', fontStyle: 'italic' }}>
-                                  No Divisions Available
-                                </div>
-                              )}
-                            </div>
-
-                            <div style={{ display: 'flex', gap: isMobile ? '4px' : '8px', fontSize: isMobile ? '0.68rem' : '0.75rem', marginTop: '2px', flexWrap: 'wrap' }}>
-                              <span style={{ color: '#4ade80', fontWeight: '600', whiteSpace: 'nowrap' }}>✓ {presentCount} Present</span>
-                              <span style={{ color: '#f87171', fontWeight: '600', whiteSpace: 'nowrap' }}>✗ {rejectCount} Rejected</span>
-                            </div>
-
-                            <button
-                              type="button"
-                              className="btn btn-primary"
-                              style={{ width: '100%', padding: isMobile ? '6px 2px' : '6px 0', fontSize: isMobile ? '0.74rem' : '0.8rem', marginTop: '4px' }}
+                    {/* Assigned Semester Folder Cards Grid */}
+                    <div className="semester-folder-grid" style={{ display: 'grid', width: '100%', boxSizing: 'border-box', marginTop: '16px' }}>
+                      {assignedSemesters.length === 0 ? (
+                        <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '30px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                          No teaching semesters mapped to your profile yet.
+                        </div>
+                      ) : (
+                        assignedSemesters.map(sem => {
+                          return (
+                            <div
+                              key={sem}
+                              onClick={() => { setSelectedSemFolder(sem); setFolderDivFilter('ALL'); setSelectedSessionFolder(null); }}
+                              style={{
+                                background: 'rgba(245, 158, 11, 0.06)',
+                                border: '1.5px solid rgba(245, 158, 11, 0.25)',
+                                borderRadius: '16px',
+                                padding: isMobile ? '14px 12px' : '22px 18px',
+                                cursor: 'pointer',
+                                transition: 'all 0.2s ease',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: '10px'
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 30px rgba(245, 158, 11, 0.25)'; }}
+                              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
                             >
-                              📂 Open Sem {sem} Folder
-                            </button>
-                          </div>
-                        );
-                      })}
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                <Folder size={32} color="#f59e0b" />
+                                <span style={{ fontSize: '0.75rem', fontWeight: '700', padding: '3px 9px', borderRadius: '10px', background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b' }}>
+                                  Teaching Sem
+                                </span>
+                              </div>
+
+                              <div>
+                                <div style={{ fontWeight: '700', fontSize: '1.05rem', color: 'var(--text-primary)' }}>
+                                  Sem {sem} Folder
+                                </div>
+                                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                  Click to view date-wise session folders
+                                </div>
+                              </div>
+
+                              <button
+                                type="button"
+                                className="btn btn-primary"
+                                style={{ width: '100%', padding: '7px 0', fontSize: '0.8rem', marginTop: '4px' }}
+                              >
+                                📂 Open Sem {sem} Directory
+                              </button>
+                            </div>
+                          );
+                        })
+                      )}
                     </div>
                   </>
                 ) : (
                   /* Single Semester Folder View */
                   <>
+                    {/* Top Header Row */}
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
                       <button
-                        onClick={() => { setSelectedSemFolder(null); setFolderSearchName(''); setFolderSearchEnroll(''); setFolderSearchDate(''); setFolderDivFilter('ALL'); }}
+                        onClick={() => { setSelectedSemFolder(null); setSelectedSessionFolder(null); setFolderSearchName(''); setFolderSearchEnroll(''); setFolderSearchDate(new Date().toISOString().split('T')[0]); setFolderDivFilter('ALL'); }}
                         className="btn btn-secondary"
                         style={{ padding: '6px 14px', fontSize: '0.85rem' }}
                       >
-                        ← Back to All Folders
+                        ← Back to All Semester Folders
                       </button>
 
                       <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                        Showing student attendance list for <strong>Semester {selectedSemFolder}</strong>
+                        Attendance Records for <strong>Semester {selectedSemFolder}</strong>
                       </div>
                     </div>
 
-                    {/* Division Selector for Opened Semester Folder */}
-                    {(() => {
-                      const semDivisions = Array.from(new Set([
-                        ...(Array.isArray(studentsList) ? studentsList.filter(s => String(s.semester) === String(selectedSemFolder) && s.division).map(s => String(s.division).trim().toUpperCase()) : []),
-                        ...liveLogs.filter(l => String(l.semester) === String(selectedSemFolder) && l.division).map(l => String(l.division).trim().toUpperCase())
-                      ])).filter(Boolean).sort();
-
-                      if (semDivisions.length === 0) {
-                        return (
-                          <div style={{ marginBottom: '16px', fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
-                            ℹ️ No divisions available in Semester {selectedSemFolder}. Showing all semester records.
-                          </div>
-                        );
-                      }
-
-                      return (
-                        <div style={{ marginBottom: '16px', padding: '12px 16px', background: 'var(--panel-bg)', borderRadius: '10px', border: '1px solid var(--border-light)' }}>
-                          <div style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span>🏷️ Select Division for Semester {selectedSemFolder}:</span>
-                          </div>
-                          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                            <button
-                              type="button"
-                              onClick={() => setFolderDivFilter('ALL')}
-                              style={{
-                                padding: '6px 16px', borderRadius: '8px', fontWeight: '600',
-                                fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s ease',
-                                border: folderDivFilter === 'ALL' ? '2px solid var(--primary)' : '1px solid var(--border-light)',
-                                background: folderDivFilter === 'ALL' ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
-                                color: folderDivFilter === 'ALL' ? '#a855f7' : 'var(--text-primary)'
-                              }}
-                            >
-                              All Divisions
-                            </button>
-                            {semDivisions.map(div => (
-                              <button
-                                key={div}
-                                type="button"
-                                onClick={() => setFolderDivFilter(div)}
-                                style={{
-                                  padding: '6px 18px', borderRadius: '8px', fontWeight: '600',
-                                  fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s ease',
-                                  border: folderDivFilter === div ? '2px solid var(--primary)' : '1px solid var(--border-light)',
-                                  background: folderDivFilter === div ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
-                                  color: folderDivFilter === div ? '#a855f7' : 'var(--text-primary)'
-                                }}
-                              >
-                                Div {div}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    })()}
-
-                    {/* Filters Inside Semester Folder */}
-                    <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid var(--border-light)' }}>
-                      <div style={{ ...styles.filterGroup, width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : '1' }}>
-                        <label style={styles.filterLabel}>Filter by Name</label>
-                        <input
-                          type="text"
-                          placeholder="Search student name..."
-                          value={folderSearchName}
-                          onChange={(e) => setFolderSearchName(e.target.value)}
-                          style={{ ...styles.selectInput, width: isMobile ? '100%' : '180px' }}
-                        />
-                      </div>
-                      <div style={{ ...styles.filterGroup, width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : '1' }}>
-                        <label style={styles.filterLabel}>Filter by Enrollment</label>
-                        <input
-                          type="text"
-                          placeholder="Search enrollment..."
-                          value={folderSearchEnroll}
-                          onChange={(e) => setFolderSearchEnroll(e.target.value)}
-                          style={{ ...styles.selectInput, width: isMobile ? '100%' : '180px' }}
-                        />
-                      </div>
-                      <div style={{ ...styles.filterGroup, width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : '1' }}>
-                        <label style={styles.filterLabel}>Filter by Date</label>
+                    {/* Date Filter Bar */}
+                    <div style={{ display: 'flex', gap: '16px', marginBottom: '20px', flexWrap: 'wrap', padding: '14px 18px', background: 'var(--panel-bg)', borderRadius: '12px', border: '1px solid var(--border-light)', alignItems: 'center' }}>
+                      {/* Date Filter */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <Calendar size={18} color="#a855f7" />
+                        <label style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)' }}>Select Date:</label>
                         <input
                           type="date"
                           value={folderSearchDate}
-                          onChange={(e) => setFolderSearchDate(e.target.value)}
-                          style={{ ...styles.selectInput, width: isMobile ? '100%' : '160px' }}
+                          onChange={(e) => {
+                            setFolderSearchDate(e.target.value);
+                            setSelectedSessionFolder(null);
+                          }}
+                          style={{
+                            padding: '6px 12px', borderRadius: '8px',
+                            border: '1px solid var(--border-light)',
+                            background: 'rgba(255,255,255,0.05)',
+                            color: 'var(--text-primary)',
+                            fontSize: '0.85rem',
+                            cursor: 'pointer'
+                          }}
                         />
                       </div>
-                      {(folderSearchName || folderSearchEnroll || folderSearchDate) && (
-                        <div style={{ display: 'flex', alignItems: 'flex-end', width: isMobile ? '100%' : 'auto' }}>
-                          <button
-                            onClick={() => { setFolderSearchName(''); setFolderSearchEnroll(''); setFolderSearchDate(''); }}
-                            className="btn btn-secondary"
-                            style={{ padding: '6px 12px', fontSize: '0.8rem', width: isMobile ? '100%' : 'auto' }}
-                          >Clear</button>
-                        </div>
-                      )}
                     </div>
 
-                    {/* Table of Semester Students */}
-                    <div style={styles.tableScrollable} className="custom-table-container">
-                      <table className="custom-table" style={styles.table}>
-                        <thead>
-                          <tr>
-                            <th style={styles.tableTh}>Roll No</th>
-                            <th style={styles.tableTh}>Student Name</th>
-                            <th style={styles.tableTh}>Sem & Division</th>
-                            <th style={styles.tableTh}>Enrollment No</th>
-                            <th style={styles.tableTh}>Date</th>
-                            <th style={styles.tableTh}>Time</th>
-                            <th style={styles.tableTh}>Distance</th>
-                            <th style={styles.tableTh}>Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(() => {
-                            const semLogs = liveLogs.filter(log => String(log.semester) === String(selectedSemFolder));
-                            const filtered = semLogs.filter(log => {
-                              const matchDiv = folderDivFilter === 'ALL' || (log.division && String(log.division).trim().toUpperCase() === folderDivFilter);
-                              const matchName = !folderSearchName || (log.name && log.name.toLowerCase().includes(folderSearchName.toLowerCase()));
-                              const matchEnroll = !folderSearchEnroll || (log.enrollment_no && log.enrollment_no.toLowerCase().includes(folderSearchEnroll.toLowerCase()));
-                              const matchDate = !folderSearchDate || log.date === folderSearchDate;
-                              return matchDiv && matchName && matchEnroll && matchDate;
-                            });
+                    {/* View 1: Session Folders Grid for Selected Date */}
+                    {!selectedSessionFolder ? (
+                      <div>
+                        <h4 style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <Folder size={18} color="#a855f7" />
+                          Session Folders on {folderSearchDate || 'Selected Date'}
+                        </h4>
 
-                            if (filtered.length === 0) {
-                              return (
-                                <tr>
-                                  <td colSpan={8} style={{ ...styles.noDataRow, textAlign: 'center' }}>
-                                    No attendance records found for Semester {selectedSemFolder} {folderDivFilter !== 'ALL' ? `(Div ${folderDivFilter})` : ''}.
-                                  </td>
-                                </tr>
-                              );
+                        {(() => {
+                          const targetDate = folderSearchDate;
+                          
+                          const normDate = (raw) => {
+                            if (!raw) return '';
+                            const s = String(raw).trim();
+                            if (s.includes('T')) return s.split('T')[0];
+                            if (s.includes('/')) {
+                              const p = s.split('/');
+                              if (p.length === 3 && p[2].length === 4) return `${p[2]}-${p[1].padStart(2,'0')}-${p[0].padStart(2,'0')}`;
                             }
+                            return s;
+                          };
 
-                            return filtered.map((log) => (
-                              <tr key={log.id}>
-                                <td style={{ ...styles.tableTd, fontWeight: '700', color: 'var(--primary)' }}>{log.roll_no || '-'}</td>
-                                <td style={{ ...styles.tableTd, fontWeight: '600' }}>{log.name}</td>
-                                <td style={styles.tableTd}>
-                                  <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>Sem {log.semester || selectedSemFolder}</span>
-                                  {log.division ? (
-                                    <span style={{ marginLeft: '6px', fontSize: '0.75rem', padding: '2px 6px', background: 'rgba(147,51,234,0.2)', borderRadius: '4px', color: '#c084fc', fontWeight: 'bold' }}>
-                                      Div {log.division}
-                                    </span>
-                                  ) : (
-                                    <span style={{ marginLeft: '6px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>(No Div)</span>
-                                  )}
-                                </td>
-                                <td style={styles.tableTd}>{log.enrollment_no}</td>
-                                <td style={styles.tableTd}>{log.date || 'Today'}</td>
-                                <td style={styles.tableTd}>{log.time}</td>
-                                <td style={styles.tableTd}>{log.distance ? `${Math.round(log.distance)}m` : '-'}</td>
-                                <td style={styles.tableTd}>
-                                  <span style={{
-                                    ...styles.statusTag,
-                                    ...(log.status === 'Success' ? styles.statusSuccess : styles.statusFail)
-                                  }}>
-                                    {log.status === 'Success' ? 'Present' : 'Rejected'}
-                                  </span>
-                                </td>
-                              </tr>
-                            ));
-                          })()}
-                        </tbody>
-                      </table>
-                    </div>
+                          const combinedLogsList = [...(liveLogs || []), ...(dateLogs || [])];
+                          const logsForDate = combinedLogsList.filter(log => {
+                            if (String(log.semester || '') !== String(selectedSemFolder)) return false;
+                            if (folderDivFilter !== 'ALL' && !isDivMatch(log.division, folderDivFilter)) return false;
+                            if (targetDate) {
+                              const d = normDate(log.date || log.created_at);
+                              if (d && d !== targetDate) return false;
+                            }
+                            return true;
+                          });
+
+                          const sessionsMap = new Map();
+
+                          logsForDate.forEach(log => {
+                            let sessKey = log.qr_session_id ? `qr_${log.qr_session_id}` : log.otp_id ? `otp_${log.otp_id}` : `manual_${log.time || log.id}`;
+                            if (!sessionsMap.has(sessKey)) {
+                              let sessType = log.qr_session_id ? 'Live QR Session' : log.otp_id ? 'OTP Session' : 'Manual Session';
+                              sessionsMap.set(sessKey, {
+                                id: sessKey,
+                                qr_session_id: log.qr_session_id || null,
+                                otp_id: log.otp_id || null,
+                                type: sessType,
+                                division: log.division || folderDivFilter,
+                                subject: log.subject || null,
+                                time: log.time || 'Session',
+                                logs: []
+                              });
+                            }
+                            sessionsMap.get(sessKey).logs.push(log);
+                          });
+
+                          const todayStr = new Date().toISOString().split('T')[0];
+                          if (!targetDate || targetDate === todayStr) {
+                            (facultySessionsToday || []).forEach((fSess) => {
+                              if (String(fSess.semester || '') === String(selectedSemFolder)) {
+                                if (folderDivFilter === 'ALL' || isDivMatch(fSess.division, folderDivFilter)) {
+                                  let sessKey = fSess.qr_session_id ? `qr_${fSess.qr_session_id}` : fSess.otp_id ? `otp_${fSess.otp_id}` : `sess_${fSess.id}`;
+                                  if (!sessionsMap.has(sessKey)) {
+                                    sessionsMap.set(sessKey, {
+                                      id: sessKey,
+                                      qr_session_id: fSess.qr_session_id || null,
+                                      otp_id: fSess.otp_id || null,
+                                      type: fSess.type ? `${fSess.type} Session` : 'Live Session',
+                                      division: fSess.division || folderDivFilter,
+                                      subject: fSess.subject || null,
+                                      time: fSess.created_at ? new Date(fSess.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Today',
+                                      logs: logsForDate.filter(l => 
+                                        (fSess.qr_session_id && String(l.qr_session_id) === String(fSess.qr_session_id)) ||
+                                        (fSess.otp_id && String(l.otp_id) === String(fSess.otp_id))
+                                      )
+                                    });
+                                  }
+                                }
+                              }
+                            });
+                          }
+
+                          const sessionList = Array.from(sessionsMap.values()).map((s, idx) => {
+                            const presentCount = s.logs.filter(l => l.status === 'Success').length;
+                            const targetSemNum = String(selectedSemFolder || '').replace(/\D/g, '');
+                            const targetClassCount = (studentsList || []).filter(st => {
+                              const sSemNum = String(st.semester || '').replace(/\D/g, '');
+                              if (targetSemNum && sSemNum !== targetSemNum) return false;
+                              return isDivMatch(st.division, s.division);
+                            }).length;
+                            const absentCount = Math.max(0, targetClassCount - presentCount);
+
+                            return {
+                              ...s,
+                              sessionNumber: idx + 1,
+                              title: `Session ${idx + 1}`,
+                              presentCount,
+                              absentCount
+                            };
+                          });
+
+                          if (sessionList.length === 0) {
+                            return (
+                              <div style={{ textAlign: 'center', padding: '40px 20px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid var(--border-light)' }}>
+                                <Folder size={40} color="var(--text-muted)" style={{ marginBottom: '10px', opacity: 0.5 }} />
+                                <p style={{ fontSize: '0.95rem', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '4px' }}>
+                                  No sessions conducted on {folderSearchDate || 'this date'} for Semester {selectedSemFolder}.
+                                </p>
+                                <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>
+                                  Select a different date from the date picker above to view session folders.
+                                </p>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <div className="semester-folder-grid" style={{ display: 'grid', width: '100%', boxSizing: 'border-box' }}>
+                              {sessionList.map(sess => (
+                                <div
+                                  key={sess.id}
+                                  onClick={() => setSelectedSessionFolder(sess)}
+                                  style={{
+                                    background: 'rgba(147, 51, 234, 0.08)',
+                                    border: '1.5px solid rgba(147, 51, 234, 0.3)',
+                                    borderRadius: '16px',
+                                    padding: '18px 16px',
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s ease',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '10px'
+                                  }}
+                                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 30px rgba(147, 51, 234, 0.2)'; }}
+                                  onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <Folder size={32} color="#a855f7" />
+                                    <div style={{ display: 'flex', gap: '6px' }}>
+                                      <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '10px', background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', fontWeight: '700' }}>
+                                        ✓ {sess.presentCount} Present
+                                      </span>
+                                      <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', fontWeight: '700' }}>
+                                        ✕ {sess.absentCount} Absent
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div>
+                                    <div style={{ fontWeight: '700', fontSize: '1.02rem', color: 'var(--text-primary)' }}>
+                                      {sess.title}
+                                    </div>
+                                    <div style={{ fontSize: '0.78rem', color: '#a855f7', fontWeight: '600', marginTop: '2px' }}>
+                                      Sem {selectedSemFolder} {sess.division && String(sess.division).toUpperCase() !== 'ALL' ? `(Div ${sess.division})` : '(All Div)'}
+                                    </div>
+                                    {sess.subject && (
+                                      <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: '700', marginTop: '4px' }}>
+                                        📚 {sess.subject}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    className="btn btn-primary"
+                                    style={{ width: '100%', padding: '6px 0', fontSize: '0.8rem', marginTop: '4px' }}
+                                  >
+                                    📂 Open {sess.title} Folder
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    ) : (
+                      /* View 2: Inside Selected Session Directory */
+                      (() => {
+                        const presentLogs = selectedSessionFolder.logs ? selectedSessionFolder.logs.filter(l => l.status === 'Success') : [];
+                        const presentEnrollments = new Set(presentLogs.map(l => String(l.enrollment_no || '').trim().toLowerCase()));
+
+                        const targetSemNum = String(selectedSemFolder || '').replace(/\D/g, '');
+                        const targetStudents = (studentsList || []).filter(s => {
+                          const sSemNum = String(s.semester || '').replace(/\D/g, '');
+                          if (targetSemNum && sSemNum !== targetSemNum) return false;
+                          return isDivMatch(s.division, selectedSessionFolder.division);
+                        });
+
+                        const absentStudents = targetStudents.filter(st => {
+                          const key = String(st.enrollment_no || '').trim().toLowerCase();
+                          return !presentEnrollments.has(key);
+                        });
+
+                        const defaultSemSubj = (() => {
+                          const rawDept = activeUser?.department || '';
+                          let subs = Array.isArray(activeUser?.subjects) ? activeUser.subjects : [];
+                          if (subs.length === 0 && rawDept.includes('||SUB:')) {
+                            try {
+                              const jsonStr = rawDept.split('||SUB:')[1].split('||')[0];
+                              const parsed = JSON.parse(jsonStr);
+                              if (Array.isArray(parsed)) subs = parsed;
+                            } catch(e) {}
+                          }
+                          const match = subs.find(s => s && String(s.semester).replace(/\D/g, '') === String(selectedSemFolder).replace(/\D/g, ''));
+                          return match ? (match.shortName || match.subjectName) : null;
+                        })();
+
+                        const sessSubject = selectedSessionFolder.subject ||
+                          (selectedSessionFolder.logs && selectedSessionFolder.logs.find(l => l.subject)?.subject) ||
+                          defaultSemSubj ||
+                          'Subject';
+
+                        return (
+                          <div>
+                            {/* Session Directory Header */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
+                              <button
+                                onClick={() => setSelectedSessionFolder(null)}
+                                className="btn btn-secondary"
+                                style={{ padding: '6px 14px', fontSize: '0.85rem' }}
+                              >
+                                ← Back to Session Folders
+                              </button>
+                              <div style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)' }}>
+                                {selectedSessionFolder.title} Directory (Sem {selectedSemFolder} {selectedSessionFolder.division && String(selectedSessionFolder.division).toUpperCase() !== 'ALL' ? `Div ${selectedSessionFolder.division}` : ''}) • {folderSearchDate}
+                              </div>
+                              <span style={{
+                                fontSize: '0.85rem',
+                                padding: '4px 12px',
+                                borderRadius: '10px',
+                                background: 'rgba(168, 85, 247, 0.15)',
+                                color: '#c084fc',
+                                border: '1px solid rgba(168, 85, 247, 0.3)',
+                                fontWeight: '700',
+                                marginLeft: 'auto',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px'
+                              }}>
+                                📚 {sessSubject}
+                              </span>
+                            </div>
+
+                            {/* Present / Absent Tab Switcher */}
+                            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
+                              <button
+                                type="button"
+                                onClick={() => setSessionFolderTab('present')}
+                                style={{
+                                  padding: '8px 18px', borderRadius: '10px', fontWeight: '700', fontSize: '0.88rem',
+                                  cursor: 'pointer', transition: 'all 0.15s ease',
+                                  border: sessionFolderTab === 'present' ? '2px solid #22c55e' : '1px solid var(--border-light)',
+                                  background: sessionFolderTab === 'present' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(255,255,255,0.05)',
+                                  color: sessionFolderTab === 'present' ? '#4ade80' : 'var(--text-secondary)',
+                                  display: 'flex', alignItems: 'center', gap: '6px'
+                                }}
+                              >
+                                <CheckCircle size={16} /> Present Students ({presentLogs.length})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setSessionFolderTab('absent')}
+                                style={{
+                                  padding: '8px 18px', borderRadius: '10px', fontWeight: '700', fontSize: '0.88rem',
+                                  cursor: 'pointer', transition: 'all 0.15s ease',
+                                  border: sessionFolderTab === 'absent' ? '2px solid #ef4444' : '1px solid var(--border-light)',
+                                  background: sessionFolderTab === 'absent' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255,255,255,0.05)',
+                                  color: sessionFolderTab === 'absent' ? '#f87171' : 'var(--text-secondary)',
+                                  display: 'flex', alignItems: 'center', gap: '6px'
+                                }}
+                              >
+                                <XCircle size={16} /> Absent Students ({absentStudents.length})
+                              </button>
+                            </div>
+
+                            {/* Search Filters */}
+                            <div style={{ display: 'flex', gap: '10px', marginBottom: '16px', flexWrap: 'wrap', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', border: '1px solid var(--border-light)' }}>
+                              <div style={{ position: 'relative', flex: 1, minWidth: '200px' }}>
+                                <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                                <input
+                                  className="glass-input"
+                                  style={{ paddingLeft: '36px', width: '100%', boxSizing: 'border-box' }}
+                                  placeholder="Search student by name or roll no..."
+                                  value={folderSearchName}
+                                  onChange={e => setFolderSearchName(e.target.value)}
+                                />
+                              </div>
+                              {folderSearchName && (
+                                <button
+                                  onClick={() => setFolderSearchName('')}
+                                  className="btn btn-secondary"
+                                  style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                                >Clear</button>
+                              )}
+                            </div>
+
+                            {/* Tab 1: Present Students Table */}
+                            {sessionFolderTab === 'present' && (
+                              <div style={styles.tableScrollable} className="custom-table-container">
+                                <table className="custom-table" style={styles.table}>
+                                  <thead>
+                                    <tr>
+                                      <th style={styles.tableTh}>Roll No</th>
+                                      <th style={styles.tableTh}>Student Name</th>
+                                      <th style={styles.tableTh}>Sem & Division</th>
+                                      <th style={styles.tableTh}>Status</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(() => {
+                                      const filteredPresent = presentLogs.filter(st => {
+                                        return !folderSearchName || 
+                                          (st.name && st.name.toLowerCase().includes(folderSearchName.toLowerCase())) ||
+                                          (st.roll_no && String(st.roll_no).includes(folderSearchName)) ||
+                                          (st.enrollment_no && st.enrollment_no.toLowerCase().includes(folderSearchName.toLowerCase()));
+                                      });
+
+                                      if (filteredPresent.length === 0) {
+                                        return (
+                                          <tr>
+                                            <td colSpan={4} style={{ ...styles.noDataRow, textAlign: 'center' }}>
+                                              No present student records found for this session.
+                                            </td>
+                                          </tr>
+                                        );
+                                      }
+
+                                      return filteredPresent.map((st, idx) => (
+                                        <tr key={st.id || idx}>
+                                          <td style={{ ...styles.tableTd, fontWeight: '700', color: 'var(--primary)' }}>{st.roll_no || '-'}</td>
+                                          <td style={{ ...styles.tableTd, fontWeight: '600' }}>{st.name}</td>
+                                          <td style={styles.tableTd}>Sem {st.semester || selectedSemFolder} {st.division ? `(Div ${st.division})` : ''}</td>
+                                          <td style={styles.tableTd}>
+                                            <span style={{ padding: '4px 10px', borderRadius: '12px', background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', fontWeight: '700', fontSize: '0.78rem' }}>
+                                              ✓ Present
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      ));
+                                    })()}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+
+                            {/* Tab 2: Absent Students Table */}
+                            {sessionFolderTab === 'absent' && (
+                              <div style={styles.tableScrollable} className="custom-table-container">
+                                <table className="custom-table" style={styles.table}>
+                                  <thead>
+                                    <tr>
+                                      <th style={styles.tableTh}>Roll No</th>
+                                      <th style={styles.tableTh}>Student Name</th>
+                                      <th style={styles.tableTh}>Sem & Division</th>
+                                      <th style={styles.tableTh}>Phone Number</th>
+                                      <th style={styles.tableTh}>Status</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {(() => {
+                                      const filteredAbsent = absentStudents.filter(st => {
+                                        return !folderSearchName || 
+                                          (st.name && st.name.toLowerCase().includes(folderSearchName.toLowerCase())) ||
+                                          (st.roll_no && String(st.roll_no).includes(folderSearchName)) ||
+                                          (st.enrollment_no && st.enrollment_no.toLowerCase().includes(folderSearchName.toLowerCase()));
+                                      });
+
+                                      if (filteredAbsent.length === 0) {
+                                        return (
+                                          <tr>
+                                            <td colSpan={5} style={{ ...styles.noDataRow, textAlign: 'center' }}>
+                                              All students in targeted class are present for this session!
+                                            </td>
+                                          </tr>
+                                        );
+                                      }
+
+                                      return filteredAbsent.map((st, idx) => (
+                                        <tr key={st.id || idx}>
+                                          <td style={{ ...styles.tableTd, fontWeight: '700', color: '#f87171' }}>{st.roll_no || '-'}</td>
+                                          <td style={{ ...styles.tableTd, fontWeight: '600' }}>{st.name}</td>
+                                          <td style={styles.tableTd}>Sem {st.semester || selectedSemFolder} {st.division ? `(Div ${st.division})` : ''}</td>
+                                          <td style={styles.tableTd}>{st.mobile || st.phone || '-'}</td>
+                                          <td style={styles.tableTd}>
+                                            <span style={{ padding: '4px 10px', borderRadius: '12px', background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', fontWeight: '700', fontSize: '0.78rem' }}>
+                                              ✕ Absent
+                                            </span>
+                                          </td>
+                                        </tr>
+                                      ));
+                                    })()}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()
+                    )}
                   </>
                 )}
               </div>
@@ -1497,7 +2394,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     <div style={styles.qrBadge}>ROTATING QR SESSION</div>
                     {activeQrSessionDetails.semester && (
                       <div style={{ fontSize: '0.88rem', fontWeight: '600', color: 'var(--text-secondary)', margin: '10px 0' }}>
-                        Target: Sem {activeQrSessionDetails.semester} {activeQrSessionDetails.division ? `• Div ${activeQrSessionDetails.division}` : '• All Divisions'}
+                        Target: Sem {activeQrSessionDetails.semester} {activeQrSessionDetails.division ? `• Div ${activeQrSessionDetails.division}` : '• All Divisions'} {activeQrSessionDetails.subject ? `• 📚 ${activeQrSessionDetails.subject}` : ''}
                       </div>
                     )}
 
@@ -1535,7 +2432,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     </div>
                     {activeOtpDetails.semester && (
                       <div style={{ fontSize: '0.88rem', fontWeight: '600', color: 'var(--text-secondary)', margin: '10px 0' }}>
-                        Target: Sem {activeOtpDetails.semester} {activeOtpDetails.division ? `• Div ${activeOtpDetails.division}` : '• All Divisions'}
+                        Target: Sem {activeOtpDetails.semester} {activeOtpDetails.division ? `• Div ${activeOtpDetails.division}` : '• All Divisions'} {activeOtpDetails.subject ? `• 📚 ${activeOtpDetails.subject}` : ''}
                       </div>
                     )}
 
@@ -1571,15 +2468,15 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               <div className="mobile-stack-header" style={styles.flexSpaceBetween}>
                 <h2 style={styles.cardTitle}>Attendance Database Reports</h2>
                 <div style={styles.buttonStackRow}>
-                  <button onClick={handleExportPDF} className="btn btn-secondary" style={{ gap: '8px' }}>
+                  <button onClick={handleExportPDF} className="btn btn-success" style={{ gap: '8px' }}>
                     <Download size={14} />
                     PDF
                   </button>
-                  <button onClick={handleExportExcel} className="btn btn-secondary" style={{ gap: '8px' }}>
+                  <button onClick={handleExportExcel} className="btn btn-success" style={{ gap: '8px' }}>
                     <Download size={14} />
                     Excel
                   </button>
-                  <button onClick={handleExportCSV} className="btn btn-secondary" style={{ gap: '8px' }}>
+                  <button onClick={handleExportCSV} className="btn btn-success" style={{ gap: '8px' }}>
                     <Download size={14} />
                     CSV
                   </button>
@@ -1622,8 +2519,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
               {/* Semester Folder Navigation (4 per row grid) */}
               <div style={{ marginTop: '16px', padding: '14px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--border-light)' }}>
-                <div style={{ fontSize: '0.88rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Folder size={16} color="#a855f7" /> Semester Folders (Sem 1 to Sem 8):
+                <div style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Folder size={16} color="#a855f7" /> Assigned Semester Folders:
                 </div>
                 <div className="semester-folder-grid" style={{ gap: '8px', marginBottom: 0 }}>
                   <button
@@ -1634,7 +2531,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   >
                     <Folder size={14} /> All Folders
                   </button>
-                  {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
+                  {assignedSemesters.map(s => (
                     <button
                       key={s}
                       type="button"
@@ -1651,20 +2548,20 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               {/* Search Filters Row */}
               <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
                 <div style={{ ...styles.filterGroup, width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : '1' }}>
-                  <label style={styles.filterLabel}>Enrollment No</label>
+                  <label style={styles.filterLabel}>Search By Roll No</label>
                   <input
                     type="text"
-                    placeholder="Search enrollment..."
+                    placeholder="Search By Roll No..."
                     value={filterEnrollment}
                     onChange={(e) => setFilterEnrollment(e.target.value)}
                     style={{ ...styles.selectInput, width: isMobile ? '100%' : '180px' }}
                   />
                 </div>
                 <div style={{ ...styles.filterGroup, width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : '1' }}>
-                  <label style={styles.filterLabel}>Student Name</label>
+                  <label style={styles.filterLabel}>Search By Name</label>
                   <input
                     type="text"
-                    placeholder="Search name..."
+                    placeholder="Search By Name..."
                     value={filterName}
                     onChange={(e) => setFilterName(e.target.value)}
                     style={{ ...styles.selectInput, width: isMobile ? '100%' : '180px' }}
@@ -1810,6 +2707,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
             </div>
           )}
 
+        
           {/* ===== MANUAL ATTENDANCE TAB ===== */}
           {activeTab === 'manual' && (
             <div style={styles.tabContent}>
@@ -1827,12 +2725,12 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   <div style={{ flex: 1 }}>
                     <h2 style={{ ...styles.cardTitle, margin: 0 }}>Manual Attendance</h2>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '4px', margin: 0 }}>
-                      For students without a smartphone — mark attendance manually. Students who already marked via phone are shown but cannot be overridden.
+                      Mark attendance manually per session for students without a smartphone.
                     </p>
                   </div>
                   <button
                     className="btn btn-secondary"
-                    onClick={fetchTodayAllAttendance}
+                    onClick={() => { fetchTodaySessions(); fetchTodayAllAttendance(); fetchLiveLogs(); }}
                     style={{ gap: '8px', flexShrink: 0 }}
                   >
                     <RefreshCw size={14} />
@@ -1852,63 +2750,108 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   Present (Manually by Faculty)
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
-                  <span style={{ width: '12px', height: '12px', borderRadius: '50%', background: 'var(--border-light)', flexShrink: 0 }} />
+                  <span style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#ef4444', flexShrink: 0 }} />
                   Absent / Not Yet Marked
                 </div>
               </div>
 
-              {/* Sem Folder View or Student List */}
-              {!manualSemFolder ? (
-                /* Semester folders */
+              {/* Session Folder View or Student List */}
+              {!manualSessionFolder ? (
+                /* Dynamic Generated Session Folders Grid */
                 <div className="glass-panel" style={{ ...styles.cardPadding, padding: isMobile ? '12px 8px' : '28px' }}>
-                  <h3 style={{ ...styles.cardTitle, marginBottom: '20px' }}>Select Semester</h3>
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(auto-fill, minmax(160px, 1fr))',
-                    gap: isMobile ? '8px' : '16px'
-                  }}>
-                    {[1,2,3,4,5,6,7,8].map(sem => {
-                      const semStudents = studentsList.filter(s => String(s.semester) === String(sem));
-                      if (semStudents.length === 0) return null;
-                      const semPresent = manualTodayLogs.filter(l =>
-                        l.status === 'Success' && String(l.semester) === String(sem)
-                      ).length;
+                  <h3 style={{ ...styles.cardTitle, marginBottom: '20px' }}>Select Today's Session Folder</h3>
+
+                  {(() => {
+                    const safeSessions = Array.isArray(facultySessionsToday) ? facultySessionsToday : [];
+                    if (safeSessions.length === 0) {
                       return (
-                        <div
-                          key={sem}
-                          onClick={() => { setManualSemFolder(String(sem)); setManualDivFilter('ALL'); setManualSearchName(''); }}
-                          style={{
-                            background: 'rgba(245,158,11,0.07)',
-                            border: '1.5px solid rgba(245,158,11,0.25)',
-                            borderRadius: '16px',
-                            padding: '22px 16px',
-                            cursor: 'pointer',
-                            textAlign: 'center',
-                            transition: 'all 0.2s ease'
-                          }}
-                          onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 30px rgba(245,158,11,0.2)'; }}
-                          onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
-                        >
-                          <Folder size={36} color="#f59e0b" style={{ marginBottom: '10px' }} />
-                          <div style={{ fontWeight: '700', fontSize: '1rem', color: 'var(--text-primary)' }}>Semester {sem}</div>
-                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '6px' }}>{semStudents.length} students</div>
-                          <div style={{ fontSize: '0.78rem', color: '#4ade80', marginTop: '2px' }}>{semPresent} present today</div>
+                        <div style={{ textAlign: 'center', padding: '40px 20px', color: 'var(--text-muted)' }}>
+                          <Folder size={48} color="var(--text-muted)" style={{ marginBottom: '12px' }} />
+                          <p style={{ fontSize: '0.95rem', fontWeight: '600', color: 'var(--text-secondary)' }}>No sessions started today yet.</p>
+                          <p style={{ fontSize: '0.82rem', marginTop: '6px' }}>Please generate a Live QR or OTP session from the OTP/QR tab first to create a session folder.</p>
                         </div>
                       );
-                    })}
-                  </div>
+                    }
+
+                    return (
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(220px, 1fr))',
+                        gap: '16px'
+                      }}>
+                        {safeSessions.map(sess => {
+                          const targetSemNum = String(sess.semester || '').replace(/\D/g, '');
+                          const targetStudents = (studentsList || []).filter(s => {
+                            const sSemNum = String(s.semester || '').replace(/\D/g, '');
+                            if (targetSemNum && sSemNum !== targetSemNum) return false;
+                            return isDivMatch(s.division, sess.division);
+                          });
+
+                          const safeLogs = Array.isArray(manualTodayLogs) ? manualTodayLogs : [];
+                          const sessionPresentCount = safeLogs.filter(l => {
+                            if (l.status !== 'Success') return false;
+                            if (sess.qr_session_id && String(l.qr_session_id) === String(sess.qr_session_id)) return true;
+                            if (sess.otp_id && String(l.otp_id) === String(sess.otp_id)) return true;
+                            return false;
+                          }).length;
+
+                          return (
+                            <div
+                              key={sess.id}
+                              onClick={() => {
+                                setManualSessionFolder(sess.id);
+                                setManualSearchName('');
+                              }}
+                              style={{
+                                background: 'rgba(245,158,11,0.07)',
+                                border: '1.5px solid rgba(245,158,11,0.25)',
+                                borderRadius: '16px',
+                                padding: '22px 16px',
+                                cursor: 'pointer',
+                                textAlign: 'center',
+                                transition: 'all 0.2s ease'
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 30px rgba(245,158,11,0.2)'; }}
+                              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
+                            >
+                              <Folder size={36} color="#f59e0b" style={{ marginBottom: '10px' }} />
+                              <div style={{ fontWeight: '700', fontSize: '1rem', color: 'var(--text-primary)' }}>
+                                Session {sess.sessionNumber}
+                              </div>
+                              <div style={{ fontSize: '0.82rem', fontWeight: '600', color: '#f59e0b', marginTop: '4px' }}>
+                                Sem {sess.semester || '?'} {sess.division && String(sess.division).trim().toUpperCase() !== 'ALL' ? `(Div ${sess.division})` : '(All Div)'}
+                              </div>
+                              {sess.subject ? (
+                                <div style={{ fontSize: '0.84rem', fontWeight: '700', color: 'var(--text-primary)', marginTop: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                  📚 {sess.subject}
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '8px' }}>
+                                  {targetStudents.length} students
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                 </div>
               ) : (() => {
-                /* Inside a Semester Folder */
-                const semStudentsAll = studentsList.filter(s => String(s.semester) === String(manualSemFolder));
-                const divSet = new Set(semStudentsAll.filter(s => s.division && String(s.division).trim() !== '').map(s => String(s.division).trim().toUpperCase()));
-                const divList = ['ALL', ...Array.from(divSet).sort()];
-                const hasDivisions = divSet.size > 0;
+                /* Inside a Session Folder */
+                const safeSessions = Array.isArray(facultySessionsToday) ? facultySessionsToday : [];
+                const selectedSess = safeSessions.find(s => s.id === manualSessionFolder);
+                if (!selectedSess) return null;
 
-                const filteredStudents = semStudentsAll.filter(s => {
-                  const matchDiv = !hasDivisions || manualDivFilter === 'ALL' || (s.division && String(s.division).trim().toUpperCase() === manualDivFilter);
-                  const matchName = !manualSearchName || (s.name && s.name.toLowerCase().includes(manualSearchName.toLowerCase()));
-                  return matchDiv && matchName;
+                const targetSemNum = String(selectedSess.semester || '').replace(/\D/g, '');
+                const targetStudents = (studentsList || []).filter(s => {
+                  const sSemNum = String(s.semester || '').replace(/\D/g, '');
+                  if (targetSemNum && sSemNum !== targetSemNum) return false;
+                  return isDivMatch(s.division, selectedSess.division);
+                });
+
+                const filteredStudents = targetStudents.filter(s => {
+                  return !manualSearchName || (s.name && s.name.toLowerCase().includes(manualSearchName.toLowerCase()));
                 });
 
                 return (
@@ -1916,37 +2859,19 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     {/* Breadcrumb + Back */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
                       <button
-                        onClick={() => setManualSemFolder(null)}
+                        onClick={() => setManualSessionFolder(null)}
                         className="btn btn-secondary"
                         style={{ gap: '8px', fontSize: '0.82rem', padding: '8px 14px' }}
                       >
-                        ← All Semesters
+                        ← All Session Folders
                       </button>
-                      <h3 style={{ ...styles.cardTitle, margin: 0 }}>Semester {manualSemFolder}</h3>
+                      <h3 style={{ ...styles.cardTitle, margin: 0 }}>
+                        Session {selectedSess.sessionNumber} Folder Directory
+                      </h3>
+                      <span style={{ fontSize: '0.85rem', color: '#f59e0b', fontWeight: '600', marginLeft: 'auto' }}>
+                        Target: Sem {selectedSess.semester || '?'} {selectedSess.division && String(selectedSess.division).trim().toUpperCase() !== 'ALL' ? `(Division ${selectedSess.division})` : '(All Divisions)'} {selectedSess.subject ? `• 📚 ${selectedSess.subject}` : ''}
+                      </span>
                     </div>
-
-                    {/* Division Tabs (if divisions exist) */}
-                    {hasDivisions && (
-                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '16px' }}>
-                        {divList.map(div => (
-                          <button
-                            key={div}
-                            onClick={() => setManualDivFilter(div)}
-                            style={{
-                              padding: '6px 16px', borderRadius: '20px', fontSize: '0.82rem',
-                              fontWeight: '600', cursor: 'pointer', border: 'none',
-                              background: manualDivFilter === div
-                                ? 'linear-gradient(135deg, #f59e0b, #d97706)'
-                                : 'rgba(255,255,255,0.05)',
-                              color: manualDivFilter === div ? '#fff' : 'var(--text-secondary)',
-                              transition: 'all 0.15s ease'
-                            }}
-                          >
-                            {div === 'ALL' ? 'All Divisions' : `Division ${div}`}
-                          </button>
-                        ))}
-                      </div>
-                    )}
 
                     {/* Search */}
                     <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', flexWrap: 'wrap' }}>
@@ -1955,7 +2880,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                         <input
                           className="glass-input"
                           style={{ paddingLeft: '36px', width: '100%', boxSizing: 'border-box' }}
-                          placeholder="Search by name..."
+                          placeholder="Search student by name..."
                           value={manualSearchName}
                           onChange={e => setManualSearchName(e.target.value)}
                         />
@@ -1969,9 +2894,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                           <tr style={{ background: 'rgba(255,255,255,0.03)' }}>
                             <th style={styles.tableTh}>Roll No</th>
                             <th style={styles.tableTh}>Name</th>
-                            <th style={styles.tableTh}>Enrollment No</th>
-                            {hasDivisions && <th style={styles.tableTh}>Division</th>}
-                            <th style={styles.tableTh}>Mobile</th>
+                            <th style={styles.tableTh}>Division</th>
                             <th style={styles.tableTh}>Status</th>
                             <th style={styles.tableTh}>Action</th>
                           </tr>
@@ -1979,15 +2902,22 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                         <tbody>
                           {filteredStudents.length === 0 ? (
                             <tr>
-                              <td colSpan={hasDivisions ? 7 : 6} style={{ ...styles.noDataRow, textAlign: 'center' }}>No students found.</td>
+                              <td colSpan={5} style={{ ...styles.noDataRow, textAlign: 'center' }}>No students found for this session class.</td>
                             </tr>
                           ) : filteredStudents.map(student => {
-                            const todayRecord = manualTodayLogs.find(l =>
-                              (l.enrollment_no && l.enrollment_no === student.enrollment_no) ||
-                              (l.roll_no && l.roll_no === student.roll_no)
-                            );
-                            const isPresent = todayRecord && todayRecord.status === 'Success';
-                            const isManual = todayRecord && todayRecord.device_id === 'Manual';
+                            const safeLogs = Array.isArray(manualTodayLogs) ? manualTodayLogs : [];
+                            const sessionRecord = safeLogs.find(l => {
+                              const matchStudent = (l.student_id && String(l.student_id) === String(student.id)) ||
+                                (l.enrollment_no && l.enrollment_no === student.enrollment_no) ||
+                                (l.roll_no && l.roll_no === student.roll_no);
+                              if (!matchStudent) return false;
+                              if (selectedSess.qr_session_id && String(l.qr_session_id) === String(selectedSess.qr_session_id)) return true;
+                              if (selectedSess.otp_id && String(l.otp_id) === String(selectedSess.otp_id)) return true;
+                              return false;
+                            });
+
+                            const isPresent = sessionRecord && sessionRecord.status === 'Success';
+                            const isManual = sessionRecord && sessionRecord.device_id === 'Manual';
                             const isPhone = isPresent && !isManual;
                             const isActionPending = manualActionMsg.id === student.id;
 
@@ -1995,17 +2925,13 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                               <tr key={student.id} style={{ transition: 'background 0.15s' }}>
                                 <td style={{ ...styles.tableTd, fontWeight: '700', color: 'var(--primary)' }}>{student.roll_no || '-'}</td>
                                 <td style={{ ...styles.tableTd, fontWeight: '600' }}>{student.name}</td>
-                                <td style={styles.tableTd}>{student.enrollment_no || '-'}</td>
-                                {hasDivisions && (
-                                  <td style={styles.tableTd}>
-                                    {student.division ? (
-                                      <span style={{ padding: '2px 8px', background: 'rgba(245,158,11,0.15)', borderRadius: '6px', color: '#fbbf24', fontSize: '0.78rem', fontWeight: '700' }}>
-                                        {student.division}
-                                      </span>
-                                    ) : '-'}
-                                  </td>
-                                )}
-                                <td style={styles.tableTd}>{student.mobile || '-'}</td>
+                                <td style={styles.tableTd}>
+                                  {student.division ? (
+                                    <span style={{ padding: '2px 8px', background: 'rgba(245,158,11,0.15)', borderRadius: '6px', color: '#fbbf24', fontSize: '0.78rem', fontWeight: '700' }}>
+                                      {student.division}
+                                    </span>
+                                  ) : '-'}
+                                </td>
                                 <td style={styles.tableTd}>
                                   {isPhone ? (
                                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', background: 'rgba(34,197,94,0.12)', color: '#4ade80', fontSize: '0.78rem', fontWeight: '700' }}>
@@ -2030,28 +2956,26 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                                     <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Already via Phone</span>
                                   ) : isManual ? (
                                     <button
-                                      onClick={() => handleManualUnmark(student)}
-                                      disabled={manualLoading}
+                                      onClick={() => handleManualUnmark(student, selectedSess)}
                                       style={{
                                         padding: '6px 14px', borderRadius: '10px', fontSize: '0.8rem', fontWeight: '600',
                                         border: '1px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.08)',
                                         color: '#f87171', cursor: 'pointer', transition: 'all 0.15s ease'
                                       }}
-                                      title="Mark Absent (Undo Manual)"
+                                      title="Mark Absent for this Session"
                                     >
                                       Mark Absent
                                     </button>
                                   ) : (
                                     <button
-                                      onClick={() => handleManualMark(student)}
-                                      disabled={manualLoading}
+                                      onClick={() => handleManualMark(student, selectedSess)}
                                       style={{
                                         padding: '6px 14px', borderRadius: '10px', fontSize: '0.8rem', fontWeight: '700',
                                         border: 'none', background: 'linear-gradient(135deg, #f59e0b, #d97706)',
                                         color: '#fff', cursor: 'pointer', boxShadow: '0 4px 12px rgba(245,158,11,0.3)',
                                         transition: 'all 0.15s ease'
                                       }}
-                                      title="Mark Present Manually"
+                                      title="Mark Present for this Session"
                                     >
                                       Mark Present
                                     </button>
@@ -2068,16 +2992,15 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               })()}
             </div>
           )}
-
-        </main>
+</main>
       </div>
 
-      {/* ===== SEMESTER SELECT MODAL FOR GENERATION ===== */}
+      {/* ===== SEMESTER, DIVISION & SUBJECT SELECT MODAL FOR GENERATION ===== */}
       {semesterModal && (
         <div
           style={{
             position: 'fixed', inset: 0, zIndex: 1100,
-            background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)',
+            background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)',
             display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
           }}
           onClick={() => setSemesterModal(null)}
@@ -2085,7 +3008,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
           <div
             className="glass-panel"
             style={{
-              width: '100%', maxWidth: '420px', borderRadius: '20px',
+              width: '100%', maxWidth: '440px', borderRadius: '20px',
               padding: '28px', position: 'relative', textAlign: 'center'
             }}
             onClick={e => e.stopPropagation()}
@@ -2098,44 +3021,51 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               }}
             >✕</button>
 
-            <h3 style={{ ...styles.cardTitle, marginBottom: '8px' }}>
-              Select Semester {selectedSemester && availableDivisions.length > 0 ? '& Division' : ''}
+            <h3 style={{ ...styles.cardTitle, marginBottom: '6px' }}>
+              Start {semesterModal === 'qr' ? 'QR Code' : 'OTP'} Session
             </h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '24px' }}>
-              Please choose which semester {selectedSemester && availableDivisions.length > 0 ? 'and division ' : ''}this {semesterModal === 'qr' ? 'QR Code' : 'OTP'} session is for:
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px' }}>
+              Select assigned semester, division & teaching subject:
             </p>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px', marginBottom: selectedSemester && availableDivisions.length > 0 ? '16px' : '24px' }}>
-              {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => handleSelectSemesterForModal(String(s))}
-                  style={{
-                    padding: '12px 8px', borderRadius: '10px', fontWeight: '600',
-                    fontSize: '0.9rem', cursor: 'pointer', transition: 'all 0.15s ease',
-                    border: selectedSemester === String(s) ? '2px solid var(--primary)' : '1px solid var(--border-light)',
-                    background: selectedSemester === String(s) ? 'rgba(147,51,234,0.2)' : 'rgba(255,255,255,0.05)',
-                    color: selectedSemester === String(s) ? '#a855f7' : 'var(--text-primary)'
-                  }}
-                >
-                  Sem {s}
-                </button>
-              ))}
+            {/* Step 1: Assigned Semesters Only */}
+            <div style={{ textAlign: 'left', marginBottom: '16px' }}>
+              <label style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)', display: 'block', marginBottom: '8px' }}>
+                1️⃣ Select Semester:
+              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+                {assignedSemesters.map(s => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => handleSelectSemesterForModal(String(s))}
+                    style={{
+                      padding: '10px 6px', borderRadius: '10px', fontWeight: '700',
+                      fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.15s ease',
+                      border: selectedSemester === String(s) ? '2px solid var(--primary)' : '1px solid var(--border-light)',
+                      background: selectedSemester === String(s) ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
+                      color: selectedSemester === String(s) ? '#a855f7' : 'var(--text-primary)'
+                    }}
+                  >
+                    Sem {s}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {selectedSemester && availableDivisions.length > 0 && (
-              <div style={{ marginBottom: '24px', paddingTop: '16px', borderTop: '1px solid var(--border-light)', textAlign: 'left' }}>
-                <div style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '10px', textAlign: 'center' }}>
-                  Select Division (Sem {selectedSemester}):
-                </div>
-                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+            {/* Step 2: Division Selection (Conditional on Selected Semester) */}
+            {selectedSemester && (
+              <div style={{ textAlign: 'left', marginBottom: '16px', paddingTop: '14px', borderTop: '1px solid var(--border-light)' }}>
+                <label style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)', display: 'block', marginBottom: '8px' }}>
+                  2️⃣ Select Division (Sem {selectedSemester}):
+                </label>
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   <button
                     type="button"
                     onClick={() => setSelectedDivision('ALL')}
                     style={{
-                      padding: '8px 14px', borderRadius: '8px', fontWeight: '600',
-                      fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.15s ease',
+                      padding: '7px 14px', borderRadius: '8px', fontWeight: '600',
+                      fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s ease',
                       border: selectedDivision === 'ALL' ? '2px solid var(--primary)' : '1px solid var(--border-light)',
                       background: selectedDivision === 'ALL' ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
                       color: selectedDivision === 'ALL' ? '#a855f7' : 'var(--text-primary)'
@@ -2149,8 +3079,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                       type="button"
                       onClick={() => setSelectedDivision(d)}
                       style={{
-                        padding: '8px 18px', borderRadius: '8px', fontWeight: '600',
-                        fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.15s ease',
+                        padding: '7px 16px', borderRadius: '8px', fontWeight: '600',
+                        fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s ease',
                         border: selectedDivision === d ? '2px solid var(--primary)' : '1px solid var(--border-light)',
                         background: selectedDivision === d ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
                         color: selectedDivision === d ? '#a855f7' : 'var(--text-primary)'
@@ -2160,6 +3090,48 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     </button>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Step 3: Subject Selection (Filtered for Selected Semester) */}
+            {selectedSemester && selectedDivision && (
+              <div style={{ textAlign: 'left', marginBottom: '20px', paddingTop: '14px', borderTop: '1px solid var(--border-light)' }}>
+                <label style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)', display: 'block', marginBottom: '8px' }}>
+                  3️⃣ Select Subject (Sem {selectedSemester}):
+                </label>
+                {availableSubjectsForSem.length > 0 ? (
+                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                    {availableSubjectsForSem.map((subObj, subIdx) => {
+                      const subLabel = (subObj.shortName && String(subObj.shortName).trim() !== '') 
+                        ? String(subObj.shortName).trim() 
+                        : subObj.subjectName;
+                      const isSelected = selectedSubject === subLabel || selectedSubject === subObj.subjectName;
+
+                      return (
+                        <button
+                          key={subIdx}
+                          type="button"
+                          title={subObj.subjectName}
+                          onClick={() => setSelectedSubject(subLabel)}
+                          style={{
+                            padding: '8px 14px', borderRadius: '10px', fontWeight: '600',
+                            fontSize: '0.84rem', cursor: 'pointer', transition: 'all 0.15s ease',
+                            border: isSelected ? '2px solid #a855f7' : '1px solid var(--border-light)',
+                            background: isSelected ? 'rgba(168,85,247,0.25)' : 'rgba(255,255,255,0.05)',
+                            color: isSelected ? '#c084fc' : 'var(--text-primary)',
+                            display: 'inline-flex', alignItems: 'center', gap: '6px'
+                          }}
+                        >
+                          📚 {subLabel}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                    No subject mapped for Sem {selectedSemester}. Session will start without subject filter.
+                  </div>
+                )}
               </div>
             )}
 
@@ -2177,9 +3149,9 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 onClick={confirmSemesterAndGenerate}
                 className="btn btn-primary"
                 style={{ flex: 1 }}
-                disabled={!selectedSemester || (availableDivisions.length > 0 && !selectedDivision)}
+                disabled={!selectedSemester || !selectedDivision || (availableSubjectsForSem.length > 0 && !selectedSubject)}
               >
-                Generate Code →
+                Start Session →
               </button>
             </div>
           </div>
@@ -2191,25 +3163,25 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
 const styles = {
   dashboardContainer: {
-    padding: '30px',
+    padding: '20px 24px',
     maxWidth: '1280px',
     margin: '0 auto',
     display: 'flex',
     flexDirection: 'column',
-    gap: '30px',
-    minHeight: '100vh',
+    gap: '18px',
+    height: '100vh',
+    maxHeight: '100vh',
     width: '100%',
     boxSizing: 'border-box',
-    overflowX: 'hidden'
+    overflow: 'hidden'
   },
   navBar: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: '16px 24px',
+    padding: '14px 24px',
     borderRadius: '16px',
-    position: 'relative',
-    top: 'auto'
+    flexShrink: 0
   },
   navLeft: {
     display: 'flex',
@@ -2273,14 +3245,17 @@ const styles = {
   mainGrid: {
     display: 'grid',
     gridTemplateColumns: '260px 1fr',
-    gap: '30px',
-    alignItems: 'start'
+    gap: '24px',
+    flex: 1,
+    minHeight: 0,
+    overflow: 'hidden'
   },
   sidebar: {
     padding: '24px 16px',
     borderRadius: '16px',
-    position: 'relative',
-    top: 'auto'
+    alignSelf: 'start',
+    height: 'fit-content',
+    flexShrink: 0
   },
   sideMenuList: {
     listStyle: 'none',
@@ -2307,13 +3282,17 @@ const styles = {
     transition: 'all 0.2s ease'
   },
   menuItemBtnActive: {
-    background: 'rgba(147, 51, 234, 0.15)',
-    border: '1px solid rgba(147, 51, 234, 0.3)',
-    color: 'var(--text-primary)',
-    textShadow: '0 0 10px rgba(147, 51, 234, 0.4)'
+    background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+    color: '#001b3d',
+    fontWeight: '700',
+    boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)'
   },
   contentPane: {
-    minWidth: 0
+    minWidth: 0,
+    height: '100%',
+    maxHeight: '100%',
+    overflowY: 'auto',
+    paddingRight: '6px'
   },
   tabContent: {
     display: 'flex',
