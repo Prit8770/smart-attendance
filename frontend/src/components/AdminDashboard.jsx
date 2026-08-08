@@ -304,6 +304,18 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
   }, [students, liveLogs, dateLogs, faculties, qrSessionHistory]);
 
+  // Semesters that actually have registered student accounts
+  const registeredSemesters = React.useMemo(() => {
+    const semSet = new Set();
+    (students || []).forEach(s => {
+      if (s && s.semester) {
+        const semNum = String(s.semester).replace(/\D/g, '').trim();
+        if (semNum) semSet.add(semNum);
+      }
+    });
+    return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
+  }, [students]);
+
   // Compute faculty members who teach or have logs/sessions in selectedSemFolder
   const semFacultyList = React.useMemo(() => {
     if (!selectedSemFolder) return [];
@@ -1941,12 +1953,12 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         gap: '16px',
                         marginTop: '16px'
                       }}>
-                        {availableSemesters.length === 0 ? (
+                        {registeredSemesters.length === 0 ? (
                           <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '30px', color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                            No semester student records available yet.
+                            No registered student accounts found.
                           </div>
                         ) : (
-                          availableSemesters.map(sem => {
+                          registeredSemesters.map(sem => {
                           const semStudents = students.filter(s => String(s.semester) === String(sem));
                           const semDivs = Array.from(new Set(
                             semStudents.filter(s => s.division && s.division.trim() !== '').map(s => String(s.division).trim().toUpperCase())
