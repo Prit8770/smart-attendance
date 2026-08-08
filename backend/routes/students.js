@@ -188,9 +188,10 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   }
 });
 
-// POST import batch of students
+// POST import batch of students (High Performance Batch Insert)
 router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
   const { students: importedList } = req.body;
+  const passwordHashCache = new Map();
 
   if (!importedList || !Array.isArray(importedList)) {
     return res.status(400).json({ error: 'Invalid data format. Array expected.' });
@@ -201,75 +202,108 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
     errors: []
   };
 
-  for (let i = 0; i < importedList.length; i++) {
-    const student = importedList[i];
-    const { enrollment_no, roll_no, division, name, course, semester, mobile, password } = student;
+  try {
+    // 1. Fetch all existing students in 1 single query for instant in-memory lookup
+    const { data: existingStudents, error: fetchErr } = await supabase.from('students').select('id, enrollment_no, username');
+    if (fetchErr) throw fetchErr;
 
-    if (!enrollment_no || !name || !course || !semester || !mobile) {
-      results.errors.push(`Row ${i + 1}: Missing required fields.`);
-      continue;
-    }
+    const existingMap = new Map();
+    (existingStudents || []).forEach(s => {
+      if (s.enrollment_no) existingMap.set(String(s.enrollment_no).trim().toLowerCase(), s.id);
+      if (s.username) existingMap.set(String(s.username).trim().toLowerCase(), s.id);
+    });
 
-    if (!/^\d{10}$/.test(String(enrollment_no).trim())) {
-      results.errors.push(`Row ${i + 1}: Please enter valid enrollment number (Must be 10 digits).`);
-      continue;
-    }
+    const toInsert = [];
+    const updatePromises = [];
 
-    const username = enrollment_no.toString().toLowerCase().trim();
+    for (let i = 0; i < importedList.length; i++) {
+      const student = importedList[i];
+      const { enrollment_no, roll_no, division, name, course, semester, mobile, password } = student;
 
-    try {
-      const { data: existing } = await supabase.from('students').select('id').eq('enrollment_no', enrollment_no.toString().trim()).maybeSingle();
-      if (existing) {
-        // Update existing student record if roll_no, division or other details are provided
-        const updateObj = {
-          name: name.trim(),
-          course: course.trim(),
-          semester: semester.toString().trim(),
-          mobile: mobile.toString().trim()
-        };
-        if (roll_no && String(roll_no).trim() !== '') updateObj.roll_no = String(roll_no).trim();
-        if (division && String(division).trim() !== '') updateObj.division = String(division).trim();
-        if (password && String(password).toString().trim() !== '') {
-          const rawPassword = String(password).trim();
-          updateObj.password = bcrypt.hashSync(rawPassword, 10);
-          updateObj.plain_password = rawPassword;
-        }
-
-        const { error: updateErr } = await supabase.from('students').update(updateObj).eq('id', existing.id);
-        if (updateErr) throw updateErr;
-
-        results.successCount++;
+      if (!enrollment_no || !name || !course || !semester || !mobile) {
+        results.errors.push(`Row ${i + 1}: Missing required fields.`);
         continue;
       }
 
-      const rawPassword = (password && password.toString().trim() !== '') ? password.toString().trim() : generatePassword();
-      const hashedPassword = bcrypt.hashSync(rawPassword, 10);
+      const cleanEnroll = String(enrollment_no).trim();
+      if (!/^\d{10}$/.test(cleanEnroll)) {
+        results.errors.push(`Row ${i + 1}: Please enter valid enrollment number (Must be 10 digits).`);
+        continue;
+      }
 
-      const importObj = {
-        enrollment_no: enrollment_no.toString().trim(),
-        name: name.trim(),
-        course: course.trim(),
-        semester: semester.toString().trim(),
-        mobile: mobile.toString().trim(),
-        username,
-        password: hashedPassword,
-        plain_password: rawPassword
-      };
-      if (roll_no && String(roll_no).trim() !== '') importObj.roll_no = String(roll_no).trim();
-      if (division && String(division).trim() !== '') importObj.division = String(division).trim();
+      const username = cleanEnroll.toLowerCase();
+      const existingId = existingMap.get(username) || existingMap.get(cleanEnroll.toLowerCase());
 
-      const { error } = await supabase.from('students').insert([importObj]);
+      const rawPassword = (password && String(password).trim() !== '') ? String(password).trim() : generatePassword();
+      if (!passwordHashCache.has(rawPassword)) {
+        passwordHashCache.set(rawPassword, bcrypt.hashSync(rawPassword, 10));
+      }
+      const hashedPassword = passwordHashCache.get(rawPassword);
 
-      if (error) throw error;
+      if (existingId) {
+        // Prepare update for existing student
+        const updateObj = {
+          name: String(name).trim(),
+          course: String(course).trim(),
+          semester: String(semester).trim(),
+          mobile: String(mobile).trim()
+        };
+        if (roll_no && String(roll_no).trim() !== '') updateObj.roll_no = String(roll_no).trim();
+        if (division && String(division).trim() !== '') updateObj.division = String(division).trim();
+        if (password && String(password).trim() !== '') {
+          updateObj.password = hashedPassword;
+          updateObj.plain_password = rawPassword;
+        }
 
-      results.successCount++;
-    } catch (err) {
-      console.error('Import row error:', err);
-      results.errors.push(`Row ${i + 1}: DB error - ${err.message}`);
+        updatePromises.push(
+          supabase.from('students').update(updateObj).eq('id', existingId)
+            .then(({ error }) => {
+              if (error) results.errors.push(`Row ${i + 1}: Update error - ${error.message}`);
+              else results.successCount++;
+            })
+        );
+      } else {
+        // Prepare new student for batch insert
+        const importObj = {
+          enrollment_no: cleanEnroll,
+          name: String(name).trim(),
+          course: String(course).trim(),
+          semester: String(semester).trim(),
+          mobile: String(mobile).trim(),
+          username,
+          password: hashedPassword,
+          plain_password: rawPassword
+        };
+        if (roll_no && String(roll_no).trim() !== '') importObj.roll_no = String(roll_no).trim();
+        if (division && String(division).trim() !== '') importObj.division = String(division).trim();
+
+        toInsert.push(importObj);
+      }
     }
-  }
 
-  res.json(results);
+    // 2. Execute Updates in parallel batches
+    if (updatePromises.length > 0) {
+      await Promise.all(updatePromises);
+    }
+
+    // 3. Execute Batch Inserts in chunks of 200
+    const chunkSize = 200;
+    for (let c = 0; c < toInsert.length; c += chunkSize) {
+      const chunk = toInsert.slice(c, c + chunkSize);
+      const { error: insertErr } = await supabase.from('students').insert(chunk);
+      if (insertErr) {
+        console.error('Batch insert chunk error:', insertErr);
+        results.errors.push(`Batch insert error: ${insertErr.message}`);
+      } else {
+        results.successCount += chunk.length;
+      }
+    }
+
+    res.json(results);
+  } catch (err) {
+    console.error('Import process error:', err);
+    res.status(500).json({ error: err.message || 'Failed to process student import batch.' });
+  }
 });
 
 // POST bulk delete students
