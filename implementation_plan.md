@@ -54,10 +54,10 @@ graph TD
 
 We will create a Node.js + Express backend serving endpoints for authentication, student management, OTP generation/validation, attendance processing, and college location management.
 
-#### [NEW] [backend/package.json](file:///c:/Users/PRIT/OneDrive/Desktop/Attendence/backend/package.json)
+#### [NEW] [backend/package.json](file:///c:/Users/PRIT/OneDrive/Desktop/Attendance/backend/package.json)
 Configures scripts and dependencies: `express`, `cors`, `sqlite3` (or `better-sqlite3`), `jsonwebtoken`, `bcryptjs`, `dotenv`.
 
-#### [NEW] [backend/db.js](file:///c:/Users/PRIT/OneDrive/Desktop/Attendence/backend/db.js)
+#### [NEW] [backend/db.js](file:///c:/Users/PRIT/OneDrive/Desktop/Attendance/backend/db.js)
 Initializes the SQLite database (`college_attendance.db`) and creates the tables:
 - `admin` (id, name, email, password)
 - `students` (id, enrollment_no, name, course, semester, mobile, username, password)
@@ -67,22 +67,22 @@ Initializes the SQLite database (`college_attendance.db`) and creates the tables
 
 It will automatically seed a default admin account and a default college location.
 
-#### [NEW] [backend/server.js](file:///c:/Users/PRIT/OneDrive/Desktop/Attendence/backend/server.js)
+#### [NEW] [backend/server.js](file:///c:/Users/PRIT/OneDrive/Desktop/Attendance/backend/server.js)
 Main entry point. Set up routes, database connections, static file serving (for production), and start the server.
 
-#### [NEW] [backend/routes/auth.js](file:///c:/Users/PRIT/OneDrive/Desktop/Attendence/backend/routes/auth.js)
+#### [NEW] [backend/routes/auth.js](file:///c:/Users/PRIT/OneDrive/Desktop/Attendance/backend/routes/auth.js)
 Endpoints for Admin & Student Login, using bcrypt for password validation and issuing JWT tokens.
 
-#### [NEW] [backend/routes/students.js](file:///c:/Users/PRIT/OneDrive/Desktop/Attendence/backend/routes/students.js)
+#### [NEW] [backend/routes/students.js](file:///c:/Users/PRIT/OneDrive/Desktop/Attendance/backend/routes/students.js)
 CRUD endpoints for Student Management. When creating a student, handles generation of secure usernames and passwords.
 
-#### [NEW] [backend/routes/otp.js](file:///c:/Users/PRIT/OneDrive/Desktop/Attendence/backend/routes/otp.js)
+#### [NEW] [backend/routes/otp.js](file:///c:/Users/PRIT/OneDrive/Desktop/Attendance/backend/routes/otp.js)
 Handles OTP generation:
 - Limit to maximum 5 OTPs per day.
 - Generates a 6-digit random code.
 - Stores `generated_time` and `expire_time` (2 minutes).
 
-#### [NEW] [backend/routes/attendance.js](file:///c:/Users/PRIT/OneDrive/Desktop/Attendence/backend/routes/attendance.js)
+#### [NEW] [backend/routes/attendance.js](file:///c:/Users/PRIT/OneDrive/Desktop/Attendance/backend/routes/attendance.js)
 Processes attendance submissions and reports:
 - Validates the provided OTP (checks match and ensures not expired).
 - Validates uniqueness (checks if this student already marked attendance for this OTP).
@@ -96,19 +96,19 @@ Processes attendance submissions and reports:
 
 We will create a React.js single-page application inside the `frontend` directory using Vite. It will feature custom, high-end CSS styling with responsive layouts, animations, and an interactive Leaflet map.
 
-#### [NEW] [frontend/package.json](file:///c:/Users/PRIT/OneDrive/Desktop/Attendence/frontend/package.json)
+#### [NEW] [frontend/package.json](file:///c:/Users/PRIT/OneDrive/Desktop/Attendance/frontend/package.json)
 Configures Vite React app and dependencies: `lucide-react` (icons), `jspdf` and `jspdf-autotable` (PDF export).
 
-#### [NEW] [frontend/src/index.css](file:///c:/Users/PRIT/OneDrive/Desktop/Attendence/frontend/src/index.css)
+#### [NEW] [frontend/src/index.css](file:///c:/Users/PRIT/OneDrive/Desktop/Attendance/frontend/src/index.css)
 Declares the CSS design system: HSL variables for dark glassmorphism gradients, glow animations, card styles, and premium scrollbars.
 
-#### [NEW] [frontend/src/App.jsx](file:///c:/Users/PRIT/OneDrive/Desktop/Attendence/frontend/src/App.jsx)
+#### [NEW] [frontend/src/App.jsx](file:///c:/Users/PRIT/OneDrive/Desktop/Attendance/frontend/src/App.jsx)
 Main router and layout control, matching auth state to route (Admin Dashboard, Student Dashboard, Login).
 
-#### [NEW] [frontend/src/components/Login.jsx](file:///c:/Users/PRIT/OneDrive/Desktop/Attendence/frontend/src/components/Login.jsx)
+#### [NEW] [frontend/src/components/Login.jsx](file:///c:/Users/PRIT/OneDrive/Desktop/Attendance/frontend/src/components/Login.jsx)
 Login screen with credentials validator, custom card glassmorphism effect, and dynamic validation messages.
 
-#### [NEW] [frontend/src/components/AdminDashboard.jsx](file:///c:/Users/PRIT/OneDrive/Desktop/Attendence/frontend/src/components/AdminDashboard.jsx)
+#### [NEW] [frontend/src/components/AdminDashboard.jsx](file:///c:/Users/PRIT/OneDrive/Desktop/Attendance/frontend/src/components/AdminDashboard.jsx)
 Admin layout containing:
 - **Stats Widgets**: Row of widgets showing Total Students, Present Today, Absent Today, OTP Remaining.
 - **Student Manager**: Searchable student list with Add/Edit/Delete actions.
@@ -117,7 +117,7 @@ Admin layout containing:
 - **College Location Configurator**: Latitude/Longitude inputs and a Leaflet-based map integration.
 - **Reports & PDF Exporter**: Dropdown filters (Today, Yesterday, Monthly, Student-wise) and PDF download button.
 
-#### [NEW] [frontend/src/components/StudentDashboard.jsx](file:///c:/Users/PRIT/OneDrive/Desktop/Attendence/frontend/src/components/StudentDashboard.jsx)
+#### [NEW] [frontend/src/components/StudentDashboard.jsx](file:///c:/Users/PRIT/OneDrive/Desktop/Attendance/frontend/src/components/StudentDashboard.jsx)
 Student layout containing:
 - **Attendance Card**: OTP input field, "Get My Location" button, and submit action.
 - **Live Details Grid**: Displays current Lat/Lon coordinates, calculated distance to college, and active status.

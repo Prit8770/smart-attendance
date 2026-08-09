@@ -535,22 +535,27 @@ router.get('/history/student', authenticateJWT, async (req, res) => {
 router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
   const today = getLocalDateString();
   try {
-    const { data: faculties } = await supabase.from('faculty').select('id, name');
+    const [
+      { data: faculties },
+      { data: qrSessions },
+      { data: otps },
+      { data: logs }
+    ] = await Promise.all([
+      supabase.from('faculty').select('id, name'),
+      supabase.from('qr_sessions').select('id, created_by_faculty_id, semester, division'),
+      supabase.from('otp').select('id, generated_by, otp, semester, division'),
+      supabase.from('attendance')
+        .select(`
+          id, time, distance, status, date, qr_session_id, otp_id, device_id,
+          student:student_id (*)
+        `)
+        .eq('date', today)
+        .order('time', { ascending: false })
+    ]);
+
     const facMap = new Map((faculties || []).map(f => [String(f.id), f.name]));
-
-    const { data: qrSessions } = await supabase.from('qr_sessions').select('id, created_by_faculty_id, semester, division');
     const qrMap = new Map((qrSessions || []).map(q => [String(q.id), q]));
-
-    const { data: otps } = await supabase.from('otp').select('id, generated_by, otp, semester, division');
     const otpMap = new Map((otps || []).map(o => [String(o.id), o]));
-
-    const { data: logs } = await supabase.from('attendance')
-      .select(`
-        id, time, distance, status, date, qr_session_id, otp_id, device_id,
-        student:student_id (*)
-      `)
-      .eq('date', today)
-      .order('time', { ascending: false });
 
     let filteredLogs = logs || [];
     if (req.user.role === 'faculty') {

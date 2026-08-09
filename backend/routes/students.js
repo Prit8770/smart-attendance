@@ -29,7 +29,8 @@ router.get('/', authenticateJWT, async (req, res) => {
     return res.status(403).json({ error: 'Access denied' });
   }
   try {
-    const { data: students, error } = await supabase.from('students').select('*');
+    const { data: students, error } = await supabase.from('students')
+      .select('id, enrollment_no, roll_no, division, name, course, semester, mobile, username, plain_password');
     if (error) throw error;
     const safeStudents = (students || []).map(({ password, ...rest }) => rest);
     safeStudents.sort((a, b) => {
@@ -63,7 +64,8 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'All fields are required' });
   }
 
-  if (!/^\d{10}$/.test(String(enrollment_no).trim())) {
+  const cleanEnroll = String(enrollment_no).trim();
+  if (!/^\d{10}$/.test(cleanEnroll)) {
     return res.status(400).json({ error: 'Please enter valid enrollment number' });
   }
 
@@ -72,44 +74,55 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
   }
 
   // Generate username and password
-  const username = enrollment_no.toLowerCase().trim();
+  const username = cleanEnroll.toLowerCase();
   const rawPassword = (customPassword && customPassword.trim() !== '') ? customPassword.trim() : generatePassword();
-  const hashedPassword = bcrypt.hashSync(rawPassword, 10);
+  const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
   try {
-    // Check if enrollment number or username already exists
+    // Check if enrollment number already exists (Fast indexed query)
     const { data: existing } = await supabase.from('students')
       .select('id')
-      .or(`enrollment_no.eq.${enrollment_no},username.eq.${username}`)
+      .eq('enrollment_no', cleanEnroll)
       .maybeSingle();
 
     if (existing) {
-      return res.status(400).json({ error: 'Student with this enrollment number or username already exists' });
+      return res.status(400).json({ error: 'Student with this enrollment number already exists' });
     }
 
     const newStudentObj = {
-      enrollment_no, name, course, semester, mobile, username, password: hashedPassword, plain_password: rawPassword
+      enrollment_no: cleanEnroll,
+      name: String(name).trim(),
+      course: String(course).trim(),
+      semester: String(semester).trim(),
+      mobile: String(mobile).trim(),
+      username,
+      password: hashedPassword,
+      plain_password: rawPassword
     };
     if (roll_no && String(roll_no).trim() !== '') newStudentObj.roll_no = String(roll_no).trim();
-    if (division && String(division).trim() !== '') newStudentObj.division = String(division).trim();
+    if (division && String(division).trim() !== '') newStudentObj.division = String(division).trim().toUpperCase();
 
     const { data: result, error } = await supabase.from('students').insert([newStudentObj]).select().single();
 
     if (error) throw error;
 
+    const returnedStudent = {
+      id: result.id,
+      enrollment_no: cleanEnroll,
+      roll_no: result.roll_no || (roll_no ? String(roll_no).trim() : null),
+      division: result.division || (division ? String(division).trim().toUpperCase() : null),
+      name: String(name).trim(),
+      course: String(course).trim(),
+      semester: String(semester).trim(),
+      mobile: String(mobile).trim(),
+      username,
+      plain_password: rawPassword,
+      generatedPassword: rawPassword // Backward compatibility
+    };
+
     res.status(201).json({
       message: 'Student added successfully',
-      student: {
-        id: result.id,
-        enrollment_no,
-        name,
-        course,
-        semester,
-        mobile,
-        username,
-        plain_password: rawPassword,
-        generatedPassword: rawPassword // Backward compatibility
-      }
+      student: returnedStudent
     });
   } catch (err) {
     console.error('Error adding student:', err);
@@ -141,23 +154,23 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Student not found' });
     }
 
-    let updateObj = { name, course, semester, mobile };
+    let updateObj = { name: String(name).trim(), course: String(course).trim(), semester: String(semester).trim(), mobile: String(mobile).trim() };
     if (student.hasOwnProperty('roll_no') || (roll_no && String(roll_no).trim() !== '')) {
       updateObj.roll_no = (roll_no && String(roll_no).trim() !== '') ? String(roll_no).trim() : null;
     }
     if (student.hasOwnProperty('division') || (division && String(division).trim() !== '')) {
-      updateObj.division = (division && String(division).trim() !== '') ? String(division).trim() : null;
+      updateObj.division = (division && String(division).trim() !== '') ? String(division).trim().toUpperCase() : null;
     }
     let newPassword = null;
 
     if (password && password.trim() !== '') {
       newPassword = password.trim();
-      const hashedPassword = bcrypt.hashSync(newPassword, 10);
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
       updateObj.password = hashedPassword;
       updateObj.plain_password = newPassword;
     } else if (resetPassword) {
       newPassword = generatePassword();
-      const hashedPassword = bcrypt.hashSync(newPassword, 10);
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
       updateObj.password = hashedPassword;
       updateObj.plain_password = newPassword;
     }
@@ -168,11 +181,15 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
     res.json({
       message: 'Student updated successfully',
       student: {
-        id,
-        name,
-        course,
-        semester,
-        mobile,
+        id: student.id,
+        enrollment_no: student.enrollment_no,
+        roll_no: updateObj.roll_no !== undefined ? updateObj.roll_no : student.roll_no,
+        division: updateObj.division !== undefined ? updateObj.division : student.division,
+        name: updateObj.name,
+        course: updateObj.course,
+        semester: updateObj.semester,
+        mobile: updateObj.mobile,
+        username: student.username,
         plain_password: newPassword || student.plain_password,
         generatedPassword: newPassword // Will be null if not reset/modified
       }
@@ -306,7 +323,7 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
   }
 });
 
-// POST bulk delete students
+// POST bulk delete students (Sequential FK-Safe Execution)
 router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
   const { studentIds } = req.body;
 
@@ -315,39 +332,76 @@ router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
   }
 
   try {
-    // Delete attendance records for all specified student IDs first
-    await supabase.from('attendance').delete().in('student_id', studentIds);
-    // Delete students
-    const { error } = await supabase.from('students').delete().in('id', studentIds);
+    const idSet = new Set();
+    studentIds.forEach(id => {
+      idSet.add(id);
+      idSet.add(String(id));
+      if (!isNaN(Number(id))) idSet.add(Number(id));
+    });
+    const allIds = Array.from(idSet);
 
-    if (error) throw error;
+    // 1. Fetch enrollment numbers for targeted students
+    const { data: targetStudents } = await supabase.from('students').select('id, enrollment_no').in('id', allIds);
+    const enrollments = (targetStudents || []).map(s => s.enrollment_no).filter(Boolean);
+
+    // 2. Delete attendance child rows FIRST to respect foreign key constraints
+    try {
+      await supabase.from('attendance').delete().in('student_id', allIds);
+      if (enrollments.length > 0) {
+        await supabase.from('attendance').delete().in('enrollment_no', enrollments);
+      }
+    } catch (attErr) {
+      console.warn('Attendance bulk cleanup warning:', attErr.message);
+    }
+
+    // 3. Delete parent rows from students table
+    const { error: stuErr } = await supabase.from('students').delete().in('id', allIds);
+    if (stuErr) {
+      console.error('Bulk delete student error:', stuErr);
+      return res.status(400).json({ error: stuErr.message || 'Failed to delete selected students.' });
+    }
 
     res.json({ success: true, message: `Successfully deleted ${studentIds.length} student(s).` });
   } catch (err) {
     console.error('Bulk delete error:', err);
-    res.status(500).json({ error: 'Failed to delete selected students.' });
+    res.status(500).json({ error: err.message || 'Failed to delete selected students.' });
   }
 });
 
-// DELETE student
+// DELETE single student (Sequential FK-Safe Execution)
 router.delete('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
 
   try {
-    const { data: student } = await supabase.from('students').select('id').eq('id', id).maybeSingle();
-    if (!student) {
-      return res.status(404).json({ error: 'Student not found' });
+    const idSet = new Set([id, String(id)]);
+    if (!isNaN(Number(id))) idSet.add(Number(id));
+    const targetIds = Array.from(idSet);
+
+    // 1. Fetch student enrollment_no if present
+    const { data: studentObj } = await supabase.from('students').select('id, enrollment_no').in('id', targetIds).maybeSingle();
+    const enrollNo = studentObj ? studentObj.enrollment_no : null;
+
+    // 2. Delete attendance child rows FIRST to avoid foreign key violation
+    try {
+      await supabase.from('attendance').delete().in('student_id', targetIds);
+      if (enrollNo) {
+        await supabase.from('attendance').delete().eq('enrollment_no', enrollNo);
+      }
+    } catch (attErr) {
+      console.warn('Attendance cleanup warning:', attErr.message);
     }
 
-    // Optional: Delete this student's attendance records first to avoid orphan rows
-    await supabase.from('attendance').delete().eq('student_id', id);
-    const { error } = await supabase.from('students').delete().eq('id', id);
-    if (error) throw error;
+    // 3. Delete parent student row from database
+    const { error: stuError } = await supabase.from('students').delete().in('id', targetIds);
+    if (stuError) {
+      console.error('Error deleting student:', stuError);
+      return res.status(400).json({ error: stuError.message || 'Failed to delete student' });
+    }
 
     res.json({ message: 'Student and their attendance history deleted successfully' });
   } catch (err) {
     console.error('Error deleting student:', err);
-    res.status(500).json({ error: 'Failed to delete student' });
+    res.status(500).json({ error: err.message || 'Failed to delete student' });
   }
 });
 

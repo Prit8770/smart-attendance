@@ -46,3 +46,10 @@ CREATE POLICY "Allow backend full access on settings" ON settings FOR ALL USING 
 ALTER TABLE college_location ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "Allow backend full access on college_location" ON college_location;
 CREATE POLICY "Allow backend full access on college_location" ON college_location FOR ALL USING (true) WITH CHECK (true);
+
+-- 9. PERFORMANCE INDEXES
+CREATE INDEX IF NOT EXISTS idx_students_enrollment_no ON students(enrollment_no);
+CREATE INDEX IF NOT EXISTS idx_students_username ON students(username);
+CREATE INDEX IF NOT EXISTS idx_students_semester ON students(semester);
+CREATE INDEX IF NOT EXISTS idx_attendance_date ON attendance(date);
+

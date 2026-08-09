@@ -15,7 +15,12 @@ const requireAdmin = (req, res, next) => {
 // GET college location details
 router.get('/', authenticateJWT, async (req, res) => {
   try {
-    const { data: loc } = await supabase.from('college_location').select('*').limit(1).maybeSingle();
+    const { data: loc } = await supabase.from('college_location')
+      .select('*')
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
     if (!loc) {
       return res.status(404).json({ error: 'College location not configured.' });
     }
@@ -34,29 +39,35 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Latitude, longitude, and radius are required.' });
   }
 
-  try {
-    const { data: existing } = await supabase.from('college_location').select('id').limit(1).maybeSingle();
+  const parsedLat = parseFloat(latitude);
+  const parsedLon = parseFloat(longitude);
+  const parsedRad = parseFloat(radius);
 
-    if (existing) {
+  try {
+    const { data: existingList } = await supabase.from('college_location').select('id');
+
+    if (existingList && existingList.length > 0) {
+      // Update all existing location rows to match new location
+      const ids = existingList.map(e => e.id);
       await supabase.from('college_location').update({
-        latitude: parseFloat(latitude),
-        longitude: parseFloat(longitude),
-        radius: parseFloat(radius)
-      }).eq('id', existing.id);
+        latitude: parsedLat,
+        longitude: parsedLon,
+        radius: parsedRad
+      }).in('id', ids);
       
-      res.json({ message: 'College location updated successfully.', location: { latitude, longitude, radius } });
+      res.json({ message: 'College location updated successfully.', location: { latitude: parsedLat, longitude: parsedLon, radius: parsedRad } });
     } else {
       const { data: result, error } = await supabase.from('college_location').insert([{
-        latitude: parseFloat(latitude),
-        longitude: parseFloat(longitude),
-        radius: parseFloat(radius)
+        latitude: parsedLat,
+        longitude: parsedLon,
+        radius: parsedRad
       }]).select().single();
       
       if (error) throw error;
       
       res.status(201).json({
         message: 'College location configured successfully.',
-        location: { id: result.id, latitude, longitude, radius }
+        location: { id: result.id, latitude: parsedLat, longitude: parsedLon, radius: parsedRad }
       });
     }
   } catch (err) {

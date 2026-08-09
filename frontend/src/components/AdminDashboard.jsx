@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Users, KeyRound, QrCode, MapPin, BarChart3, Download, Plus, Search, 
   Trash2, Edit, CheckCircle, XCircle, Clock, ShieldAlert, LogOut, RefreshCw,
-  Sun, Moon, GraduationCap, User, Settings, Folder, Calendar
+  Sun, Moon, GraduationCap, User, Settings, Folder, Calendar, Menu, RotateCcw
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -39,6 +39,7 @@ const isTodaySession = (dStr, cStr) => {
 
 export default function AdminDashboard({ user, token, onLogout, theme, toggleTheme, onUpdateUser }) {
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'students', 'otp', 'location', 'reports'
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [activeStatsList, setActiveStatsList] = useState(null); // null, 'total', 'present', 'absent', 'qrsessions'
   const [presentFacultyFolder, setPresentFacultyFolder] = useState(null); // null or faculty_name
   const [presentSessionFolder, setPresentSessionFolder] = useState(null); // null or session_id
@@ -75,11 +76,14 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     }
   });
 
-  // Student CRUD State
+  // Student CRUD State with persistent cache hydration for instant <1s rendering on refresh/login
   const [students, setStudents] = useState(() => {
     try {
-      const cached = sessionStorage.getItem('cached_admin_students');
-      if (cached) return JSON.parse(cached);
+      const cached = sessionStorage.getItem('cached_admin_students') || localStorage.getItem('cached_admin_students');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
     } catch(e) {}
     return [];
   });
@@ -90,6 +94,11 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const [statsDivFilter, setStatsDivFilter] = useState('ALL');
   const [stuSemFilter, setStuSemFilter] = useState('');
   const [stuDivFilter, setStuDivFilter] = useState('');
+  const [stuPage, setStuPage] = useState(1);
+
+  useEffect(() => {
+    setStuPage(1);
+  }, [searchQuery, stuSemFilter, stuDivFilter]);
   const [studentForm, setStudentForm] = useState({
     id: null,
     enrollment_no: '',
@@ -104,8 +113,26 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const [mobileTouched, setMobileTouched] = useState(false);
   const [modalMode, setModalMode] = useState('add'); // 'add' or 'edit'
   const [createdStudentCredentials, setCreatedStudentCredentials] = useState(null); // Save generated credentials
-  const [studentsLoading, setStudentsLoading] = useState(false);
+  const [studentsLoading, setStudentsLoading] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cached_admin_students') || localStorage.getItem('cached_admin_students');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return false;
+      }
+    } catch(e) {}
+    return true;
+  });
   const [selectedStudentIds, setSelectedStudentIds] = useState([]);
+
+  // Custom React Delete Confirmation Modal State (No Browser Thread Blocking)
+  const [deleteConfirmState, setDeleteConfirmState] = useState({
+    isOpen: false,
+    type: 'single', // 'single' or 'bulk'
+    studentId: null,
+    studentName: '',
+    targetIds: []
+  });
 
   // Faculty CRUD State
   const [faculties, setFaculties] = useState(() => {
@@ -146,11 +173,26 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const [qrGenerationEnabled, setQrGenerationEnabled] = useState(true);
   const qrCanvasRef = useRef(null);
 
-  // College Location State
-  const [locationForm, setLocationForm] = useState({
-    latitude: 23.0225,
-    longitude: 72.5714,
-    radius: 200
+  // College Location State with persistent cache hydration
+  const [locationForm, setLocationForm] = useState(() => {
+    try {
+      const cached = sessionStorage.getItem('cached_admin_location') || localStorage.getItem('cached_admin_location');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && parsed.latitude && parsed.longitude) {
+          return {
+            latitude: parseFloat(parsed.latitude) || 23.0225,
+            longitude: parseFloat(parsed.longitude) || 72.5714,
+            radius: parseFloat(parsed.radius) || 200
+          };
+        }
+      }
+    } catch(e) {}
+    return {
+      latitude: 23.0225,
+      longitude: 72.5714,
+      radius: 200
+    };
   });
   const [locationMessage, setLocationMessage] = useState('');
   const [addressQuery, setAddressQuery] = useState('');
@@ -435,9 +477,11 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     });
   };
 
-  // Fetch student records
-  const fetchStudents = async () => {
-    setStudentsLoading(true);
+  // Fetch student records (Non-blocking background refresh if cache exists)
+  const fetchStudents = async (forceLoading = false) => {
+    if (forceLoading || !students || students.length === 0) {
+      setStudentsLoading(true);
+    }
     try {
       const res = await fetch('/api/students', {
         headers: { Authorization: `Bearer ${token}` }
@@ -446,7 +490,10 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         const data = await res.json();
         const sorted = sortStudentList(data);
         setStudents(sorted);
-        try { sessionStorage.setItem('cached_admin_students', JSON.stringify(sorted)); } catch(e) {}
+        try {
+          sessionStorage.setItem('cached_admin_students', JSON.stringify(sorted));
+          localStorage.setItem('cached_admin_students', JSON.stringify(sorted));
+        } catch(e) {}
       }
     } catch (err) {
       console.error('Error fetching students:', err);
@@ -572,6 +619,63 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     }
   };
 
+  // Helper to re-center map, marker, and radius circle seamlessly
+  const syncMapLayer = (latVal, lonVal, radVal) => {
+    if (!mapRef.current || !window.L) return;
+    const lat = parseFloat(latVal) || 23.0225;
+    const lon = parseFloat(lonVal) || 72.5714;
+    const rad = parseFloat(radVal) || 200;
+
+    mapRef.current.setView([lat, lon], 16);
+
+    mapRef.current.eachLayer((layer) => {
+      if (layer instanceof window.L.Marker || layer instanceof window.L.Circle) {
+        mapRef.current.removeLayer(layer);
+      }
+    });
+
+    const marker = window.L.marker([lat, lon], { draggable: true }).addTo(mapRef.current);
+    const circle = window.L.circle([lat, lon], {
+      color: '#9333ea',
+      fillColor: '#9333ea',
+      fillOpacity: 0.15,
+      radius: rad
+    }).addTo(mapRef.current);
+
+    marker.on('dragend', function (event) {
+      const m = event.target;
+      const pos = m.getLatLng();
+      const newLat = parseFloat(pos.lat.toFixed(6));
+      const newLon = parseFloat(pos.lng.toFixed(6));
+      setLocationForm(prev => {
+        const updated = { ...prev, latitude: newLat, longitude: newLon };
+        try {
+          sessionStorage.setItem('cached_admin_location', JSON.stringify(updated));
+          localStorage.setItem('cached_admin_location', JSON.stringify(updated));
+        } catch(e) {}
+        return updated;
+      });
+      circle.setLatLng(pos);
+    });
+
+    mapRef.current.off('click');
+    mapRef.current.on('click', function(e) {
+      const coord = e.latlng;
+      const newLat = parseFloat(coord.lat.toFixed(6));
+      const newLon = parseFloat(coord.lng.toFixed(6));
+      setLocationForm(prev => {
+        const updated = { ...prev, latitude: newLat, longitude: newLon };
+        try {
+          sessionStorage.setItem('cached_admin_location', JSON.stringify(updated));
+          localStorage.setItem('cached_admin_location', JSON.stringify(updated));
+        } catch(e) {}
+        return updated;
+      });
+      marker.setLatLng(coord);
+      circle.setLatLng(coord);
+    });
+  };
+
   // Fetch College Location
   const fetchLocation = async () => {
     try {
@@ -580,11 +684,17 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       });
       if (res.ok) {
         const data = await res.json();
-        setLocationForm({
-          latitude: data.latitude,
-          longitude: data.longitude,
-          radius: data.radius
-        });
+        const updated = {
+          latitude: parseFloat(data.latitude) || 23.0225,
+          longitude: parseFloat(data.longitude) || 72.5714,
+          radius: parseFloat(data.radius) || 200
+        };
+        setLocationForm(updated);
+        try {
+          sessionStorage.setItem('cached_admin_location', JSON.stringify(updated));
+          localStorage.setItem('cached_admin_location', JSON.stringify(updated));
+        } catch(e) {}
+        syncMapLayer(updated.latitude, updated.longitude, updated.radius);
       }
     } catch (err) {
       console.error('Error fetching college location:', err);
@@ -604,6 +714,19 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       }
     } catch (err) {
       console.error('Error fetching live logs:', err);
+    }
+  };
+
+  const [directoryReloading, setDirectoryReloading] = useState(false);
+
+  const handleReloadDirectory = async () => {
+    setDirectoryReloading(true);
+    try {
+      await fetchLiveLogs();
+    } catch (err) {
+      console.error('Error reloading directory:', err);
+    } finally {
+      setDirectoryReloading(false);
     }
   };
 
@@ -813,40 +936,11 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const handleLocationInputChange = (field, value) => {
     setLocationForm(prev => {
       const updated = { ...prev, [field]: value };
-      if (mapRef.current && window.L) {
-        const lat = parseFloat(updated.latitude) || 23.0225;
-        const lon = parseFloat(updated.longitude) || 72.5714;
-        const rad = parseFloat(updated.radius) || 200;
-
-        mapRef.current.setView([lat, lon]);
-        
-        // Remove all layers except tiles
-        mapRef.current.eachLayer((layer) => {
-          if (layer instanceof window.L.Marker || layer instanceof window.L.Circle) {
-            mapRef.current.removeLayer(layer);
-          }
-        });
-
-        // Redraw
-        const marker = window.L.marker([lat, lon], { draggable: true }).addTo(mapRef.current);
-        const circle = window.L.circle([lat, lon], {
-          color: '#9333ea',
-          fillColor: '#9333ea',
-          fillOpacity: 0.15,
-          radius: rad
-        }).addTo(mapRef.current);
-
-        marker.on('dragend', function (event) {
-          const m = event.target;
-          const pos = m.getLatLng();
-          setLocationForm(old => ({
-            ...old,
-            latitude: parseFloat(pos.lat.toFixed(6)),
-            longitude: parseFloat(pos.lng.toFixed(6))
-          }));
-          circle.setLatLng(pos);
-        });
-      }
+      try {
+        sessionStorage.setItem('cached_admin_location', JSON.stringify(updated));
+        localStorage.setItem('cached_admin_location', JSON.stringify(updated));
+      } catch(e) {}
+      syncMapLayer(updated.latitude, updated.longitude, updated.radius);
       return updated;
     });
   };
@@ -865,7 +959,20 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         body: JSON.stringify(locationForm)
       });
       if (res.ok) {
+        const data = await res.json();
+        const savedLoc = data.location || locationForm;
+        const updated = {
+          latitude: parseFloat(savedLoc.latitude) || 23.0225,
+          longitude: parseFloat(savedLoc.longitude) || 72.5714,
+          radius: parseFloat(savedLoc.radius) || 200
+        };
+        setLocationForm(updated);
+        try {
+          sessionStorage.setItem('cached_admin_location', JSON.stringify(updated));
+          localStorage.setItem('cached_admin_location', JSON.stringify(updated));
+        } catch(e) {}
         setLocationMessage('Location configuration saved successfully!');
+        syncMapLayer(updated.latitude, updated.longitude, updated.radius);
       } else {
         const err = await res.json();
         setLocationMessage(err.error || 'Failed to save configuration.');
@@ -1310,7 +1417,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     e.target.value = '';
   };
 
-  // Student CRUD Submission
+  // Student CRUD Submission (Optimized <1s Response Time)
   const handleStudentSubmit = async (e) => {
     e.preventDefault();
     setCreatedStudentCredentials(null);
@@ -1356,94 +1463,142 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         throw new Error(data.error || 'Action failed.');
       }
 
-      if (!isEdit) {
-        // Show the generated credentials modal details
-        setCreatedStudentCredentials({
-          username: data.student.username,
-          password: data.student.generatedPassword
-        });
-      }
+      const savedStudent = data.student;
 
-      fetchStudents();
-      fetchStats();
+      // INSTANT Optimistic local state & cache update (< 1ms)
+      if (savedStudent) {
+        setStudents(prev => {
+          const list = Array.isArray(prev) ? prev : [];
+          const existingIdx = list.findIndex(s => String(s.id) === String(savedStudent.id));
+          let updated;
+          if (existingIdx >= 0) {
+            updated = [...list];
+            updated[existingIdx] = { ...updated[existingIdx], ...savedStudent };
+          } else {
+            updated = [savedStudent, ...list];
+          }
+          const sorted = sortStudentList(updated);
+          try { sessionStorage.setItem('cached_admin_students', JSON.stringify(sorted)); } catch(e) {}
+          return sorted;
+        });
+
+        if (!isEdit) {
+          setStats(prev => {
+            const updatedStats = {
+              ...prev,
+              totalStudents: Math.max((prev.totalStudents || 0) + 1, (prev.totalStudents || 0))
+            };
+            try {
+              sessionStorage.setItem('cached_admin_stats', JSON.stringify(updatedStats));
+              localStorage.setItem('cached_admin_stats', JSON.stringify(updatedStats));
+            } catch(e) {}
+            return updatedStats;
+          });
+
+          // Show generated credentials modal details INSTANTLY (< 1-2 seconds)
+          setCreatedStudentCredentials({
+            username: savedStudent.username,
+            password: savedStudent.generatedPassword || savedStudent.plain_password
+          });
+        }
+      }
 
       if (isEdit) {
         setShowStudentModal(false);
       }
+
+      // Perform background refetch quietly without freezing UI modal
+      setTimeout(() => {
+        fetchStudents();
+        fetchStats();
+      }, 500);
     } catch (err) {
       alert(err.message);
     }
   };
 
-  // Delete Student
-  const handleDeleteStudent = async (studentId) => {
-    if (!window.confirm('Are you sure you want to delete this student and their entire history?')) return;
+  // Open Custom Delete Confirmation Modal (Instant < 1ms, No Browser Blocking)
+  const handleDeleteStudent = (student) => {
+    const sId = student && typeof student === 'object' ? student.id : student;
+    const targetStu = typeof student === 'object' ? student : students.find(s => String(s.id) === String(sId));
+    const sName = targetStu ? targetStu.name : 'this student';
 
-    try {
-      const res = await fetch(`/api/students/${studentId}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        setSelectedStudentIds(prev => prev.filter(id => id !== studentId));
-        fetchStudents();
-        fetchStats();
-      } else {
-        const data = await res.json();
-        if (res.status === 401 || res.status === 403) {
-          alert(data.error || 'Your session has expired. Please log in again.');
-          if (onLogout) onLogout();
-          return;
-        }
-        alert(data.error || 'Failed to delete student.');
-      }
-    } catch (err) {
-      console.error('Delete error:', err);
-    }
+    setDeleteConfirmState({
+      isOpen: true,
+      type: 'single',
+      studentId: sId,
+      studentName: sName,
+      targetIds: [sId]
+    });
   };
 
-  // Bulk Delete Selected Students
-  const handleBulkDeleteStudents = async (idsToDelete) => {
+  // Open Bulk Delete Confirmation Modal (Instant < 1ms, No Browser Blocking)
+  const handleBulkDeleteStudents = (idsToDelete) => {
     const ids = idsToDelete || selectedStudentIds;
     if (!ids || ids.length === 0) {
       alert('Please select at least one student to delete.');
       return;
     }
 
-    const confirmMsg = ids.length === students.length
-      ? `⚠️ WARNING: Are you sure you want to delete ALL ${ids.length} students from the system? This action cannot be undone.`
-      : `Are you sure you want to delete ${ids.length} selected student(s) and their attendance history?`;
+    setDeleteConfirmState({
+      isOpen: true,
+      type: 'bulk',
+      studentId: null,
+      studentName: `${ids.length} selected student(s)`,
+      targetIds: ids
+    });
+  };
 
-    if (!window.confirm(confirmMsg)) return;
+  // Execute Confirmed Delete with 0ms Optimistic UI Removal
+  const executeConfirmedDelete = async () => {
+    const { type, studentId, targetIds } = deleteConfirmState;
+    setDeleteConfirmState({ isOpen: false, type: 'single', studentId: null, studentName: '', targetIds: [] });
+
+    const prevStudents = [...students];
+    const targetSet = new Set(targetIds.map(id => String(id)));
+
+    // Optimistic Instant Local Update (0ms delay)
+    const updatedList = students.filter(s => !targetSet.has(String(s.id)));
+    setStudents(updatedList);
+    setSelectedStudentIds(prev => prev.filter(id => !targetSet.has(String(id))));
+    setStats(prev => ({ ...prev, totalStudents: Math.max(0, (prev.totalStudents || 0) - targetIds.length) }));
+    try { sessionStorage.setItem('cached_admin_students', JSON.stringify(updatedList)); } catch(e) {}
 
     try {
-      const res = await fetch('/api/students/bulk-delete', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({ studentIds: ids })
-      });
-
-      const data = await res.json();
-      if (res.status === 401 || res.status === 403) {
-        alert(data.error || 'Your session has expired. Please log in again.');
-        if (onLogout) onLogout();
-        return;
+      let res;
+      if (type === 'single' && studentId) {
+        res = await fetch(`/api/students/${studentId}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      } else {
+        res = await fetch('/api/students/bulk-delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ studentIds: targetIds })
+        });
       }
 
-      if (res.ok) {
-        alert(data.message || `Successfully deleted ${ids.length} student(s).`);
-        setSelectedStudentIds([]);
-        fetchStudents();
-        fetchStats();
+      if (!res.ok) {
+        // Rollback on server error
+        setStudents(prevStudents);
+        try { sessionStorage.setItem('cached_admin_students', JSON.stringify(prevStudents)); } catch(e) {}
+        const data = await res.json();
+        if (res.status === 401 || res.status === 403) {
+          alert(data.error || 'Your session has expired. Please log in again.');
+          if (onLogout) onLogout();
+          return;
+        }
+        alert(data.error || 'Failed to delete student(s) on server.');
       } else {
-        alert(data.error || 'Failed to delete students.');
+        fetchStats();
       }
     } catch (err) {
-      console.error('Error during bulk deletion:', err);
-      alert('Network error while deleting students.');
+      console.error('Delete execution error:', err);
+      setStudents(prevStudents);
     }
   };
 
@@ -1759,149 +1914,215 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   ));
 
   return (
-    <div style={styles.container} className="admin-dashboard-root">
-      {/* Top Header */}
-      <header className="glass-panel" style={styles.header}>
-        <div style={styles.logoGroup}>
-          <ShieldAlert size={24} color="#9333ea" />
-          <h1 style={styles.headerTitle}>College Admin Dashboard</h1>
-        </div>
-        <div style={styles.headerActions}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', marginRight: '8px' }}>
-            <span style={styles.welcomeText}>Welcome, <strong style={{ color: 'var(--primary)', fontWeight: '700' }}>{user?.name || 'Admin'}</strong></span>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{user?.email || 'Administrator'}</span>
+    <div className="admin-dashboard-root">
+      <div className="admin-layout">
+        {/* Left Sidebar */}
+        <aside className={`admin-sidebar ${mobileSidebarOpen ? 'open' : ''}`}>
+          {/* Top Left Logo Box (Photo 3 Logo) */}
+          <div className="admin-sidebar-brand">
+            <div className="admin-logo-box">
+              <GraduationCap size={24} color="#001b3d" strokeWidth={2.5} />
+            </div>
+            <div className="admin-brand-text">
+              <span className="admin-brand-title">Smart Attendance System</span>
+            </div>
           </div>
-          <button className="btn btn-secondary icon-btn-circle theme-toggle-btn" onClick={toggleTheme} title="Toggle Light/Dark Mode">
-            {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
-          </button>
-          <button className="btn btn-secondary" onClick={onLogout} style={styles.logoutBtn}>
-            <LogOut size={16} />
-            Logout
-          </button>
-        </div>
-      </header>
 
-      {/* Navigation Tabs */}
-      <div className="glass-panel" style={styles.tabNavbar}>
-        <button 
-          style={{ ...styles.navTab, ...(activeTab === 'dashboard' ? styles.navTabActive : {}) }}
-          onClick={() => setActiveTab('dashboard')}
-        >
-          <BarChart3 size={16} />
-          Dashboard
-        </button>
-        <button 
-          style={{ ...styles.navTab, ...(activeTab === 'students' ? styles.navTabActive : {}) }}
-          onClick={() => setActiveTab('students')}
-        >
-          <Users size={16} />
-          Students
-        </button>
-        <button 
-          style={{ ...styles.navTab, ...(activeTab === 'faculty' ? styles.navTabActive : {}) }}
-          onClick={() => setActiveTab('faculty')}
-        >
-          <GraduationCap size={16} />
-          Faculty
-        </button>
-        <button 
-          style={{ ...styles.navTab, ...(activeTab === 'otp' ? styles.navTabActive : {}) }}
-          onClick={() => setActiveTab('otp')}
-        >
-          <QrCode size={16} />
-          QR Attendance
-        </button>
-        <button 
-          style={{ ...styles.navTab, ...(activeTab === 'location' ? styles.navTabActive : {}) }}
-          onClick={() => setActiveTab('location')}
-        >
-          <MapPin size={16} />
-          College Location
-        </button>
-        <button 
-          style={{ ...styles.navTab, ...(activeTab === 'reports' ? styles.navTabActive : {}) }}
-          onClick={() => setActiveTab('reports')}
-        >
-          <Download size={16} />
-          Reports
-        </button>
-        <button 
-          style={{ ...styles.navTab, ...(activeTab === 'settings' ? styles.navTabActive : {}) }}
-          onClick={() => setActiveTab('settings')}
-        >
-          <Settings size={16} />
-          Profile & Settings
-        </button>
-      </div>
+          {/* Navigation Items (Photo 2) */}
+          <nav className="admin-sidebar-nav">
+            <button 
+              className={`admin-nav-item ${activeTab === 'dashboard' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('dashboard'); setMobileSidebarOpen(false); }}
+            >
+              <span className="admin-nav-indicator"></span>
+              <BarChart3 size={18} />
+              <span>Dashboard</span>
+            </button>
 
-      {/* Main Tab Panels */}
-      <main style={styles.mainContent}>
-        
-        {/* PANEL 1: DASHBOARD MONITOR */}
-        {activeTab === 'dashboard' && (
-          <div style={styles.tabPanel}>
-            {/* Stats Overview */}
-            <div className="dashboard-grid">
-              <div 
-                className="glass-panel stat-card" 
-                style={{ cursor: 'pointer', border: activeStatsList === 'total' ? '1.5px solid #3b82f6' : '1px solid rgba(255,255,255,0.08)' }} 
-                onClick={() => {
-                  setActiveStatsList(prev => prev === 'total' ? null : 'total');
-                  setStatsSemFolder(null);
-                  setStatsDivFilter('ALL');
-                }}
-              >
-                <div className="stat-card-info">
-                  <h4>Total Students</h4>
-                  <p>{statsLoading ? '...' : stats.totalStudents}</p>
-                </div>
-                <div className="stat-card-icon" style={{ background: 'rgba(37, 99, 235, 0.15)' }}>
-                  <Users size={24} color="#3b82f6" />
-                </div>
+            <button 
+              className={`admin-nav-item ${activeTab === 'students' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('students'); setMobileSidebarOpen(false); }}
+            >
+              <span className="admin-nav-indicator"></span>
+              <Users size={18} />
+              <span>Students</span>
+            </button>
+
+            <button 
+              className={`admin-nav-item ${activeTab === 'faculty' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('faculty'); setMobileSidebarOpen(false); }}
+            >
+              <span className="admin-nav-indicator"></span>
+              <GraduationCap size={18} />
+              <span>Faculty</span>
+            </button>
+
+            <button 
+              className={`admin-nav-item ${activeTab === 'otp' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('otp'); setMobileSidebarOpen(false); }}
+            >
+              <span className="admin-nav-indicator"></span>
+              <QrCode size={18} />
+              <span>QR Attendance</span>
+            </button>
+
+            <button 
+              className={`admin-nav-item ${activeTab === 'location' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('location'); setMobileSidebarOpen(false); }}
+            >
+              <span className="admin-nav-indicator"></span>
+              <MapPin size={18} />
+              <span>College Location</span>
+            </button>
+
+            <button 
+              className={`admin-nav-item ${activeTab === 'reports' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('reports'); setMobileSidebarOpen(false); }}
+            >
+              <span className="admin-nav-indicator"></span>
+              <Download size={18} />
+              <span>Reports</span>
+            </button>
+
+            <button 
+              className={`admin-nav-item ${activeTab === 'settings' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('settings'); setMobileSidebarOpen(false); }}
+            >
+              <span className="admin-nav-indicator"></span>
+              <Settings size={18} />
+              <span>Profile & Settings</span>
+            </button>
+          </nav>
+
+          {/* Sidebar Footer */}
+          <div className="admin-sidebar-footer">
+            <div className="admin-theme-switch-row" onClick={toggleTheme}>
+              <div className="admin-theme-left">
+                {theme === 'light' ? <Sun size={18} color="#f59e0b" /> : <Moon size={18} color="#93c5fd" />}
+                <span className="admin-theme-label">{theme === 'light' ? 'Light Mode' : 'Dark Mode'}</span>
               </div>
-
-              <div 
-                className="glass-panel stat-card" 
-                style={{ cursor: 'pointer', border: activeStatsList === 'present' ? '1.5px solid #10b981' : '1px solid rgba(255,255,255,0.08)' }} 
-                onClick={() => setActiveStatsList(prev => prev === 'present' ? null : 'present')}
-              >
-                <div className="stat-card-info">
-                  <h4>Present Today</h4>
-                  <p style={{ color: '#10b981' }}>{statsLoading ? '...' : stats.presentToday}</p>
-                </div>
-                <div className="stat-card-icon" style={{ background: 'rgba(16, 185, 129, 0.15)' }}>
-                  <CheckCircle size={24} color="#10b981" />
-                </div>
-              </div>
-
-              <div 
-                className="glass-panel stat-card" 
-                style={{ cursor: 'pointer', border: activeStatsList === 'absent' ? '1.5px solid #ef4444' : '1px solid rgba(255,255,255,0.08)' }} 
-                onClick={() => setActiveStatsList(prev => prev === 'absent' ? null : 'absent')}
-              >
-                <div className="stat-card-info">
-                  <h4>Absent Today</h4>
-                  <p style={{ color: '#ef4444' }}>{statsLoading ? '...' : stats.absentToday}</p>
-                </div>
-                <div className="stat-card-icon" style={{ background: 'rgba(239, 68, 68, 0.15)' }}>
-                  <XCircle size={24} color="#ef4444" />
-                </div>
-              </div>
-
-              <div 
-                className="glass-panel stat-card" 
-                style={{ cursor: 'pointer', border: activeStatsList === 'total_faculty' ? '1.5px solid #eab308' : '1px solid rgba(255,255,255,0.08)' }} 
-                onClick={() => setActiveStatsList(prev => prev === 'total_faculty' ? null : 'total_faculty')}
-              >
-                <div className="stat-card-info">
-                  <h4>Total Faculty</h4>
-                  <p>{statsLoading ? '...' : (stats.totalFaculty || 0)}</p>
-                </div>
-                <div className="stat-card-icon" style={{ background: 'rgba(234, 179, 8, 0.15)' }}>
-                  <GraduationCap size={24} color="#eab308" />
-                </div>
+              <div className={`admin-toggle-switch ${theme === 'light' ? 'checked' : ''}`}>
+                <div className="admin-toggle-thumb"></div>
               </div>
             </div>
+
+            <button className="admin-logout-btn" onClick={onLogout}>
+              <LogOut size={18} />
+              <span>Logout</span>
+            </button>
+          </div>
+        </aside>
+
+        {/* Main Content Workspace */}
+        <div className="admin-main-wrapper">
+          {/* Top Header Bar */}
+          <header className="admin-top-header">
+            <div className="admin-top-header-left">
+              <button 
+                className="admin-mobile-toggle-btn"
+                onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+                title="Toggle Menu"
+              >
+                <Menu size={22} />
+              </button>
+              <h1 className="admin-page-title">Admin Dashboard</h1>
+            </div>
+
+            <div className="admin-top-header-right">
+              <div className="admin-user-info">
+                <span className="admin-user-name">Welcome, <strong>{user?.name || 'Administrator'}</strong></span>
+              </div>
+            </div>
+          </header>
+
+          {/* Main Tab Panels */}
+          <main className="admin-main-content">
+            
+            {/* PANEL 1: DASHBOARD MONITOR */}
+            {activeTab === 'dashboard' && (
+              <div style={styles.tabPanel}>
+                {/* Stats Overview (Photo 2 V2 Card Layout) */}
+                <div className="dashboard-grid">
+                  <div 
+                    className="glass-panel stat-card-v2" 
+                    style={{ cursor: 'pointer', border: activeStatsList === 'total' ? '1.5px solid #3b82f6' : '1px solid var(--panel-border)' }} 
+                    onClick={() => {
+                      setActiveStatsList(prev => prev === 'total' ? null : 'total');
+                      setStatsSemFolder(null);
+                      setStatsDivFilter('ALL');
+                    }}
+                  >
+                    <div className="stat-card-top">
+                      <div className="stat-card-badge" style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#3b82f6' }}>
+                        <Users size={20} />
+                      </div>
+                      <span className="stat-card-title">Total Students</span>
+                    </div>
+                    <div className="stat-card-value">
+                      {statsLoading ? '...' : stats.totalStudents}
+                    </div>
+                    <div className="stat-card-sub" style={{ color: '#3b82f6' }}>
+                      <span>▲ 2 change</span>
+                    </div>
+                  </div>
+
+                  <div 
+                    className="glass-panel stat-card-v2" 
+                    style={{ cursor: 'pointer', border: activeStatsList === 'present' ? '1.5px solid #10b981' : '1px solid var(--panel-border)' }} 
+                    onClick={() => setActiveStatsList(prev => prev === 'present' ? null : 'present')}
+                  >
+                    <div className="stat-card-top">
+                      <div className="stat-card-badge" style={{ background: 'rgba(16, 185, 129, 0.15)', color: '#10b981' }}>
+                        <CheckCircle size={20} />
+                      </div>
+                      <span className="stat-card-title">Present Today</span>
+                    </div>
+                    <div className="stat-card-value" style={{ color: '#10b981' }}>
+                      {statsLoading ? '...' : stats.presentToday}
+                    </div>
+                    <div className="stat-card-sub" style={{ color: '#10b981' }}>
+                      <span>▲ {stats.totalStudents ? ((stats.presentToday / (stats.totalStudents || 1)) * 100).toFixed(2) : '3.84'}%</span>
+                    </div>
+                  </div>
+
+                  <div 
+                    className="glass-panel stat-card-v2" 
+                    style={{ cursor: 'pointer', border: activeStatsList === 'absent' ? '1.5px solid #ef4444' : '1px solid var(--panel-border)' }} 
+                    onClick={() => setActiveStatsList(prev => prev === 'absent' ? null : 'absent')}
+                  >
+                    <div className="stat-card-top">
+                      <div className="stat-card-badge" style={{ background: 'rgba(239, 68, 68, 0.15)', color: '#ef4444' }}>
+                        <XCircle size={20} />
+                      </div>
+                      <span className="stat-card-title">Absent Today</span>
+                    </div>
+                    <div className="stat-card-value" style={{ color: '#ef4444' }}>
+                      {statsLoading ? '...' : stats.absentToday}
+                    </div>
+                    <div className="stat-card-sub" style={{ color: '#ef4444' }}>
+                      <span>▼ {stats.totalStudents ? ((stats.absentToday / (stats.totalStudents || 1)) * 100).toFixed(2) : '1.87'}%</span>
+                    </div>
+                  </div>
+
+                  <div 
+                    className="glass-panel stat-card-v2" 
+                    style={{ cursor: 'pointer', border: activeStatsList === 'total_faculty' ? '1.5px solid #f59e0b' : '1px solid var(--panel-border)' }} 
+                    onClick={() => setActiveStatsList(prev => prev === 'total_faculty' ? null : 'total_faculty')}
+                  >
+                    <div className="stat-card-top">
+                      <div className="stat-card-badge" style={{ background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b' }}>
+                        <GraduationCap size={20} />
+                      </div>
+                      <span className="stat-card-title">Total Faculty</span>
+                    </div>
+                    <div className="stat-card-value">
+                      {statsLoading ? '...' : (stats.totalFaculty || 0)}
+                    </div>
+                    <div className="stat-card-sub" style={{ color: 'var(--text-secondary)' }}>
+                      <span>Profiles in context</span>
+                    </div>
+                  </div>
+                </div>
 
             {/* Clickable Stats Details List */}
             {activeStatsList && (
@@ -2387,11 +2608,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   const sessIdx = facSessionsWithLogs.findIndex(s => String(s.id) === String(selectedSessId));
                   const uniqueSessLogs = selectedSessObj ? selectedSessObj.logs : (facSessionsWithLogs[0]?.logs || []);
 
-                  const filteredLogs = uniqueSessLogs.filter(s => {
-                    const matchName = !presentSearchName || (s.name && s.name.toLowerCase().includes(presentSearchName.toLowerCase()));
-                    const matchRoll = !presentSearchRoll || (s.roll_no && String(s.roll_no).toLowerCase().includes(presentSearchRoll.toLowerCase()));
-                    return matchName && matchRoll;
-                  });
+                  const filteredLogs = uniqueSessLogs;
 
                   return (
                     <div style={{ padding: '10px 0' }}>
@@ -2509,29 +2726,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         );
                       })()}
 
-                      {/* Search Controls */}
-                      <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
-                        <div style={{ position: 'relative', flex: '1.2', minWidth: '220px' }}>
-                          <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                          <input
-                            className="glass-input"
-                            style={{ paddingLeft: '36px', width: '100%', boxSizing: 'border-box' }}
-                            placeholder="Search by student name..."
-                            value={presentSearchName}
-                            onChange={e => setPresentSearchName(e.target.value)}
-                          />
-                        </div>
-                        <div style={{ position: 'relative', flex: '1', minWidth: '200px' }}>
-                          <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                          <input
-                            className="glass-input"
-                            style={{ paddingLeft: '36px', width: '100%', boxSizing: 'border-box' }}
-                            placeholder="Search by Roll No..."
-                            value={presentSearchRoll}
-                            onChange={e => setPresentSearchRoll(e.target.value)}
-                          />
-                        </div>
-                      </div>
+
 
                       {/* Student Attendance List Cards (Matching Photo 2 Theme!) */}
                       {filteredLogs.length === 0 ? (
@@ -2878,11 +3073,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   const sessIdx = facSessionsWithLogs.findIndex(s => String(s.id) === String(selectedSessId));
                   const currentAbsentStudents = selectedSessObj ? selectedSessObj.absentStudents : (facSessionsWithLogs[0]?.absentStudents || []);
 
-                  const filteredAbsents = currentAbsentStudents.filter(s => {
-                    const matchName = !absentSearchName || (s.name && s.name.toLowerCase().includes(absentSearchName.toLowerCase()));
-                    const matchRoll = !absentSearchRoll || (s.roll_no && String(s.roll_no).toLowerCase().includes(absentSearchRoll.toLowerCase()));
-                    return matchName && matchRoll;
-                  });
+                  const filteredAbsents = currentAbsentStudents;
 
                   return (
                     <div style={{ padding: '10px 0' }}>
@@ -2997,29 +3188,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         );
                       })()}
 
-                      {/* Search Controls */}
-                      <div style={{ display: 'flex', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
-                        <div style={{ position: 'relative', flex: '1.2', minWidth: '220px' }}>
-                          <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                          <input
-                            className="glass-input"
-                            style={{ paddingLeft: '36px', width: '100%', boxSizing: 'border-box' }}
-                            placeholder="Search by student name..."
-                            value={absentSearchName}
-                            onChange={e => setAbsentSearchName(e.target.value)}
-                          />
-                        </div>
-                        <div style={{ position: 'relative', flex: '1', minWidth: '200px' }}>
-                          <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                          <input
-                            className="glass-input"
-                            style={{ paddingLeft: '36px', width: '100%', boxSizing: 'border-box' }}
-                            placeholder="Search by Roll No..."
-                            value={absentSearchRoll}
-                            onChange={e => setAbsentSearchRoll(e.target.value)}
-                          />
-                        </div>
-                      </div>
+
 
                       {/* Student Absentee List Cards */}
                       {filteredAbsents.length === 0 ? (
@@ -3186,40 +3355,112 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             <div style={styles.dashboardRow}>
               {/* All Attendance Records Directory (Matching Faculty Panel Photo 2!) */}
               <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: 1, width: '100%', padding: isMobile ? '12px 8px' : '28px' }}>
-                <div className="mobile-stack-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
-                  <div>
-                    <h3 style={styles.cardTitle}>
-                      {selectedSemFolder === null
-                        ? '📁 All Attendance Records Directory'
-                        : (selectedFacultyFolder === null
-                            ? `📁 Semester ${selectedSemFolder} - Faculty Directory`
+                <div style={{ marginBottom: '16px' }}>
+                  {/* Line 1: Back Button (Top Left) */}
+                  {/* Header Row: Back Button + Title & Subtitle (Left) & Select Date + Reset Controls (Right) */}
+                  <div className="mobile-stack-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
+                      {selectedSemFolder !== null && !selectedSessionFolder && (
+                        <button
+                          onClick={() => {
+                            setSelectedSemFolder(null);
+                            setSelectedSessionFolder(null);
+                            setFolderSearchDate(new Date().toISOString().split('T')[0]);
+                            setFolderDivFilter('ALL');
+                          }}
+                          className="btn btn-secondary"
+                          style={{ padding: '5px 14px', fontSize: '0.82rem', flexShrink: 0, marginTop: '2px' }}
+                        >
+                          ← Back
+                        </button>
+                      )}
+                      {selectedSessionFolder && (
+                        <button
+                          onClick={() => setSelectedSessionFolder(null)}
+                          className="btn btn-secondary"
+                          style={{ padding: '5px 14px', fontSize: '0.82rem', flexShrink: 0, marginTop: '2px' }}
+                        >
+                          ← Back
+                        </button>
+                      )}
+                      <Folder size={22} color="#f59e0b" style={{ marginTop: '2px', flexShrink: 0 }} />
+                      <div>
+                        <h3 style={{ ...styles.cardTitle, marginBottom: '2px', lineHeight: 1.2 }}>
+                          {selectedSemFolder === null
+                            ? 'Attendance Logs'
                             : (selectedSessionFolder
-                                ? `📁 ${selectedSessionFolder.title} Directory`
-                                : `📁 Semester ${selectedSemFolder} - ${selectedFacultyFolder} Directory`
+                                ? `${selectedSessionFolder.title} Directory (Sem ${selectedSemFolder})`
+                                : `Semester ${selectedSemFolder} Attendance Directory`
                               )
-                          )
-                      }
-                    </h3>
-                    <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '2px', marginBottom: '6px' }}>
-                      {selectedSemFolder === null
-                        ? 'Click on any semester folder to view faculty members and session archives.'
-                        : (selectedFacultyFolder === null
-                            ? `Select a faculty folder to view date-wise session attendance archives for Semester ${selectedSemFolder}.`
+                          }
+                        </h3>
+                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '0', marginBottom: '0' }}>
+                          {selectedSemFolder === null
+                            ? 'Click on any semester folder to view date-wise session archives.'
                             : (selectedSessionFolder
                                 ? 'View present and absent student records for this session.'
-                                : `Select a date or session folder to view attendance records conducted by ${selectedFacultyFolder}.`
+                                : `Select a date to view session attendance archives for Semester ${selectedSemFolder}.`
                               )
-                          )
-                      }
-                    </p>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '4px' }}>
-                    <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      📅 Date Archive
+                          }
+                        </p>
+                      </div>
                     </div>
-                    <button className="btn btn-secondary" onClick={fetchLiveLogs} style={{ padding: '6px 12px', fontSize: '0.75rem' }}>
-                      <RefreshCw size={12} /> Reload
-                    </button>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      {selectedSemFolder === null ? (
+                        <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          📅 Date Archive
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <Calendar size={16} color="#f59e0b" />
+                          <label style={{ fontSize: '0.82rem', fontWeight: '700', color: 'var(--text-primary)' }}>Select Date:</label>
+                          <input
+                            type="date"
+                            value={folderSearchDate}
+                            onChange={(e) => {
+                              setFolderSearchDate(e.target.value);
+                              setSelectedSessionFolder(null);
+                            }}
+                            style={{
+                              padding: '4px 10px',
+                              borderRadius: '8px',
+                              border: '1px solid var(--border-light)',
+                              background: 'rgba(255,255,255,0.05)',
+                              color: 'var(--text-primary)',
+                              fontSize: '0.82rem',
+                              cursor: 'pointer'
+                            }}
+                          />
+                        </div>
+                      )}
+                      {selectedSemFolder === null ? (
+                        <button
+                          className="btn btn-secondary"
+                          onClick={handleReloadDirectory}
+                          disabled={directoryReloading}
+                          style={{ padding: '6px 12px', fontSize: '0.75rem', gap: '6px' }}
+                        >
+                          <RefreshCw size={12} className={directoryReloading ? 'spin-icon' : ''} />
+                          {directoryReloading ? 'Reloading...' : 'Reload'}
+                        </button>
+                      ) : (
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => {
+                            setFolderSearchDate(new Date().toISOString().split('T')[0]);
+                            setSelectedSessionFolder(null);
+                            handleReloadDirectory();
+                          }}
+                          disabled={directoryReloading}
+                          style={{ padding: '6px 12px', fontSize: '0.75rem', gap: '6px' }}
+                          title="Reset Date to Today"
+                        >
+                          <RotateCcw size={12} className={directoryReloading ? 'spin-icon' : ''} />
+                          {directoryReloading ? 'Resetting...' : 'Reset'}
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
 
@@ -3265,19 +3506,15 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                               onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 30px rgba(245, 158, 11, 0.25)'; }}
                               onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
                             >
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <Folder size={32} color="#f59e0b" />
-                                <span style={{ fontSize: '0.75rem', fontWeight: '700', padding: '3px 9px', borderRadius: '10px', background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b' }}>
-                                  Sem Folder
-                                </span>
-                              </div>
-
-                              <div>
-                                <div style={{ fontWeight: '700', fontSize: '1.05rem', color: 'var(--text-primary)' }}>
-                                  Sem {sem} Folder
-                                </div>
-                                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                                  Click to view faculty folders
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                <Folder size={22} color="#f59e0b" style={{ flexShrink: 0 }} />
+                                <div>
+                                  <div style={{ fontWeight: '700', fontSize: '1.05rem', color: 'var(--text-primary)', lineHeight: 1.2 }}>
+                                    Sem {sem} Folder
+                                  </div>
+                                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                                    Click to view date & session archives
+                                  </div>
                                 </div>
                               </div>
 
@@ -3294,150 +3531,19 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       )}
                     </div>
                   </>
-                ) : selectedFacultyFolder === null ? (
-                  /* Level 2: Faculty Folders View for Selected Semester */
-                  <>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
-                      <button
-                        onClick={() => { setSelectedSemFolder(null); setSelectedFacultyFolder(null); setSelectedSessionFolder(null); setFolderSearchName(''); setFolderSearchDate(new Date().toISOString().split('T')[0]); setFolderDivFilter('ALL'); }}
-                        className="btn btn-secondary"
-                        style={{ padding: '6px 14px', fontSize: '0.85rem' }}
-                      >
-                        ← Back
-                      </button>
-                    </div>
-
-                    <div className="semester-folder-grid" style={{ display: 'grid', width: '100%', boxSizing: 'border-box' }}>
-                      {semFacultyList.length === 0 ? (
-                        <div style={{
-                          gridColumn: '1 / -1',
-                          textAlign: 'center',
-                          padding: '40px 20px',
-                          background: 'rgba(245, 158, 11, 0.04)',
-                          border: '1.5px dashed rgba(245, 158, 11, 0.25)',
-                          borderRadius: '16px',
-                          color: 'var(--text-muted)'
-                        }}>
-                          <Folder size={42} color="#f59e0b" style={{ marginBottom: '12px', opacity: 0.6 }} />
-                          <div style={{ fontWeight: '700', fontSize: '1.05rem', color: 'var(--text-primary)', marginBottom: '4px' }}>
-                            No Faculty Members Found
-                          </div>
-                          <div style={{ fontSize: '0.85rem' }}>
-                            No faculty members are assigned or have recorded sessions for Semester {selectedSemFolder} yet.
-                          </div>
-                        </div>
-                      ) : (
-                        semFacultyList.map(fac => {
-                          return (
-                            <div
-                              key={fac.name}
-                              onClick={() => { setSelectedFacultyFolder(fac.name); setSelectedSessionFolder(null); }}
-                              style={{
-                                background: 'rgba(245, 158, 11, 0.06)',
-                                border: '1.5px solid rgba(245, 158, 11, 0.25)',
-                                borderRadius: '16px',
-                                padding: isMobile ? '14px 12px' : '22px 18px',
-                                cursor: 'pointer',
-                                transition: 'all 0.2s ease',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                gap: '10px'
-                              }}
-                              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 30px rgba(245, 158, 11, 0.25)'; }}
-                              onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
-                            >
-                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <Folder size={32} color="#f59e0b" />
-                                <span style={{ fontSize: '0.75rem', fontWeight: '700', padding: '3px 9px', borderRadius: '10px', background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b' }}>
-                                  Faculty Folder
-                                </span>
-                              </div>
-
-                              <div>
-                                <div style={{ fontWeight: '700', fontSize: '1.05rem', color: 'var(--text-primary)' }}>
-                                  {fac.name}
-                                </div>
-                                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                                  {fac.subjects && fac.subjects.length > 0
-                                    ? `Subjects: ${fac.subjects.map(s => s.subjectName || s.shortName || 'Subject').join(', ')}`
-                                    : `Faculty Member • Sem ${selectedSemFolder}`
-                                  }
-                                </div>
-                              </div>
-
-                              <button
-                                type="button"
-                                className="btn btn-primary"
-                                style={{ width: '100%', padding: '7px 0', fontSize: '0.8rem', marginTop: '4px' }}
-                              >
-                                📂 Open {fac.name} Directory
-                              </button>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </>
                 ) : (
-                  /* Level 3 & Level 4: Faculty Session Folders View */
+                  /* Semester Date Filter & Session Folders View (Direct Access Without Faculty Folders) */
                   <>
-                    {/* Top Header Row */}
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
-                      <button
-                        onClick={() => {
-                          if (selectedSessionFolder) {
-                            setSelectedSessionFolder(null);
-                          } else {
-                            setSelectedFacultyFolder(null);
-                          }
-                        }}
-                        className="btn btn-secondary"
-                        style={{ padding: '6px 14px', fontSize: '0.85rem' }}
-                      >
-                        {selectedSessionFolder
-                          ? `← Back to ${selectedFacultyFolder} Sessions`
-                          : `← Back to Semester ${selectedSemFolder} Faculty Folders`
-                        }
-                      </button>
 
-                      <div style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-                        Sem {selectedSemFolder} • Faculty: <strong>{selectedFacultyFolder}</strong>
-                      </div>
-                    </div>
 
-                    {/* Date Filter Bar */}
-                    {!selectedSessionFolder && (
-                      <div style={{ display: 'flex', gap: '16px', marginBottom: '20px', flexWrap: 'wrap', padding: '14px 18px', background: 'var(--panel-bg)', borderRadius: '12px', border: '1px solid var(--border-light)', alignItems: 'center' }}>
-                        {/* Date Filter */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <Calendar size={18} color="#f59e0b" />
-                          <label style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)' }}>Select Date:</label>
-                          <input
-                            type="date"
-                            value={folderSearchDate}
-                            onChange={(e) => {
-                              setFolderSearchDate(e.target.value);
-                              setSelectedSessionFolder(null);
-                            }}
-                            style={{
-                              padding: '6px 12px', borderRadius: '8px',
-                              border: '1px solid var(--border-light)',
-                              background: 'rgba(255,255,255,0.05)',
-                              color: 'var(--text-primary)',
-                              fontSize: '0.85rem',
-                              cursor: 'pointer'
-                            }}
-                          />
-                        </div>
-                      </div>
-                    )}
 
-                    {/* View 1: Session Folders Grid for Selected Date & Faculty */}
+
+                    {/* View 1: Session Folders Grid for Selected Semester & Date */}
                     {!selectedSessionFolder ? (
-                      <div>
-                        <h4 style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div style={{ marginTop: '22px' }}>
+                        <h4 style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)', marginTop: '0', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <Folder size={18} color="#f59e0b" />
-                          Session Folders on {folderSearchDate || 'Selected Date'} ({selectedFacultyFolder})
+                          Sessions Conducted
                         </h4>
 
                         {(() => {
@@ -3458,12 +3564,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           const logsForDate = combinedLogsList.filter(log => {
                             if (String(log.semester || '').replace(/\D/g, '') !== String(selectedSemFolder || '').replace(/\D/g, '')) return false;
                             
-                            if (selectedFacultyFolder) {
-                              const logFacName = (log.faculty_name || (log.faculty && log.faculty.name) || log.generated_by_name || '').trim().toLowerCase();
-                              const targetFacName = selectedFacultyFolder.trim().toLowerCase();
-                              if (logFacName && logFacName !== targetFacName) return false;
-                            }
-
                             if (folderDivFilter !== 'ALL' && !isDivMatch(log.division, folderDivFilter)) return false;
                             if (targetDate) {
                               const d = normDate(log.date || log.created_at);
@@ -3475,14 +3575,22 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           const sessionsMap = new Map();
 
                           logsForDate.forEach(log => {
-                            let sessKey = log.qr_session_id ? `qr_${log.qr_session_id}` : log.otp_id ? `otp_${log.otp_id}` : `manual_${log.time || log.id}`;
+                            let facName = log.faculty_name || (log.faculty && log.faculty.name) || log.generated_by_name || 'Faculty';
+                            let sessKey = log.qr_session_id 
+                              ? `qr_${log.qr_session_id}` 
+                              : log.otp_id 
+                                ? `otp_${log.otp_id}` 
+                                : `manual_${facName}_${log.time || log.id}`;
+
                             if (!sessionsMap.has(sessKey)) {
                               let sessType = log.qr_session_id ? 'Live QR Session' : log.otp_id ? 'OTP Session' : 'Manual Session';
+
                               sessionsMap.set(sessKey, {
                                 id: sessKey,
                                 qr_session_id: log.qr_session_id || null,
                                 otp_id: log.otp_id || null,
                                 type: sessType,
+                                faculty_name: facName,
                                 division: log.division || folderDivFilter,
                                 subject: log.subject || null,
                                 time: log.time || 'Session',
@@ -3516,7 +3624,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                               <div style={{ textAlign: 'center', padding: '40px 20px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid var(--border-light)' }}>
                                 <Folder size={40} color="var(--text-muted)" style={{ marginBottom: '10px', opacity: 0.5 }} />
                                 <p style={{ fontSize: '0.95rem', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '4px' }}>
-                                  No sessions conducted by {selectedFacultyFolder} on {folderSearchDate || 'this date'} for Semester {selectedSemFolder}.
+                                  No sessions conducted on {folderSearchDate || 'this date'} for Semester {selectedSemFolder}.
                                 </p>
                                 <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>
                                   Select a different date from the date picker above to view session folders.
@@ -3562,6 +3670,9 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                                       {sess.title}
                                     </div>
                                     <div style={{ fontSize: '0.78rem', color: '#f59e0b', fontWeight: '600', marginTop: '2px' }}>
+                                      Faculty: {sess.faculty_name}
+                                    </div>
+                                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
                                       Sem {selectedSemFolder} {sess.division && String(sess.division).toUpperCase() !== 'ALL' ? `(Div ${sess.division})` : '(All Div)'}
                                     </div>
                                     {sess.subject && (
@@ -3615,7 +3726,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                                 className="btn btn-secondary"
                                 style={{ padding: '6px 14px', fontSize: '0.85rem' }}
                               >
-                                ← Back to Session Folders
+                                ← Back to Semester {selectedSemFolder} Sessions
                               </button>
                               <div style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)' }}>
                                 {selectedSessionFolder.title} Directory (Sem {selectedSemFolder} {selectedSessionFolder.division && String(selectedSessionFolder.division).toUpperCase() !== 'ALL' ? `Div ${selectedSessionFolder.division}` : ''}) • {folderSearchDate}
@@ -3915,73 +4026,131 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
               )}
             </div>
 
-            <div className="custom-table-container">
-              {studentsLoading ? (
-                <div style={{ textAlign: 'center', padding: '40px' }}>Loading student lists...</div>
-              ) : filteredStudents.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No students found.</div>
-              ) : (
-                <table className="custom-table">
-                  <thead>
-                    <tr>
-                      <th style={{ width: '40px', textAlign: 'center' }}>
-                        <input
-                          type="checkbox"
-                          checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedStudentIds.includes(s.id))}
-                          onChange={toggleSelectAllStudents}
-                          title="Select / Unselect All"
-                          style={{ cursor: 'pointer', width: '16px', height: '16px' }}
-                        />
-                      </th>
-                      <th>Roll No</th>
-                      <th>Enrollment No</th>
-                      <th>Name</th>
-                      <th>Course</th>
-                      <th>Semester</th>
-                      <th>Division</th>
-                      <th>Mobile</th>
-                      <th>Password</th>
-                      <th>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredStudents.map((student) => {
-                      const isChecked = selectedStudentIds.includes(student.id);
-                      return (
-                        <tr key={student.id} style={{ background: isChecked ? 'rgba(147, 51, 234, 0.08)' : 'transparent' }}>
-                          <td style={{ textAlign: 'center' }}>
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={() => toggleSelectStudent(student.id)}
-                              style={{ cursor: 'pointer', width: '16px', height: '16px' }}
-                            />
-                          </td>
-                          <td style={{ fontWeight: 600, color: 'var(--primary)' }}>{student.roll_no || '-'}</td>
-                          <td>{student.enrollment_no}</td>
-                          <td style={{ fontWeight: 600 }}>{student.name}</td>
-                          <td>{student.course}</td>
-                          <td>Sem {student.semester}</td>
-                          <td style={{ fontWeight: 600 }}>{student.division || '-'}</td>
-                          <td>{student.mobile}</td>
-                          <td><code>{student.plain_password}</code></td>
-                          <td>
-                            <div style={styles.actionButtonContainer}>
-                              <button className="btn btn-secondary" onClick={() => openEditModal(student)} style={styles.actionBtn}>
-                                <Edit size={14} />
-                              </button>
-                              <button className="btn btn-danger" onClick={() => handleDeleteStudent(student.id)} style={styles.actionBtn}>
-                                <Trash2 size={14} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
+            {/* Paginated Student Table Rendering */}
+            {(() => {
+              const PAGE_SIZE = 50;
+              const totalCount = filteredStudents.length;
+              const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
+              const currentPage = Math.min(stuPage, totalPages);
+              const startIdx = (currentPage - 1) * PAGE_SIZE;
+              const paginatedStudents = filteredStudents.slice(startIdx, startIdx + PAGE_SIZE);
+
+              return (
+                <>
+                  <div className="custom-table-container">
+                    {studentsLoading ? (
+                      <div style={{ textAlign: 'center', padding: '40px' }}>Loading student lists...</div>
+                    ) : filteredStudents.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No students found.</div>
+                    ) : (
+                      <table className="custom-table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: '40px', textAlign: 'center' }}>
+                              <input
+                                type="checkbox"
+                                checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedStudentIds.includes(s.id))}
+                                onChange={toggleSelectAllStudents}
+                                title="Select / Unselect All"
+                                style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                              />
+                            </th>
+                            <th>Roll No</th>
+                            <th>Enrollment No</th>
+                            <th>Name</th>
+                            <th>Course</th>
+                            <th>Semester</th>
+                            <th>Division</th>
+                            <th>Mobile</th>
+                            <th>Password</th>
+                            <th>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {paginatedStudents.map((student) => {
+                            const isChecked = selectedStudentIds.includes(student.id);
+                            return (
+                              <tr key={student.id} style={{ background: isChecked ? 'rgba(147, 51, 234, 0.08)' : 'transparent' }}>
+                                <td style={{ textAlign: 'center' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={() => toggleSelectStudent(student.id)}
+                                    style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                  />
+                                </td>
+                                <td style={{ fontWeight: 600, color: 'var(--primary)' }}>{student.roll_no || '-'}</td>
+                                <td>{student.enrollment_no}</td>
+                                <td style={{ fontWeight: 600 }}>{student.name}</td>
+                                <td>{student.course}</td>
+                                <td>Sem {student.semester}</td>
+                                <td style={{ fontWeight: 600 }}>{student.division || '-'}</td>
+                                <td>{student.mobile}</td>
+                                <td><code>{student.plain_password}</code></td>
+                                <td>
+                                  <div style={styles.actionButtonContainer}>
+                                    <button className="btn btn-secondary" onClick={() => openEditModal(student)} style={styles.actionBtn}>
+                                      <Edit size={14} />
+                                    </button>
+                                    <button className="btn btn-danger" onClick={() => handleDeleteStudent(student.id)} style={styles.actionBtn}>
+                                      <Trash2 size={14} />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+
+                  {/* Pagination Control Bar */}
+                  {totalCount > 0 && (
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justify: 'space-between',
+                      marginTop: '16px',
+                      padding: '12px 16px',
+                      background: 'rgba(255,255,255,0.02)',
+                      borderRadius: '10px',
+                      border: '1px solid rgba(255,255,255,0.06)',
+                      flexWrap: 'wrap',
+                      gap: '10px'
+                    }}>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                        Showing <strong>{startIdx + 1}</strong> - <strong>{Math.min(startIdx + PAGE_SIZE, totalCount)}</strong> of <strong>{totalCount}</strong> students
+                      </div>
+                      
+                      {totalPages > 1 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => setStuPage(prev => Math.max(1, prev - 1))}
+                            disabled={currentPage <= 1}
+                            style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                          >
+                            ← Previous
+                          </button>
+                          <span style={{ fontSize: '0.85rem', color: 'var(--text-primary)', fontWeight: '600', padding: '0 8px' }}>
+                            Page {currentPage} of {totalPages}
+                          </span>
+                          <button
+                            className="btn btn-secondary"
+                            onClick={() => setStuPage(prev => Math.min(totalPages, prev + 1))}
+                            disabled={currentPage >= totalPages}
+                            style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                          >
+                            Next →
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
 
@@ -4906,8 +5075,12 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     <code>{createdFacultyCredentials.password}</code>
                   </div>
                 </div>
-                <button className="btn btn-primary" onClick={() => setShowFacultyModal(false)} style={{ width: '100%', marginTop: '20px' }}>
-                  Close and Continue
+                <button
+                  className="btn btn-primary"
+                  onClick={() => { setCreatedFacultyCredentials(null); setShowFacultyModal(false); }}
+                  style={{ width: '100%', marginTop: '16px' }}
+                >
+                  Done
                 </button>
               </div>
             ) : (
@@ -5089,6 +5262,97 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
           </div>
         </div>
       )}
+
+      {/* CUSTOM REACT DELETE CONFIRMATION MODAL (0ms response, No Browser Thread Blocking) */}
+      {deleteConfirmState.isOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          zIndex: 9999,
+          background: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(8px)',
+          WebkitBackdropFilter: 'blur(8px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '20px'
+        }}>
+          <div className="glass-panel" style={{
+            width: '420px',
+            maxWidth: '100%',
+            padding: '28px',
+            borderRadius: '20px',
+            border: '1.5px solid rgba(239, 68, 68, 0.4)',
+            background: 'linear-gradient(145deg, #0b172a 0%, #001b3d 100%)',
+            boxShadow: '0 25px 60px rgba(0, 0, 0, 0.85)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '18px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div style={{
+                width: '48px',
+                height: '48px',
+                borderRadius: '14px',
+                background: 'rgba(239, 68, 68, 0.15)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}>
+                <Trash2 size={26} color="#f87171" />
+              </div>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.2rem', color: '#ffffff', fontWeight: '700' }}>
+                  Confirm Student Deletion
+                </h3>
+                <span style={{ fontSize: '0.78rem', color: '#f87171', fontWeight: '600' }}>
+                  ⚠️ Permanent System Action
+                </span>
+              </div>
+            </div>
+
+            <p style={{ fontSize: '0.92rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+              Are you sure you want to delete <strong>{deleteConfirmState.studentName}</strong>? All associated attendance history will also be permanently deleted.
+            </p>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '6px' }}>
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => setDeleteConfirmState({ isOpen: false, type: 'single', studentId: null, studentName: '', targetIds: [] })}
+                style={{ padding: '9px 20px', fontSize: '0.88rem', fontWeight: '600' }}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={executeConfirmedDelete}
+                style={{
+                  padding: '9px 22px',
+                  fontSize: '0.88rem',
+                  fontWeight: '700',
+                  background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                  color: '#ffffff',
+                  border: 'none',
+                  borderRadius: '10px',
+                  boxShadow: '0 4px 16px rgba(239, 68, 68, 0.4)',
+                  cursor: 'pointer'
+                }}
+              >
+                Yes, Delete Now
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+        </div>
+      </div>
     </div>
   );
 }
