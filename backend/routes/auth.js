@@ -461,14 +461,45 @@ router.get('/me', authenticateJWT, async (req, res) => {
     if (req.user.role === 'faculty') {
       const { data: faculty } = await supabase.from('faculty').select('*').eq('id', req.user.id).maybeSingle();
       if (faculty) {
+        let deptName = faculty.department || '';
+        let embeddedSubjects = [];
+        if (deptName.includes('||SUB:')) {
+          const parts = deptName.split('||SUB:');
+          deptName = parts[0].trim();
+          try {
+            embeddedSubjects = JSON.parse(parts[1].split('||')[0]);
+          } catch(e) {}
+        }
+        
+        let fileSubjects = [];
+        try {
+          const fs = require('fs');
+          const path = require('path');
+          const p = path.join(__dirname, '../data/faculty_subjects.json');
+          if (fs.existsSync(p)) {
+            const map = JSON.parse(fs.readFileSync(p, 'utf8'));
+            fileSubjects = map[faculty.id] || map[faculty.employee_no] || map[String(faculty.id)] || map[String(faculty.employee_no)] || [];
+          }
+        } catch(e) {}
+
+        const subMap = new Map();
+        if (Array.isArray(fileSubjects)) {
+          fileSubjects.forEach(s => { if (s && s.subjectName) subMap.set(String(s.subjectName).trim().toLowerCase(), s); });
+        }
+        if (Array.isArray(embeddedSubjects)) {
+          embeddedSubjects.forEach(s => { if (s && s.subjectName) subMap.set(String(s.subjectName).trim().toLowerCase(), s); });
+        }
+        const finalSubjects = Array.from(subMap.values());
+
         return res.json({
           user: {
             id: faculty.id,
             name: faculty.name,
             username: faculty.username,
             employee_no: faculty.employee_no,
-            department: faculty.department,
+            department: deptName || 'BCA',
             mobile: faculty.mobile,
+            subjects: finalSubjects,
             role: 'faculty'
           }
         });

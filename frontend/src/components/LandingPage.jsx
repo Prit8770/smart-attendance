@@ -16,8 +16,8 @@ const LandingPage = ({ onGetStarted }) => {
       <div style={styles.abstractBlob2} className="animate-orb-pulse delay-2"></div>
 
       {/* Navbar/Header */}
-      <header style={styles.header} className="animate-fade-in-up">
-        <div style={styles.logoContainer}>
+      <header style={styles.header} className="animate-fade-in-up landing-top-header">
+        <div className="landing-logo-container" style={styles.logoContainer}>
           <div style={{
             background: 'linear-gradient(135deg, #f59e0b, #d97706)',
             borderRadius: '12px',
@@ -31,7 +31,7 @@ const LandingPage = ({ onGetStarted }) => {
           </div>
           <h1 style={styles.logoText}>Edu<span style={{color: '#f59e0b'}}>Mark</span></h1>
         </div>
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <div className="landing-header-actions" style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn" style={styles.ghostBtn} onClick={() => {
             document.getElementById('how-it-works').scrollIntoView({ behavior: 'smooth' });
           }}>

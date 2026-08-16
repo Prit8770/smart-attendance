@@ -3,7 +3,7 @@ import {
   Users, KeyRound, QrCode, BarChart3, Download, Search, CheckCircle,
   XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Sun, Moon, Menu, X, Folder, Calendar,
   ClipboardList, UserCheck, UserX, Smartphone, HandIcon, GraduationCap, User, Settings, MapPin, Plus, Trash2, Edit,
-  LayoutGrid, ChevronDown, FileText, Check
+  LayoutGrid, ChevronDown, FileText, Check, TrendingUp, RotateCcw
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -96,6 +96,18 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   const [folderSearchEnroll, setFolderSearchEnroll] = useState('');
   const [folderSearchDate, setFolderSearchDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [selectedSessionFolder, setSelectedSessionFolder] = useState(null);
+
+  // Floating Mobile Hamburger Toggle Setting (ON/OFF)
+  const [showFloatingMobileMenu, setShowFloatingMobileMenu] = useState(() => {
+    const saved = localStorage.getItem('faculty_show_floating_mobile_menu');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+
+  const handleToggleFloatingMobileMenu = (e) => {
+    const isChecked = e.target.checked;
+    setShowFloatingMobileMenu(isChecked);
+    localStorage.setItem('faculty_show_floating_mobile_menu', JSON.stringify(isChecked));
+  };
 
   // Manual Attendance state
   const [manualSessionFolder, setManualSessionFolder] = useState(null); // null | 1 | 2 | 3 | 4 | 5
@@ -296,24 +308,32 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
   const [sessionFolderTab, setSessionFolderTab] = useState('present'); // 'present' | 'absent'
   const [fetchedFacultyUser, setFetchedFacultyUser] = useState(null);
 
+  const fetchMyProfile = async () => {
+    if (!token) return;
+    try {
+      const res = await fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.user) {
+          setFetchedFacultyUser(data.user);
+          try {
+            localStorage.setItem('attendance_user', JSON.stringify(data.user));
+            if (data.user.id || data.user.username) {
+              localStorage.setItem(`cached_faculty_${data.user.id || data.user.username}`, JSON.stringify(data.user));
+            }
+          } catch (e) {}
+        }
+      }
+    } catch(err) {
+      console.error('Error fetching faculty profile:', err);
+    }
+  };
+
   useEffect(() => {
     if (token) {
-      fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${token}` }
-      })
-        .then(res => res.ok ? res.json() : null)
-        .then(data => {
-          if (data && data.user) {
-            setFetchedFacultyUser(data.user);
-            try {
-              localStorage.setItem('attendance_user', JSON.stringify(data.user));
-              if (data.user.id || data.user.username) {
-                localStorage.setItem(`cached_faculty_${data.user.id || data.user.username}`, JSON.stringify(data.user));
-              }
-            } catch (e) {}
-          }
-        })
-        .catch(err => console.error('Error fetching faculty profile:', err));
+      fetchMyProfile();
       fetchAllLeaves();
     }
   }, [token]);
@@ -759,20 +779,64 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
     }
   };
 
-  // Poll stats and logs
+  // Smart Auto-Polling for Live Sessions & Stats (0ms Broadcast Sync for Instant Edits)
   useEffect(() => {
     const isSessionActive = activeQrSessionDetails !== null || activeOtpDetails !== null;
-    const intervalTime = isSessionActive ? 3000 : 15000;
+    const intervalTime = isSessionActive ? 3000 : 25000;
 
     const interval = setInterval(() => {
-      fetchStats();
-      fetchLiveLogs();
-      fetchQrSettings();
-      if (activeTab === 'manual' || activeTab === 'attendance_logs') { fetchTodaySessions(); fetchTodayAllAttendance(); }
+      if (isSessionActive) {
+        fetchLiveLogs();
+        fetchStats();
+        fetchTodaySessions();
+      } else {
+        fetchStats();
+        fetchTodaySessions();
+      }
     }, intervalTime);
 
     return () => clearInterval(interval);
   }, [activeQrSessionDetails, activeOtpDetails, activeTab]);
+
+  // Reset folder navigation when switching active tab so returning to Manual tab shows main root directory
+  useEffect(() => {
+    setManualSessionFolder(null);
+    setManualDivFilter('ALL');
+    setManualSearchName('');
+  }, [activeTab]);
+
+  // Instant Cross-Panel BroadcastChannel & Custom Event Sync
+  useEffect(() => {
+    const refreshAll = () => {
+      fetchMyProfile();
+      fetchStats();
+      fetchLiveLogs();
+      fetchQrSettings();
+      fetchStudents();
+      fetchAllLeaves();
+      fetchTodaySessions();
+      fetchTodayAllAttendance();
+    };
+
+    window.addEventListener('app_data_changed', refreshAll);
+
+    let bc = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        bc = new BroadcastChannel('attendance_system_sync');
+        bc.onmessage = (msg) => {
+          if (msg && msg.data && msg.data.type === 'DATA_CHANGED') {
+            refreshAll();
+          }
+        };
+      } catch (e) {}
+    }
+
+    return () => {
+      window.removeEventListener('app_data_changed', refreshAll);
+      if (bc) bc.close();
+    };
+  }, []);
 
   const handleEndCurrentQrSession = async () => {
     try {
@@ -1223,7 +1287,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       const formattedDate = dParts.length === 3 ? `${dParts[2]}-${dParts[1]}-${dParts[0]}` : dStr;
 
       finalSesses.forEach((sess, sIdx) => {
-        const sessId = sess.id || sess.qr_session_id || `${dStr}_${sessionCols.length}`;
+        const sessId = sess.id || sess.qr_session_id || sess.otp_id || `${dStr}_${sessionCols.length}`;
         const sessDiv = String(sess.division || 'ALL').trim().toUpperCase();
         const colKey = finalSesses.length > 1 ? `${formattedDate} (L${sIdx + 1})` : formattedDate;
 
@@ -1231,9 +1295,11 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
           colKey,
           dateStr: formattedDate,
           rawDate: dStr,
-          sessId,
+          sessId: String(sessId),
+          qr_session_id: sess.qr_session_id ? String(sess.qr_session_id) : null,
+          otp_id: sess.otp_id ? String(sess.otp_id) : null,
           sessDiv,
-          subject: sess.subject || targetSubName
+          subject: sess.subject || sess.subject_name || targetSubName
         });
       });
     });
@@ -1249,12 +1315,24 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       if (!log) return;
       const status = String(log.status || '').toLowerCase();
       if (status === 'success' || status === 'present') {
-        const d = normDateStr(log.date || log.created_at);
         const enroll = String(log.enrollment_no || log.student_id || log.roll_no || '').trim().toLowerCase();
-        const sId = log.qr_session_id ? `qr_${log.qr_session_id}` : log.otp_id ? `otp_${log.otp_id}` : null;
-        if (enroll && d) {
-          presentMap.add(`${enroll}_${d}`);
-          if (sId) presentMap.add(`${enroll}_${sId}`);
+        if (enroll) {
+          if (log.qr_session_id) {
+            presentMap.add(`${enroll}_qr_${log.qr_session_id}`);
+            presentMap.add(`${enroll}_${log.qr_session_id}`);
+          }
+          if (log.otp_id) {
+            presentMap.add(`${enroll}_otp_${log.otp_id}`);
+            presentMap.add(`${enroll}_${log.otp_id}`);
+          }
+          if (log.session_id) {
+            presentMap.add(`${enroll}_sess_${log.session_id}`);
+            presentMap.add(`${enroll}_${log.session_id}`);
+          }
+          if (log.id) {
+            presentMap.add(`${enroll}_log_${log.id}`);
+            presentMap.add(`${enroll}_${log.id}`);
+          }
         }
       }
     });
@@ -1264,10 +1342,42 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       const divCode = String(std.division || std.div || 'A').trim().toUpperCase();
       const studentEnroll = String(std.enrollment_no || std.roll_no || std.roll || std.id || '').trim().toLowerCase();
 
-      const subjName = (reportSubjectFilter && reportSubjectFilter !== 'ALL') ? reportSubjectFilter : (std.subjectName || 'All Subjects');
-      const matchedSub = (allFacultySubjects || []).find(s => (s.subjectName || s.name || '').toLowerCase().trim() === (subjName).toLowerCase().trim());
-      const rawSubCode = matchedSub ? (matchedSub.code || matchedSub.subjectCode || matchedSub.shortName) : null;
-      const subjCode = (rawSubCode && String(rawSubCode).trim() !== '' && String(rawSubCode).trim() !== 'SUB101') ? String(rawSubCode).trim() : '-';
+      let subjName = '';
+      let subjCode = '-';
+
+      if (reportSubjectFilter && reportSubjectFilter !== 'ALL') {
+        subjName = reportSubjectFilter;
+        const matchedSub = (allFacultySubjects || []).find(s => (s.subjectName || s.name || '').toLowerCase().trim() === reportSubjectFilter.toLowerCase().trim());
+        const rawSubCode = matchedSub ? (matchedSub.code || matchedSub.subjectCode || matchedSub.shortName) : null;
+        subjCode = (rawSubCode && String(rawSubCode).trim() !== '' && String(rawSubCode).trim() !== 'SUB101') ? String(rawSubCode).trim() : '-';
+      } else {
+        const semClean = String(semStr).replace(/\D/g, '').trim();
+        const semSubs = (allFacultySubjects || []).filter(s => String(s.semester || '').replace(/\D/g, '').trim() === semClean);
+        
+        const names = [];
+        const codes = [];
+        const seenName = new Set();
+        
+        semSubs.forEach(s => {
+          const n = (s.subjectName || s.name || '').trim();
+          const c = (s.code || s.subjectCode || s.shortName || '').trim();
+          if (n && !seenName.has(n.toLowerCase())) {
+            seenName.add(n.toLowerCase());
+            names.push(n);
+            if (c && c !== 'SUB101' && c !== '-') codes.push(c);
+          }
+        });
+
+        if (names.length === 0) {
+          const sessSubs = Array.from(new Set(sessionCols.map(c => c.subject).filter(Boolean)));
+          if (sessSubs.length > 0) {
+            names.push(...sessSubs);
+          }
+        }
+
+        subjName = names.length > 0 ? names.join(', ') : 'C Language (101)';
+        subjCode = codes.length > 0 ? codes.join(', ') : '-';
+      }
 
       let totalPresent = 0;
       let totalAbsent = 0;
@@ -1283,7 +1393,6 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       };
 
       sessionCols.forEach(colObj => {
-        const rawD = colObj.rawDate;
         const colDiv = colObj.sessDiv;
         const isApplicableForStudentDiv = (colDiv === 'ALL' || colDiv === divCode);
 
@@ -1291,13 +1400,37 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
           rowObj[colObj.colKey] = '-';
         } else {
           conductedForStudentCount++;
-          const isPresent = presentMap.has(`${studentEnroll}_${colObj.sessId}`) ||
-                            presentMap.has(`${studentEnroll}_${rawD}`) ||
-                            allSystemLogs.some(l => 
-                              l && (String(l.status || '').toLowerCase() === 'success' || String(l.status || '').toLowerCase() === 'present') &&
-                              String(l.enrollment_no || l.student_id || '').trim().toLowerCase() === studentEnroll &&
-                              (normDateStr(l.date || l.created_at) === rawD || String(l.qr_session_id) === String(colObj.sessId))
-                            );
+          const qId = colObj.qr_session_id || (String(colObj.sessId).startsWith('qr_') ? String(colObj.sessId).replace('qr_', '') : null);
+          const oId = colObj.otp_id || (String(colObj.sessId).startsWith('otp_') ? String(colObj.sessId).replace('otp_', '') : null);
+          const sId = colObj.sessId;
+
+          let isPresent = false;
+          if (qId && (presentMap.has(`${studentEnroll}_qr_${qId}`) || presentMap.has(`${studentEnroll}_${qId}`))) {
+            isPresent = true;
+          } else if (oId && (presentMap.has(`${studentEnroll}_otp_${oId}`) || presentMap.has(`${studentEnroll}_${oId}`))) {
+            isPresent = true;
+          } else if (sId && presentMap.has(`${studentEnroll}_${sId}`)) {
+            isPresent = true;
+          } else {
+            isPresent = allSystemLogs.some(l => {
+              if (!l) return false;
+              const st = String(l.status || '').toLowerCase();
+              if (st !== 'success' && st !== 'present') return false;
+              const lEnroll = String(l.enrollment_no || l.student_id || l.roll_no || '').trim().toLowerCase();
+              if (lEnroll !== studentEnroll) return false;
+              
+              if (qId && String(l.qr_session_id || '').trim() === qId) return true;
+              if (oId && String(l.otp_id || '').trim() === oId) return true;
+              if (sId && (
+                String(l.qr_session_id || '').trim() === sId ||
+                String(l.otp_id || '').trim() === sId ||
+                String(l.session_id || '').trim() === sId ||
+                `qr_${l.qr_session_id}` === sId ||
+                `otp_${l.otp_id}` === sId
+              )) return true;
+              return false;
+            });
+          }
 
           if (isPresent) {
             rowObj[colObj.colKey] = 'P';
@@ -1484,12 +1617,24 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       if (!log) return;
       const status = String(log.status || '').toLowerCase();
       if (status === 'success' || status === 'present') {
-        const d = normDateStr(log.date || log.created_at);
         const enroll = String(log.enrollment_no || log.student_id || log.roll_no || '').trim().toLowerCase();
-        const sId = log.qr_session_id ? `qr_${log.qr_session_id}` : log.otp_id ? `otp_${log.otp_id}` : null;
-        if (enroll && d) {
-          presentMap.add(`${enroll}_${d}`);
-          if (sId) presentMap.add(`${enroll}_${sId}`);
+        if (enroll) {
+          if (log.qr_session_id) {
+            presentMap.add(`${enroll}_qr_${log.qr_session_id}`);
+            presentMap.add(`${enroll}_${log.qr_session_id}`);
+          }
+          if (log.otp_id) {
+            presentMap.add(`${enroll}_otp_${log.otp_id}`);
+            presentMap.add(`${enroll}_${log.otp_id}`);
+          }
+          if (log.session_id) {
+            presentMap.add(`${enroll}_sess_${log.session_id}`);
+            presentMap.add(`${enroll}_${log.session_id}`);
+          }
+          if (log.id) {
+            presentMap.add(`${enroll}_log_${log.id}`);
+            presentMap.add(`${enroll}_${log.id}`);
+          }
         }
       }
     });
@@ -1505,22 +1650,44 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       const sessionAttendance = {};
 
       sessionCols.forEach((col) => {
-        const rawD = normDateStr(col.rawDate);
         const colDiv = col.sessDiv;
-
         const isApplicableForStudentDiv = (colDiv === 'ALL' || colDiv === divCode);
 
         if (!isApplicableForStudentDiv) {
           sessionAttendance[col.key] = '-';
         } else {
           conductedForStudentCount++;
-          const isPresent = presentMap.has(`${studentEnroll}_${col.sessId}`) ||
-                            presentMap.has(`${studentEnroll}_${rawD}`) ||
-                            allSystemLogs.some(l => 
-                              l && (String(l.status || '').toLowerCase() === 'success' || String(l.status || '').toLowerCase() === 'present') &&
-                              String(l.enrollment_no || l.student_id || '').trim().toLowerCase() === studentEnroll &&
-                              (normDateStr(l.date || l.created_at) === rawD || String(l.qr_session_id) === String(col.sessId))
-                            );
+          const qId = String(col.sessId).startsWith('qr_') ? String(col.sessId).replace('qr_', '') : null;
+          const oId = String(col.sessId).startsWith('otp_') ? String(col.sessId).replace('otp_', '') : null;
+          const sId = col.sessId;
+
+          let isPresent = false;
+          if (qId && (presentMap.has(`${studentEnroll}_qr_${qId}`) || presentMap.has(`${studentEnroll}_${qId}`))) {
+            isPresent = true;
+          } else if (oId && (presentMap.has(`${studentEnroll}_otp_${oId}`) || presentMap.has(`${studentEnroll}_${oId}`))) {
+            isPresent = true;
+          } else if (sId && presentMap.has(`${studentEnroll}_${sId}`)) {
+            isPresent = true;
+          } else {
+            isPresent = allSystemLogs.some(l => {
+              if (!l) return false;
+              const st = String(l.status || '').toLowerCase();
+              if (st !== 'success' && st !== 'present') return false;
+              const lEnroll = String(l.enrollment_no || l.student_id || l.roll_no || '').trim().toLowerCase();
+              if (lEnroll !== studentEnroll) return false;
+              
+              if (qId && String(l.qr_session_id || '').trim() === qId) return true;
+              if (oId && String(l.otp_id || '').trim() === oId) return true;
+              if (sId && (
+                String(l.qr_session_id || '').trim() === sId ||
+                String(l.otp_id || '').trim() === sId ||
+                String(l.session_id || '').trim() === sId ||
+                `qr_${l.qr_session_id}` === sId ||
+                `otp_${l.otp_id}` === sId
+              )) return true;
+              return false;
+            });
+          }
 
           if (isPresent) {
             sessionAttendance[col.key] = 'P';
@@ -1838,6 +2005,19 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       const { rows } = subjectDateWiseMatrixData;
       const worksheet = XLSX.utils.json_to_sheet(rows);
 
+      worksheet['!autofilter'] = { ref: 'C1:E1' };
+
+      if (rows && rows.length > 0) {
+        const colKeys = Object.keys(rows[0]);
+        worksheet['!cols'] = colKeys.map(k => {
+          if (k === 'Student Name') return { wch: 22 };
+          if (k === 'Subject') return { wch: 24 };
+          if (k === 'Subject Code') return { wch: 14 };
+          if (k === 'Roll No' || k === 'Sem' || k === 'Division') return { wch: 10 };
+          return { wch: 14 };
+        });
+      }
+
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Subject Attendance with Dates');
       XLSX.writeFile(workbook, `Subject_Attendance_With_Dates_${new Date().toISOString().split('T')[0]}.xlsx`);
@@ -1980,29 +2160,55 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
   return (
     <div className="admin-dashboard-root">
+      {/* Mobile Floating Bottom-Right Hamburger Menu Button */}
+      {showFloatingMobileMenu && (
+        <button
+          type="button"
+          className="admin-floating-mobile-toggle"
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          title={mobileMenuOpen ? "Close Menu" : "Open Menu"}
+        >
+          {mobileMenuOpen ? <X size={26} strokeWidth={2.5} /> : <Menu size={26} strokeWidth={2.5} />}
+        </button>
+      )}
+
+      {/* Mobile Backdrop Overlay when sidebar is open */}
+      {mobileMenuOpen && (
+        <div
+          className="admin-mobile-backdrop"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
       <div className="admin-layout">
 
       {/* ===== MODAL OVERLAY ===== */}
       {dashModal && (
         <div
           style={{
-            position: 'fixed', inset: 0, zIndex: 1000,
-            background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(4px)',
-            display: 'flex', alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center',
-            padding: isMobile ? '0' : '20px'
+            position: 'fixed', top: 0, left: 0,
+            width: '100dvw', height: '100dvh', minHeight: '100%',
+            zIndex: 999999,
+            background: 'rgba(15, 23, 42, 0.75)',
+            backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '16px', boxSizing: 'border-box'
           }}
           onClick={() => setDashModal(null)}
         >
           <div
-            className="glass-panel"
             style={{
               width: '100%', maxWidth: '520px',
-              borderRadius: isMobile ? '20px 20px 0 0' : '20px',
-              padding: isMobile ? '18px 14px 24px' : '28px',
-              maxHeight: isMobile ? '92vh' : '82vh',
+              borderRadius: '24px',
+              background: '#ffffff',
+              border: '1px solid #e2e8f0',
+              padding: isMobile ? '20px 16px' : '28px',
+              maxHeight: '90dvh',
               display: 'flex',
               flexDirection: 'column',
-              overflow: 'hidden', position: 'relative'
+              overflow: 'hidden', position: 'relative',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+              color: '#0f172a'
             }}
             onClick={e => e.stopPropagation()}
           >
@@ -2010,8 +2216,10 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
             <button
               onClick={() => setDashModal(null)}
               style={{
-                position: 'absolute', top: '16px', right: '16px', background: 'none',
-                border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.4rem', lineHeight: 1
+                position: 'absolute', top: '16px', right: '16px', background: '#f1f5f9',
+                border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '1.1rem',
+                width: '34px', height: '34px', borderRadius: '50%', display: 'flex',
+                alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s ease'
               }}
             >✕</button>
 
@@ -2044,34 +2252,35 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               return (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                    <CheckCircle size={24} color="#3b82f6" />
-                    <h2 style={{ ...styles.cardTitle, margin: 0 }}>Present Today</h2>
-                    <span style={{ marginLeft: 'auto', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                    <CheckCircle size={24} color="#2563eb" />
+                    <h2 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>Present Today</h2>
+                    <span style={{ marginLeft: 'auto', marginRight: '36px', fontSize: '0.82rem', fontWeight: '700', color: '#2563eb', background: '#eff6ff', border: '1px solid #bfdbfe', padding: '4px 10px', borderRadius: '12px' }}>
                       {hasStartedSessions ? `${filteredPresent.length} students` : '0 students'}
                     </span>
                   </div>
 
                   {/* Session-wise Filter Buttons */}
                   {hasStartedSessions ? (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
                       {facultySessionsToday.map(sess => (
                         <button
                           key={sess.id}
                           onClick={() => setDashModalSession(sess.id)}
                           style={{
-                            padding: '6px 12px', fontSize: '0.78rem', borderRadius: '6px',
-                            border: activeSessionId === sess.id ? '1px solid var(--primary)' : '1px solid var(--border-light)',
-                            background: activeSessionId === sess.id ? 'var(--primary)' : 'rgba(255,255,255,0.08)',
-                            color: '#ffffff', fontWeight: 'bold', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', gap: '4px'
+                            padding: '6px 14px', fontSize: '0.8rem', borderRadius: '8px',
+                            border: activeSessionId === sess.id ? '1px solid #09355c' : '1px solid #cbd5e1',
+                            background: activeSessionId === sess.id ? 'linear-gradient(135deg, #09355c, #0f4c81)' : '#f8fafc',
+                            color: activeSessionId === sess.id ? '#ffffff' : '#334155', fontWeight: '700', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                            boxShadow: activeSessionId === sess.id ? '0 2px 6px rgba(9,53,92,0.2)' : 'none'
                           }}
                         >
-                          <Folder size={12} /> {sess.displayText}
+                          <Folder size={14} /> {sess.displayText}
                         </button>
                       ))}
                     </div>
                   ) : (
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '16px', fontStyle: 'italic', textAlign: 'center', background: 'rgba(255,255,255,0.03)', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                    <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '16px', fontStyle: 'italic', textAlign: 'center', background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                       ℹ️ No sessions started today yet.
                     </div>
                   )}
@@ -2079,26 +2288,26 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   {/* Target Session Banner Info */}
                   {selectedSess && (
                     <div style={{
-                      background: 'rgba(59, 130, 246, 0.1)',
-                      border: '1px solid rgba(59, 130, 246, 0.25)',
-                      borderRadius: '8px',
-                      padding: '8px 12px',
-                      marginBottom: '14px',
-                      fontSize: '0.8rem',
-                      color: 'var(--text-primary)',
+                      background: '#eff6ff',
+                      border: '1px solid #bfdbfe',
+                      borderRadius: '10px',
+                      padding: '10px 14px',
+                      marginBottom: '16px',
+                      fontSize: '0.85rem',
+                      color: '#1e3a8a',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       gap: '10px'
                     }}>
                       <div>
-                        <strong>Targeted Class:</strong> Sem {displaySem || 'N/A'}{' '}
+                        <strong style={{ color: '#1e3a8a' }}>Targeted Class:</strong> Sem {displaySem || 'N/A'}{' '}
                         {selectedSess.division && String(selectedSess.division).trim().toUpperCase() !== 'ALL'
                           ? `(Division ${selectedSess.division})`
                           : '(All Divisions)'}
                       </div>
                       {selectedSess.subject && (
-                        <div style={{ fontWeight: '700', color: '#60a5fa', display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap', marginLeft: 'auto' }}>
+                        <div style={{ fontWeight: '800', color: '#2563eb', display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap', marginLeft: 'auto' }}>
                           📚 {selectedSess.subject}
                         </div>
                       )}
@@ -2106,12 +2315,12 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   )}
 
                   {!hasStartedSessions ? (
-                    <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '40px 0' }}>
-                      <p style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '6px', color: 'var(--text-primary)' }}>No session started today yet.</p>
-                      <p style={{ fontSize: '0.85rem' }}>Start a QR Code or OTP session from the dashboard to view present students.</p>
+                    <div style={{ color: '#64748b', textAlign: 'center', padding: '40px 0' }}>
+                      <p style={{ fontSize: '1rem', fontWeight: '700', marginBottom: '6px', color: '#0f172a' }}>No session started today yet.</p>
+                      <p style={{ fontSize: '0.85rem', color: '#64748b' }}>Start a QR Code or OTP session from the dashboard to view present students.</p>
                     </div>
                   ) : filteredPresent.length === 0 ? (
-                    <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '30px 0' }}>
+                    <p style={{ color: '#2563eb', textAlign: 'center', padding: '30px 0', fontWeight: '600', fontSize: '0.95rem' }}>
                       No present students found for this session.
                     </p>
                   ) : (
@@ -2119,24 +2328,24 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                       {filteredPresent.map((l, i) => (
                         <div key={l.id} style={{
                           display: 'flex', alignItems: 'center', gap: '12px',
-                          padding: '12px 14px', borderRadius: '10px',
-                          background: 'rgba(59, 130, 246, 0.12)', border: '1px solid rgba(59, 130, 246, 0.3)'
+                          padding: '12px 14px', borderRadius: '12px',
+                          background: '#f0f9ff', border: '1px solid #bae6fd'
                         }}>
                           <div style={{
                             width: '32px', height: '32px', borderRadius: '50%',
-                            background: 'rgba(59, 130, 246, 0.25)', display: 'flex',
+                            background: '#0284c7', display: 'flex',
                             alignItems: 'center', justifyContent: 'center',
-                            fontSize: '0.8rem', fontWeight: '700', color: '#3b82f6', flexShrink: 0
+                            fontSize: '0.8rem', fontWeight: '800', color: '#ffffff', flexShrink: 0
                           }}>{i + 1}</div>
                           <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.9rem' }}>{l.name}</div>
-                            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                            <div style={{ fontWeight: '700', color: '#0f172a', fontSize: '0.9rem' }}>{l.name}</div>
+                            <div style={{ fontSize: '0.78rem', color: '#475569' }}>
                               {l.roll_no ? `Roll: ${l.roll_no} • ` : ''}{l.course} Sem {l.semester}{l.division ? ` (Div ${l.division})` : ''}
                             </div>
                           </div>
                           <div style={{ textAlign: 'right' }}>
-                            <div style={{ fontSize: '0.78rem', color: '#3b82f6', fontWeight: '600' }}>✓ Present</div>
-                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{l.time}</div>
+                            <div style={{ fontSize: '0.78rem', color: '#16a34a', fontWeight: '700' }}>✓ Present</div>
+                            <div style={{ fontSize: '0.72rem', color: '#64748b' }}>{l.time}</div>
                           </div>
                         </div>
                       ))}
@@ -2250,34 +2459,35 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               return (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                    <XCircle size={24} color="#ef4444" />
-                    <h2 style={{ ...styles.cardTitle, margin: 0 }}>Absent Students Today</h2>
-                    <span style={{ marginLeft: 'auto', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                    <XCircle size={24} color="#dc2626" />
+                    <h2 style={{ fontSize: '1.35rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>Absent Students Today</h2>
+                    <span style={{ marginLeft: 'auto', marginRight: '36px', fontSize: '0.82rem', fontWeight: '700', color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca', padding: '4px 10px', borderRadius: '12px' }}>
                       {hasStartedSessions ? `${absentList.length} students` : '0 students'}
                     </span>
                   </div>
 
                   {/* Session-wise Filter Buttons */}
                   {hasStartedSessions ? (
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '14px' }}>
                       {facultySessionsToday.map(sess => (
                         <button
                           key={sess.id}
                           onClick={() => setDashModalSession(sess.id)}
                           style={{
-                            padding: '6px 12px', fontSize: '0.78rem', borderRadius: '6px',
-                            border: activeSessionId === sess.id ? '1px solid var(--primary)' : '1px solid var(--border-light)',
-                            background: activeSessionId === sess.id ? 'var(--primary)' : 'rgba(255,255,255,0.08)',
-                            color: '#ffffff', fontWeight: 'bold', cursor: 'pointer',
-                            display: 'flex', alignItems: 'center', gap: '4px'
+                            padding: '6px 14px', fontSize: '0.8rem', borderRadius: '8px',
+                            border: activeSessionId === sess.id ? '1px solid #991b1b' : '1px solid #cbd5e1',
+                            background: activeSessionId === sess.id ? 'linear-gradient(135deg, #991b1b, #dc2626)' : '#f8fafc',
+                            color: activeSessionId === sess.id ? '#ffffff' : '#334155', fontWeight: '700', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: '6px',
+                            boxShadow: activeSessionId === sess.id ? '0 2px 6px rgba(153,27,27,0.2)' : 'none'
                           }}
                         >
-                          <Folder size={12} /> {sess.displayText}
+                          <Folder size={14} /> {sess.displayText}
                         </button>
                       ))}
                     </div>
                   ) : (
-                    <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '16px', fontStyle: 'italic', textAlign: 'center', background: 'rgba(255,255,255,0.03)', padding: '10px 14px', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                    <div style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '16px', fontStyle: 'italic', textAlign: 'center', background: '#f8fafc', padding: '10px 14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                       ℹ️ No sessions started today yet.
                     </div>
                   )}
@@ -2285,26 +2495,26 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   {/* Target Session Banner Info */}
                   {selectedSess && (
                     <div style={{
-                      background: 'rgba(239, 68, 68, 0.1)',
-                      border: '1px solid rgba(239, 68, 68, 0.25)',
-                      borderRadius: '8px',
-                      padding: '8px 12px',
-                      marginBottom: '14px',
-                      fontSize: '0.8rem',
-                      color: 'var(--text-primary)',
+                      background: '#fef2f2',
+                      border: '1px solid #fecaca',
+                      borderRadius: '10px',
+                      padding: '10px 14px',
+                      marginBottom: '16px',
+                      fontSize: '0.85rem',
+                      color: '#991b1b',
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       gap: '10px'
                     }}>
                       <div>
-                        <strong>Targeted Class:</strong> Sem {displaySem || 'N/A'}{' '}
+                        <strong style={{ color: '#991b1b' }}>Targeted Class:</strong> Sem {displaySem || 'N/A'}{' '}
                         {selectedSess.division && String(selectedSess.division).trim().toUpperCase() !== 'ALL'
                           ? `(Division ${selectedSess.division})`
                           : '(All Divisions)'}
                       </div>
                       {selectedSess.subject && (
-                        <div style={{ fontWeight: '700', color: '#f87171', display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
+                        <div style={{ fontWeight: '800', color: '#dc2626', display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
                           📚 {selectedSess.subject}
                         </div>
                       )}
@@ -2312,12 +2522,12 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   )}
 
                   {!hasStartedSessions ? (
-                    <div style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '40px 0' }}>
-                      <p style={{ fontSize: '1rem', fontWeight: '600', marginBottom: '6px', color: 'var(--text-primary)' }}>No session started today yet.</p>
-                      <p style={{ fontSize: '0.85rem' }}>Start a QR Code or OTP session from the dashboard to view absent students.</p>
+                    <div style={{ color: '#64748b', textAlign: 'center', padding: '40px 0' }}>
+                      <p style={{ fontSize: '1rem', fontWeight: '700', marginBottom: '6px', color: '#0f172a' }}>No session started today yet.</p>
+                      <p style={{ fontSize: '0.85rem', color: '#64748b' }}>Start a QR Code or OTP session from the dashboard to view absent students.</p>
                     </div>
                   ) : absentList.length === 0 ? (
-                    <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '30px 0' }}>
+                    <p style={{ color: '#16a34a', textAlign: 'center', padding: '30px 0', fontWeight: '600', fontSize: '0.95rem' }}>
                       {studentsList.length === 0 ? 'Loading students list...' : 'All students in targeted class are present for this session!'}
                     </p>
                   ) : (
@@ -2328,28 +2538,28 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                         return (
                           <div key={s.id || enrollKey || i} style={{
                             display: 'flex', alignItems: 'center', gap: '12px',
-                            padding: '12px 14px', borderRadius: '10px',
-                            background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)'
+                            padding: '12px 14px', borderRadius: '12px',
+                            background: '#fef2f2', border: '1px solid #fecaca'
                           }}>
                             <div style={{
                               width: '32px', height: '32px', borderRadius: '50%',
-                              background: 'rgba(239,68,68,0.2)', display: 'flex',
+                              background: '#dc2626', display: 'flex',
                               alignItems: 'center', justifyContent: 'center',
-                              fontSize: '0.8rem', fontWeight: '700', color: '#f87171', flexShrink: 0
+                              fontSize: '0.8rem', fontWeight: '800', color: '#ffffff', flexShrink: 0
                             }}>{i + 1}</div>
                             <div style={{ flex: 1 }}>
-                              <div style={{ fontWeight: '600', color: 'var(--text-primary)', fontSize: '0.9rem' }}>{s.name}</div>
-                              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                              <div style={{ fontWeight: '700', color: '#0f172a', fontSize: '0.9rem' }}>{s.name}</div>
+                              <div style={{ fontSize: '0.78rem', color: '#475569' }}>
                                 {s.roll_no ? `Roll: ${s.roll_no} • ` : ''}{s.course} Sem {s.semester}{s.division ? ` (Div ${s.division})` : ''}
                                 {s.mobile ? ` • Ph: ${s.mobile}` : ''}
                               </div>
                             </div>
                             <div style={{ textAlign: 'right' }}>
-                              <div style={{ fontSize: '0.78rem', color: '#f87171', fontWeight: '600' }}>
+                              <div style={{ fontSize: '0.78rem', color: '#dc2626', fontWeight: '700' }}>
                                 {rejLog ? `✗ Rejected (${rejLog.status || 'Failed'})` : '✗ Absent'}
                               </div>
                               {rejLog?.time && (
-                                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Attempt: {rejLog.time}</div>
+                                <div style={{ fontSize: '0.72rem', color: '#64748b' }}>Attempt: {rejLog.time}</div>
                               )}
                             </div>
                           </div>
@@ -2365,83 +2575,83 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
             {dashModal === 'session' && (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-                  <Clock size={24} color={activeQrSessionDetails || activeOtpDetails ? '#22c55e' : 'var(--text-muted)'} />
-                  <h2 style={{ ...styles.cardTitle, margin: 0 }}>Active Session</h2>
+                  <Clock size={24} color={activeQrSessionDetails || activeOtpDetails ? '#16a34a' : '#94a3b8'} />
+                  <h2 style={{ fontSize: '1.4rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>Active Session</h2>
                   {(activeQrSessionDetails || activeOtpDetails) && (
                     <span style={{
-                      marginLeft: 'auto', fontSize: '0.75rem', fontWeight: '600',
+                      marginLeft: 'auto', fontSize: '0.75rem', fontWeight: '700',
                       padding: '3px 10px', borderRadius: '20px',
-                      background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.4)', color: '#4ade80'
-                    }}>LIVE</span>
+                      background: '#dcfce7', border: '1px solid #86efac', color: '#15803d'
+                    }}>● LIVE</span>
                   )}
                 </div>
 
                 {!activeQrSessionDetails && !activeOtpDetails && (
-                  <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)' }}>
+                  <div style={{ textAlign: 'center', padding: '40px 0', color: '#64748b' }}>
                     <Clock size={40} style={{ opacity: 0.3, margin: '0 auto 16px' }} />
-                    <p>No active session running.</p>
-                    <p style={{ fontSize: '0.85rem', marginTop: '8px' }}>Generate a QR or OTP from Dashboard to start a session.</p>
+                    <p style={{ fontWeight: '600', color: '#334155' }}>No active session running.</p>
+                    <p style={{ fontSize: '0.85rem', marginTop: '8px', color: '#64748b' }}>Generate a QR or OTP from Dashboard to start a session.</p>
                   </div>
                 )}
 
                 {activeQrSessionDetails && (
                   <div style={{ textAlign: 'center' }}>
                     <div style={{
-                      display: 'inline-block', padding: '4px 16px', borderRadius: '20px',
-                      background: 'rgba(147,51,234,0.15)', border: '1px solid rgba(147,51,234,0.4)',
-                      color: 'var(--primary)', fontSize: '0.8rem', fontWeight: '700', marginBottom: '12px'
+                      display: 'inline-block', padding: '5px 16px', borderRadius: '20px',
+                      background: '#f3e8ff', border: '1px solid #d8b4fe',
+                      color: '#7e22ce', fontSize: '0.8rem', fontWeight: '800', marginBottom: '12px'
                     }}>ROTATING QR SESSION</div>
                     {activeQrSessionDetails.semester && (
-                      <div style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                      <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#334155', marginBottom: '16px' }}>
                         Target: Sem {activeQrSessionDetails.semester} {activeQrSessionDetails.division ? `• Div ${activeQrSessionDetails.division}` : '• All Divisions'}
                       </div>
                     )}
                     <div style={{
-                      background: '#fff', borderRadius: '16px', padding: '16px',
-                      display: 'inline-block', boxShadow: '0 10px 40px rgba(147,51,234,0.3)', margin: '0 auto 20px'
+                      background: '#ffffff', borderRadius: '20px', padding: '18px',
+                      display: 'inline-block', boxShadow: '0 8px 30px rgba(0,0,0,0.08)', border: '1px solid #e2e8f0', margin: '0 auto 20px'
                     }}>
                       <canvas ref={qrCanvasRef} />
                     </div>
-                    <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
-                      Token <strong>{tokenIndex + 1}</strong> of {activeQrSessionDetails?.tokens?.length || 8} • Rotates every 15s
+                    <div style={{ fontSize: '0.92rem', color: '#475569', marginBottom: '8px' }}>
+                      Token <strong style={{ color: '#0f172a' }}>{tokenIndex + 1}</strong> of {activeQrSessionDetails?.tokens?.length || 8} • Rotates every 15s
                     </div>
                     <div style={{
-                      fontSize: '2rem', fontWeight: '700', color: '#a855f7',
-                      fontFamily: 'monospace', letterSpacing: '2px', marginBottom: '8px'
+                      fontSize: '2.5rem', fontWeight: '800', color: '#9333ea',
+                      fontFamily: 'monospace', letterSpacing: '2px', marginBottom: '4px'
                     }}>{qrSessionTimer}s</div>
-                    <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>Session time remaining</div>
+                    <div style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: '500' }}>Session time remaining</div>
                   </div>
                 )}
 
                 {activeOtpDetails && (
                   <div style={{ textAlign: 'center' }}>
                     <div style={{
-                      display: 'inline-block', padding: '4px 16px', borderRadius: '20px',
-                      background: 'rgba(37,99,235,0.15)', border: '1px solid rgba(37,99,235,0.4)',
-                      color: '#60a5fa', fontSize: '0.8rem', fontWeight: '700', marginBottom: '12px'
+                      display: 'inline-block', padding: '5px 16px', borderRadius: '20px',
+                      background: '#dbeafe', border: '1px solid #93c5fd',
+                      color: '#1d4ed8', fontSize: '0.8rem', fontWeight: '800', marginBottom: '12px'
                     }}>STATIC OTP CODE</div>
                     {activeOtpDetails.semester && (
-                      <div style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '16px' }}>
+                      <div style={{ fontSize: '0.9rem', fontWeight: '700', color: '#334155', marginBottom: '16px' }}>
                         Target: Sem {activeOtpDetails.semester} {activeOtpDetails.division ? `• Div ${activeOtpDetails.division}` : '• All Divisions'}
                       </div>
                     )}
                     <div style={{
-                      fontSize: '3rem', fontWeight: '800', letterSpacing: '10px',
-                      color: '#60a5fa', fontFamily: 'monospace', margin: '20px 0'
+                      fontSize: '3.2rem', fontWeight: '800', letterSpacing: '10px',
+                      color: '#2563eb', fontFamily: 'monospace', margin: '20px 0'
                     }}>{activeOtpDetails.otp}</div>
-                    <div style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                    <div style={{ fontSize: '0.9rem', color: '#475569', marginBottom: '6px' }}>
                       Expires in
                     </div>
-                    <div style={{ fontSize: '2rem', fontWeight: '700', color: '#f59e0b' }}>
+                    <div style={{ fontSize: '2.2rem', fontWeight: '800', color: '#d97706' }}>
                       {otpCountdown}s
                     </div>
                     <div style={{
                       marginTop: '16px', height: '6px', borderRadius: '10px',
-                      background: 'var(--border-light)', overflow: 'hidden'
+                      background: '#e2e8f0', overflow: 'hidden'
                     }}>
                       <div style={{
                         height: '100%', borderRadius: '10px',
-                        background: 'linear-gradient(90deg, #60a5fa, #a855f7)',
+                        background: 'linear-gradient(90deg, #2563eb, #9333ea)',
                         width: `${Math.min(100, (otpCountdown / 300) * 100)}%`,
                         transition: 'width 1s linear'
                       }} />
@@ -2560,29 +2770,38 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
         {/* Main Content Workspace */}
         <div className="admin-main-wrapper content-light">
-          <header className="admin-top-header-banner">
+          <header className={`admin-top-header-banner ${activeTab === 'dashboard' ? 'dashboard-header-tall' : ''}`}>
             <div className="admin-banner-content">
-              <div className="admin-header-title-row">
-                <button 
-                  className="admin-mobile-toggle-btn"
-                  onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                  title="Toggle Menu"
-                >
-                  <Menu size={22} />
-                </button>
-                <h1 className="admin-banner-title">
-                  {activeTab === 'dashboard' ? 'Faculty Dashboard' :
-                   activeTab === 'otp' ? 'OTP & QR Session' :
-                   activeTab === 'manual' ? 'Manual Attendance' :
-                   activeTab === 'attendance_logs' ? 'Attendance Logs' :
-                   activeTab === 'reports' ? 'Attendance Reports' :
-                   activeTab === 'leaves' ? 'Leave Request' :
-                   activeTab === 'settings' ? 'Account Settings' : 'Faculty Dashboard'}
-                </h1>
+              <div className="admin-header-title-row" style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                {!showFloatingMobileMenu && (
+                  <button
+                    type="button"
+                    className="admin-side-menu-top-btn"
+                    onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+                    title={mobileMenuOpen ? "Close Side Menu" : "Open Side Menu"}
+                  >
+                    {mobileMenuOpen ? (
+                      <X size={22} color="#ffffff" strokeWidth={2.5} />
+                    ) : (
+                      <Menu size={22} color="#ffffff" strokeWidth={2.5} />
+                    )}
+                  </button>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <h1 className="admin-banner-title">
+                    {activeTab === 'dashboard' ? 'Faculty Dashboard' :
+                     activeTab === 'otp' ? 'OTP & QR Session' :
+                     activeTab === 'manual' ? 'Manual Attendance' :
+                     activeTab === 'attendance_logs' ? 'Attendance Logs' :
+                     activeTab === 'reports' ? 'Attendance Reports' :
+                     activeTab === 'leaves' ? 'Leave Request' :
+                     activeTab === 'settings' ? 'Account Settings' : 'Faculty Dashboard'}
+                  </h1>
+                  <p className="admin-banner-subtitle" style={{ margin: 0 }}>
+                    Welcome back, <strong className="admin-banner-username">{activeUser?.name || 'Faculty Member'}</strong> 👋
+                  </p>
+                </div>
               </div>
-              <p className="admin-banner-subtitle">
-                Welcome back, <strong className="admin-banner-username">{activeUser?.name || 'Faculty Member'}</strong> 👋
-              </p>
             </div>
 
             {(activeQrSessionDetails || activeOtpDetails) && (
@@ -2609,79 +2828,259 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
           {activeTab === 'dashboard' && (
             <div style={{ ...styles.tabContent, gap: isMobile ? '16px' : '24px' }}>
               {/* Statistics Grid */}
-              <div className="grid-3-cols" style={{ marginBottom: isMobile ? '10px' : '20px', display: 'grid', gridTemplateColumns: isMobile ? '100%' : 'repeat(3, 1fr)', gap: isMobile ? '12px' : '20px' }}>
+              <div className="grid-4-cols" style={{ marginBottom: isMobile ? '10px' : '20px', display: 'grid', gridTemplateColumns: isMobile ? '100%' : 'repeat(4, 1fr)', gap: isMobile ? '12px' : '16px' }}>
 
-                {/* Present Today - Clickable */}
+                {/* Present Today - Clickable (Styled like Photo 2) */}
                 <div
-                  className="glass-panel stat-card-hover"
+                  className="stat-card-hover"
                   style={{
-                    ...styles.statCard,
+                    background: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '20px',
+                    padding: '24px 22px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '16px',
+                    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.03)',
                     cursor: 'pointer',
                     transition: 'all 0.2s ease-in-out',
-                    border: '1px solid rgba(59, 130, 246, 0.25)',
-                    background: 'linear-gradient(135deg, rgba(3, 25, 54, 0.85), rgba(59, 130, 246, 0.06))',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    minHeight: '150px'
+                    minHeight: '135px'
                   }}
                   onClick={() => setDashModal('present')}
-                  title="Click to see present students"
+                  title="Click to view session"
                 >
-                  <div style={{ ...styles.statHeader, marginBottom: '14px' }}>
-                    <span style={{ ...styles.statLabel, textTransform: 'uppercase', letterSpacing: '0.5px', fontSize: '0.78rem', color: '#60a5fa', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      Present Today
-                      <span style={{ fontSize: '0.68rem', fontWeight: '600', padding: '2px 7px', borderRadius: '20px', background: 'rgba(59,130,246,0.15)', border: '1px solid rgba(59,130,246,0.3)', color: '#93c5fd', textTransform: 'none', letterSpacing: '0' }}>All Session</span>
-                    </span>
-                    <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'rgba(59, 130, 246, 0.15)', border: '1px solid rgba(59, 130, 246, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <CheckCircle size={20} color="#60a5fa" />
-                    </div>
+                  <div style={{
+                    background: 'linear-gradient(135deg, #09355c, #0f4c81)',
+                    color: '#ffffff',
+                    width: '58px',
+                    height: '58px',
+                    borderRadius: '18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 6px 14px rgba(9, 53, 92, 0.3)',
+                    flexShrink: 0
+                  }}>
+                    <Users size={28} color="#ffffff" />
                   </div>
                   <div>
-                    <div style={{ ...styles.statVal, fontSize: '2.2rem', fontWeight: '800', color: 'var(--text-primary)' }}>{facultySessionsToday.length > 0 ? stats.presentToday : 0}</div>
-                    <div style={{ ...styles.statSubText, fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>{facultySessionsToday.length > 0 ? 'Students marked present' : 'No session started today'}</div>
-                  </div>
-                  <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid rgba(255, 255, 255, 0.06)', fontSize: '0.78rem', color: '#60a5fa', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    Click to view session <span>→</span>
+                    <span style={{
+                      fontSize: '1.2rem',
+                      color: '#0f172a',
+                      fontWeight: '800',
+                      display: 'block',
+                      lineHeight: 1.2,
+                      letterSpacing: '-0.01em',
+                      fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
+                    }}>
+                      Present Today
+                    </span>
+                    <div style={{
+                      fontSize: '0.82rem',
+                      color: '#2563eb',
+                      fontWeight: '600',
+                      marginTop: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}>
+                      Click to view session <span>→</span>
+                    </div>
                   </div>
                 </div>
 
-                {/* Absent Today - Clickable */}
+                {/* Absent Today - Clickable (Styled like Photo 2) */}
                 <div
-                  className="glass-panel stat-card-hover"
+                  className="stat-card-hover"
                   style={{
-                    ...styles.statCard,
+                    background: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '20px',
+                    padding: '24px 22px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '16px',
+                    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.03)',
                     cursor: 'pointer',
                     transition: 'all 0.2s ease-in-out',
-                    border: '1px solid rgba(239, 68, 68, 0.25)',
-                    background: 'linear-gradient(135deg, rgba(3, 25, 54, 0.85), rgba(239, 68, 68, 0.06))',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    minHeight: '150px'
+                    minHeight: '135px'
                   }}
                   onClick={() => setDashModal('absent')}
-                  title="Click to see absent/rejected students"
+                  title="Click to view session"
                 >
-                  <div style={{ ...styles.statHeader, marginBottom: '14px' }}>
-                    <span style={{ ...styles.statLabel, textTransform: 'uppercase', letterSpacing: '0.5px', fontSize: '0.78rem', color: '#f87171', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      Absent Today
-                      <span style={{ fontSize: '0.68rem', fontWeight: '600', padding: '2px 7px', borderRadius: '20px', background: 'rgba(239,68,68,0.15)', border: '1px solid rgba(239,68,68,0.3)', color: '#fca5a5', textTransform: 'none', letterSpacing: '0' }}>All Session</span>
-                    </span>
-                    <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid rgba(239, 68, 68, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <XCircle size={20} color="#f87171" />
-                    </div>
+                  <div style={{
+                    background: 'linear-gradient(135deg, #991b1b, #dc2626)',
+                    color: '#ffffff',
+                    width: '58px',
+                    height: '58px',
+                    borderRadius: '18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 6px 14px rgba(153, 27, 27, 0.3)',
+                    flexShrink: 0
+                  }}>
+                    <UserX size={28} color="#ffffff" />
                   </div>
                   <div>
-                    <div style={{ ...styles.statVal, fontSize: '2.2rem', fontWeight: '800', color: 'var(--text-primary)' }}>{facultySessionsToday.length > 0 ? stats.absentToday : 0}</div>
-                    <div style={{ ...styles.statSubText, fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px' }}>{facultySessionsToday.length > 0 ? `Out of ${stats.totalStudents} total` : 'No session started today'}</div>
-                  </div>
-                  <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px solid rgba(255, 255, 255, 0.06)', fontSize: '0.78rem', color: '#f87171', fontWeight: '600', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    Click to view session <span>→</span>
+                    <span style={{
+                      fontSize: '1.2rem',
+                      color: '#0f172a',
+                      fontWeight: '800',
+                      display: 'block',
+                      lineHeight: 1.2,
+                      letterSpacing: '-0.01em',
+                      fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
+                    }}>
+                      Absent Today
+                    </span>
+                    <div style={{
+                      fontSize: '0.82rem',
+                      color: '#dc2626',
+                      fontWeight: '600',
+                      marginTop: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}>
+                      Click to view session <span>→</span>
+                    </div>
                   </div>
                 </div>
 
-                {/* Active Session - Clickable */}
+                {/* Leave Request - Clickable (3rd Card) */}
+                <div
+                  className="stat-card-hover"
+                  style={{
+                    background: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '20px',
+                    padding: '24px 22px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '16px',
+                    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.03)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease-in-out',
+                    minHeight: '135px'
+                  }}
+                  onClick={() => { setActiveTab('leaves'); fetchAllLeaves(); }}
+                  title="Click to view leave requests"
+                >
+                  <div style={{
+                    background: 'linear-gradient(135deg, #0d9488, #14b8a6)',
+                    color: '#ffffff',
+                    width: '58px',
+                    height: '58px',
+                    borderRadius: '18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 6px 14px rgba(13, 148, 136, 0.3)',
+                    flexShrink: 0
+                  }}>
+                    <ClipboardList size={28} color="#ffffff" />
+                  </div>
+                  <div>
+                    <span style={{
+                      fontSize: '1.2rem',
+                      color: '#0f172a',
+                      fontWeight: '800',
+                      display: 'block',
+                      lineHeight: 1.2,
+                      letterSpacing: '-0.01em',
+                      fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
+                    }}>
+                      Leave Request
+                    </span>
+                    <div style={{
+                      fontSize: '0.82rem',
+                      color: '#0d9488',
+                      fontWeight: '600',
+                      marginTop: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}>
+                      Click to view leave request <span>→</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Analytics - Clickable (4th Card) */}
+                <div
+                  className="stat-card-hover"
+                  style={{
+                    background: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '20px',
+                    padding: '24px 22px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '16px',
+                    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.03)',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease-in-out',
+                    minHeight: '135px'
+                  }}
+                  onClick={() => setActiveTab('reports')}
+                  title="Click to view analytics and reports"
+                >
+                  <div style={{
+                    background: 'linear-gradient(135deg, #e69500, #f59e0b)',
+                    color: '#09355c',
+                    width: '58px',
+                    height: '58px',
+                    borderRadius: '18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 6px 14px rgba(230, 149, 0, 0.3)',
+                    flexShrink: 0
+                  }}>
+                    <TrendingUp size={28} color="#09355c" strokeWidth={2.5} />
+                  </div>
+                  <div>
+                    <span style={{
+                      fontSize: '1.2rem',
+                      color: '#0f172a',
+                      fontWeight: '800',
+                      display: 'block',
+                      lineHeight: 1.2,
+                      letterSpacing: '-0.01em',
+                      fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
+                    }}>
+                      Analytics
+                    </span>
+                    <div style={{
+                      fontSize: '0.82rem',
+                      color: '#d97706',
+                      fontWeight: '600',
+                      marginTop: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}>
+                      View insights and analytics <span>→</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Middle Row: QR Sessions Run, Active Session & Session Controllers */}
+              <div style={{ marginBottom: '20px', display: 'grid', gridTemplateColumns: isMobile ? '100%' : 'repeat(3, 1fr)', gap: isMobile ? '12px' : '16px' }}>
+                
+                {/* Column 1: QR Sessions Run */}
+                <div className="glass-panel" style={styles.statCard}>
+                  <div style={styles.statHeader}>
+                    <span style={styles.statLabel}>QR Sessions Run</span>
+                    <QrCode size={20} color="#a855f7" />
+                  </div>
+                  <div style={styles.statVal}>{stats.qrSessionsGenerated} / 5</div>
+                  <div style={styles.statSubText}>Daily maximum limit of 5 sessions</div>
+                </div>
+
+                {/* Column 2: Active Session (Moved between QR Sessions & Session Controllers) */}
                 <div
                   className="glass-panel stat-card-hover"
                   style={{
@@ -2732,22 +3131,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     Click to view session <span>→</span>
                   </div>
                 </div>
-              </div>
 
-              {/* Start Session Buttons & QR Stats */}
-              <div className="responsive-grid-2col" style={{ marginBottom: '20px' }}>
-                
-                {/* Left Column: QR Sessions Run */}
-                <div className="glass-panel" style={styles.statCard}>
-                  <div style={styles.statHeader}>
-                    <span style={styles.statLabel}>QR Sessions Run</span>
-                    <QrCode size={20} color="#a855f7" />
-                  </div>
-                  <div style={styles.statVal}>{stats.qrSessionsGenerated} / 5</div>
-                  <div style={styles.statSubText}>Daily maximum limit of 5 sessions</div>
-                </div>
-
-                {/* Right Column: Create Session */}
+                {/* Column 3: Session Controllers */}
                 <div className="glass-panel" style={styles.cardPadding}>
                   <h3 style={styles.cardTitle}>Session Controllers</h3>
                   <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '20px' }}>
@@ -2995,8 +3380,10 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
             <div style={styles.tabContent}>
               {/* Attendance Logs Directory Card */}
               <div className="glass-panel" style={{ ...styles.cardPadding, padding: isMobile ? '12px 8px' : '28px' }}>
-                <div className="mobile-stack-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                {isMobile ? (
+                  /* ===== MOBILE VIEW HEADER (MATCHES PHOTO 2 EXACTLY) ===== */
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', marginBottom: '20px', width: '100%' }}>
+                    {/* Row 1: Back Button */}
                     {selectedSemFolder !== null && (
                       <button
                         onClick={() => {
@@ -3012,113 +3399,319 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                           }
                         }}
                         className="btn btn-secondary"
-                        style={{ padding: '5px 14px', fontSize: '0.82rem', flexShrink: 0, marginTop: '2px' }}
+                        style={{
+                          width: '100%',
+                          padding: '10px 16px',
+                          fontSize: '0.88rem',
+                          fontWeight: '600',
+                          borderRadius: '12px',
+                          display: 'flex',
+                          justifyContent: 'center',
+                          alignItems: 'center'
+                        }}
                       >
                         ← Back
                       </button>
                     )}
-                    <Folder size={22} color="#f59e0b" style={{ marginTop: '2px', flexShrink: 0 }} />
-                    <div>
-                      <h3 style={{ ...styles.cardTitle, marginBottom: '2px', lineHeight: 1.2 }}>
-                        {selectedSemFolder === null
-                          ? 'Attendance Logs'
-                          : (selectedSessionFolder
-                              ? `${selectedSessionFolder.title}`
-                              : `Sem ${selectedSemFolder} Attendance`
-                            )
-                        }
-                      </h3>
-                      <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '2px', marginBottom: 0 }}>
-                        {selectedSemFolder === null
-                          ? 'Click on any semester folder to view date-wise session archives.'
-                          : (selectedSessionFolder
-                              ? 'View present and absent student records for this session.'
-                              : `Select a date to view session attendance archives for Semester ${selectedSemFolder}.`
-                            )
-                        }
-                      </p>
+
+                    {/* Row 2: Folder Icon + Title & Description */}
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', width: '100%' }}>
+                      <Folder size={22} color="#f59e0b" style={{ marginTop: '2px', flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <h3 style={{ ...styles.cardTitle, marginBottom: '4px', lineHeight: 1.3, wordBreak: 'break-word', fontSize: '1.05rem' }}>
+                          {selectedSemFolder === null
+                            ? 'Attendance Logs'
+                            : (selectedSessionFolder
+                                ? `${selectedSessionFolder.title}`
+                                : `Sem ${selectedSemFolder} Attendance`
+                              )
+                          }
+                        </h3>
+                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '2px', marginBottom: 0, wordBreak: 'break-word', lineHeight: 1.4 }}>
+                          {selectedSemFolder === null
+                            ? 'Click on any semester folder to view date-wise session archives.'
+                            : (selectedSessionFolder
+                                ? 'View present and absent student records for this session.'
+                                : `Select a date to view session attendance archives for Semester ${selectedSemFolder}.`
+                              )
+                          }
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Row 3 & 4: Select Date + Reset / Reload Button */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '4px' }}>
+                      {selectedSemFolder === null ? (
+                        /* Root View: Date Archive + Reload */
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            📅 Date Archive
+                          </div>
+                          <button
+                            onClick={handleReloadDirectory}
+                            disabled={directoryReloading}
+                            style={{
+                              padding: '6px 14px',
+                              borderRadius: '8px',
+                              fontSize: '0.8rem',
+                              fontWeight: '600',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              background: '#ffffff',
+                              border: '1.5px solid #cbd5e1',
+                              color: '#1e293b',
+                              cursor: 'pointer',
+                              boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                            }}
+                          >
+                            <RefreshCw size={14} className={directoryReloading ? 'spin-icon' : ''} color="#0284c7" />
+                            <span>{directoryReloading ? 'Reloading...' : 'Reload'}</span>
+                          </button>
+                        </div>
+                      ) : selectedSessionFolder ? (
+                        /* Session View: Select Date Row + Reload Button Row */
+                        <>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Calendar size={16} color="#f59e0b" style={{ flexShrink: 0 }} />
+                            <label style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>Select Date:</label>
+                            <input
+                              type="date"
+                              className="compact-date-picker"
+                              value={folderSearchDate}
+                              onChange={(e) => setFolderSearchDate(e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <button
+                              onClick={handleReloadDirectory}
+                              disabled={directoryReloading}
+                              style={{
+                                padding: '7px 16px',
+                                borderRadius: '10px',
+                                fontSize: '0.82rem',
+                                fontWeight: '600',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                background: '#ffffff',
+                                border: '1.5px solid #cbd5e1',
+                                color: '#1e293b',
+                                cursor: 'pointer',
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                              }}
+                            >
+                              <RefreshCw size={14} className={directoryReloading ? 'spin-icon' : ''} color="#0284c7" />
+                              <span>{directoryReloading ? 'Reloading...' : 'Reload'}</span>
+                            </button>
+                          </div>
+                        </>
+                      ) : (
+                        /* Sem View (Photo 2): Select Date Row + Reset Button Row */
+                        <>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <Calendar size={16} color="#f59e0b" style={{ flexShrink: 0 }} />
+                            <label style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)', margin: 0 }}>Select Date:</label>
+                            <input
+                              type="date"
+                              className="compact-date-picker"
+                              value={folderSearchDate}
+                              onChange={(e) => {
+                                setFolderSearchDate(e.target.value);
+                                setSelectedSessionFolder(null);
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <button
+                              onClick={() => {
+                                const today = new Date().toISOString().split('T')[0];
+                                setFolderSearchDate(today);
+                                setSelectedSessionFolder(null);
+                                setFolderDivFilter('ALL');
+                                setFolderSearchName('');
+                                setFolderSearchEnroll('');
+                                showToast('Date reset to Today', 'info', 2000);
+                              }}
+                              style={{
+                                padding: '7px 16px',
+                                borderRadius: '10px',
+                                fontSize: '0.82rem',
+                                fontWeight: '600',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                background: '#ffffff',
+                                border: '1.5px solid #cbd5e1',
+                                color: '#1e293b',
+                                cursor: 'pointer',
+                                boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                              }}
+                            >
+                              <RotateCcw size={14} color="#f59e0b" />
+                              <span>Reset</span>
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'nowrap' }}>
-                    {selectedSemFolder === null ? (
-                      <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
-                        📅 Date Archive
-                      </div>
-                    ) : (
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0, flexWrap: 'nowrap', whiteSpace: 'nowrap' }}>
-                        <Calendar size={16} color="#f59e0b" style={{ flexShrink: 0 }} />
-                        <label style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)', whiteSpace: 'nowrap', flexShrink: 0, margin: 0 }}>Select Date:</label>
-                        <input
-                          type="date"
-                          value={folderSearchDate}
-                          onChange={(e) => {
-                            setFolderSearchDate(e.target.value);
-                            setSelectedSessionFolder(null);
-                          }}
-                          style={{
-                            padding: '5px 12px',
-                            borderRadius: '10px',
-                            border: '1.5px solid #cbd5e1',
-                            background: '#ffffff',
-                            color: '#1e293b',
-                            fontSize: '0.85rem',
-                            fontWeight: '600',
-                            cursor: 'pointer',
-                            outline: 'none',
-                            boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                          }}
-                        />
+                ) : (
+                  /* ===== DESKTOP VIEW HEADER ===== */
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px', flexWrap: 'wrap', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', flex: 1, minWidth: 0 }}>
+                      {selectedSemFolder !== null && (
                         <button
                           onClick={() => {
-                            if (folderSearchDate) {
-                              setDirectoryReloading(true);
-                              fetchQrData(folderSearchDate).finally(() => setDirectoryReloading(false));
+                            if (selectedSessionFolder) {
+                              setSelectedSessionFolder(null);
+                            } else {
+                              setSelectedSemFolder(null);
+                              setSelectedSessionFolder(null);
+                              setFolderSearchName('');
+                              setFolderSearchEnroll('');
+                              setFolderSearchDate(new Date().toISOString().split('T')[0]);
+                              setFolderDivFilter('ALL');
                             }
                           }}
                           className="btn btn-secondary"
-                          style={{ padding: '5px 10px', fontSize: '0.78rem', flexShrink: 0, gap: '4px' }}
-                          title="Refresh Date Logs"
+                          style={{
+                            padding: '6px 14px',
+                            fontSize: '0.84rem',
+                            fontWeight: '600',
+                            borderRadius: '10px',
+                            flexShrink: 0
+                          }}
                         >
-                          <RefreshCw size={13} className={directoryReloading ? "spin-icon" : ""} />
+                          ← Back
                         </button>
+                      )}
+                      <Folder size={22} color="#f59e0b" style={{ flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <h3 style={{ ...styles.cardTitle, marginBottom: '2px', lineHeight: 1.3, wordBreak: 'break-word' }}>
+                          {selectedSemFolder === null
+                            ? 'Attendance Logs'
+                            : (selectedSessionFolder
+                                ? `${selectedSessionFolder.title}`
+                                : `Sem ${selectedSemFolder} Attendance`
+                              )
+                          }
+                        </h3>
+                        <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '2px', marginBottom: 0, wordBreak: 'break-word' }}>
+                          {selectedSemFolder === null
+                            ? 'Click on any semester folder to view date-wise session archives.'
+                            : (selectedSessionFolder
+                                ? 'View present and absent student records for this session.'
+                                : `Select a date to view session attendance archives for Semester ${selectedSemFolder}.`
+                              )
+                          }
+                        </p>
                       </div>
-                    )}
-                    <button
-                      onClick={handleReloadDirectory}
-                      disabled={directoryReloading}
-                      style={{
-                        padding: '6px 14px',
-                        borderRadius: '10px',
-                        fontSize: '0.82rem',
-                        fontWeight: '600',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        background: '#ffffff',
-                        border: '1.5px solid #cbd5e1',
-                        color: '#1e293b',
-                        cursor: 'pointer',
-                        whiteSpace: 'nowrap',
-                        boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
-                        transition: 'all 0.15s ease'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.borderColor = '#0284c7';
-                        e.currentTarget.style.color = '#0284c7';
-                        e.currentTarget.style.background = '#f0f9ff';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.borderColor = '#cbd5e1';
-                        e.currentTarget.style.color = '#1e293b';
-                        e.currentTarget.style.background = '#ffffff';
-                      }}
-                      title="Reload Attendance Data"
-                    >
-                      <RefreshCw size={14} className={directoryReloading ? 'spin-icon' : ''} />
-                      <span>{directoryReloading ? 'Reloading...' : 'Reload'}</span>
-                    </button>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'nowrap' }}>
+                      {selectedSemFolder === null ? (
+                        <>
+                          <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
+                            📅 Date Archive
+                          </div>
+                          <button
+                            onClick={handleReloadDirectory}
+                            disabled={directoryReloading}
+                            style={{
+                              padding: '6px 14px',
+                              borderRadius: '8px',
+                              fontSize: '0.82rem',
+                              fontWeight: '600',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              background: '#ffffff',
+                              border: '1.5px solid #cbd5e1',
+                              color: '#1e293b',
+                              cursor: 'pointer',
+                              whiteSpace: 'nowrap',
+                              boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <RefreshCw size={14} className={directoryReloading ? 'spin-icon' : ''} color="#0284c7" />
+                            <span>{directoryReloading ? 'Reloading...' : 'Reload'}</span>
+                          </button>
+                        </>
+                      ) : selectedSessionFolder ? (
+                        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '8px', flexWrap: 'nowrap', maxWidth: '100%' }}>
+                          <Calendar size={16} color="#f59e0b" style={{ flexShrink: 0 }} />
+                          <label style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)', margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>Select Date:</label>
+                          <input
+                            type="date"
+                            className="compact-date-picker"
+                            value={folderSearchDate}
+                            onChange={(e) => setFolderSearchDate(e.target.value)}
+                          />
+                          <button
+                            onClick={handleReloadDirectory}
+                            disabled={directoryReloading}
+                            className="compact-date-btn"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              background: '#ffffff',
+                              border: '1.5px solid #cbd5e1',
+                              color: '#1e293b',
+                              cursor: 'pointer',
+                              boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <RefreshCw size={14} className={directoryReloading ? 'spin-icon' : ''} color="#0284c7" />
+                            <span>{directoryReloading ? 'Reloading...' : 'Reload'}</span>
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: '8px', flexWrap: 'nowrap', maxWidth: '100%' }}>
+                          <Calendar size={16} color="#f59e0b" style={{ flexShrink: 0 }} />
+                          <label style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)', margin: 0, whiteSpace: 'nowrap', flexShrink: 0 }}>Select Date:</label>
+                          <input
+                            type="date"
+                            className="compact-date-picker"
+                            value={folderSearchDate}
+                            onChange={(e) => {
+                              setFolderSearchDate(e.target.value);
+                              setSelectedSessionFolder(null);
+                            }}
+                          />
+                          <button
+                            onClick={() => {
+                              const today = new Date().toISOString().split('T')[0];
+                              setFolderSearchDate(today);
+                              setSelectedSessionFolder(null);
+                              setFolderDivFilter('ALL');
+                              setFolderSearchName('');
+                              setFolderSearchEnroll('');
+                              showToast('Date reset to Today', 'info', 2000);
+                            }}
+                            className="compact-date-btn"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              background: '#ffffff',
+                              border: '1.5px solid #cbd5e1',
+                              color: '#1e293b',
+                              cursor: 'pointer',
+                              boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                              transition: 'all 0.15s ease'
+                            }}
+                          >
+                            <RotateCcw size={14} color="#f59e0b" />
+                            <span>Reset</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {selectedSemFolder === null ? (
                   <>
@@ -3346,14 +3939,14 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                                   onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 30px rgba(245, 158, 11, 0.28)'; }}
                                   onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
                                 >
-                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                    <Folder size={32} color="#f59e0b" />
-                                    <div style={{ display: 'flex', gap: '6px' }}>
-                                      <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '10px', background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', fontWeight: '700' }}>
-                                        ✓ {sess.presentCount} Present
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+                                    <Folder size={28} color="#f59e0b" style={{ flexShrink: 0 }} />
+                                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                      <span style={{ fontSize: '0.72rem', padding: '2px 6px', borderRadius: '8px', background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', fontWeight: '700', whiteSpace: 'nowrap' }} title={`${sess.presentCount} Present`}>
+                                        ✓ {sess.presentCount}
                                       </span>
-                                      <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', fontWeight: '700' }}>
-                                        ✕ {sess.absentCount} Absent
+                                      <span style={{ fontSize: '0.72rem', padding: '2px 6px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', fontWeight: '700', whiteSpace: 'nowrap' }} title={`${sess.absentCount} Absent`}>
+                                        ✕ {sess.absentCount}
                                       </span>
                                     </div>
                                   </div>
@@ -3737,68 +4330,9 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                 )}
               </div>
 
-              {/* Semester Folder Navigation (4 per row grid) */}
-              <div style={{ marginTop: '16px', padding: '14px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--border-light)' }}>
-                <div style={{ fontSize: '0.88rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <Folder size={16} color="#a855f7" /> Assigned Semester Folders:
-                </div>
-                <div className="semester-folder-grid" style={{ gap: '8px', marginBottom: 0 }}>
-                  <button
-                    type="button"
-                    className={`btn ${filterSem === '' ? 'btn-primary' : 'btn-secondary'}`}
-                    onClick={() => setFilterSem('')}
-                    style={{ fontSize: '0.82rem', padding: '8px 6px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', width: '100%' }}
-                  >
-                    <Folder size={14} /> All Folders
-                  </button>
-                  {assignedSemesters.map(s => (
-                    <button
-                      key={s}
-                      type="button"
-                      className={`btn ${filterSem === String(s) ? 'btn-primary' : 'btn-secondary'}`}
-                      onClick={() => setFilterSem(String(s))}
-                      style={{ fontSize: '0.82rem', padding: '8px 6px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', width: '100%' }}
-                    >
-                      <Folder size={14} /> Sem {s}
-                    </button>
-                  ))}
-                </div>
-              </div>
 
-              {/* Search Filters Row */}
-              <div style={{ display: 'flex', gap: '10px', marginTop: '16px', flexWrap: 'wrap' }}>
-                <div style={{ ...styles.filterGroup, width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : '1' }}>
-                  <label style={styles.filterLabel}>Search By Roll No</label>
-                  <input
-                    type="text"
-                    placeholder="Search By Roll No..."
-                    value={filterEnrollment}
-                    onChange={(e) => setFilterEnrollment(e.target.value)}
-                    style={{ ...styles.selectInput, width: isMobile ? '100%' : '180px' }}
-                  />
-                </div>
-                <div style={{ ...styles.filterGroup, width: isMobile ? '100%' : 'auto', flex: isMobile ? 'none' : '1' }}>
-                  <label style={styles.filterLabel}>Search By Name</label>
-                  <input
-                    type="text"
-                    placeholder="Search By Name..."
-                    value={filterName}
-                    onChange={(e) => setFilterName(e.target.value)}
-                    style={{ ...styles.selectInput, width: isMobile ? '100%' : '180px' }}
-                  />
-                </div>
-                {(filterEnrollment || filterName || filterSem) && (
-                  <div style={{ display: 'flex', alignItems: 'flex-end', width: isMobile ? '100%' : 'auto' }}>
-                    <button
-                      onClick={() => { setFilterEnrollment(''); setFilterName(''); setFilterSem(''); }}
-                      className="btn btn-secondary"
-                      style={{ padding: '8px 14px', fontSize: '0.82rem', width: isMobile ? '100%' : 'auto' }}
-                    >
-                      Clear Filters
-                    </button>
-                  </div>
-                )}
-              </div>
+
+
 
               {/* Table Data Preview */}
               <div style={{ ...styles.tableScrollable, marginTop: '16px', maxHeight: '450px', overflowY: 'auto' }}>
@@ -3924,6 +4458,47 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   {settingsLoading ? 'Saving changes...' : 'Change Password'}
                 </button>
               </form>
+
+              {/* CARD 2: MOBILE NAVIGATION SETTINGS */}
+              <div className="glass-panel" style={{ ...styles.cardPadding, padding: isMobile ? '12px 8px' : '28px', marginTop: '24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '14px', marginBottom: '16px' }}>
+                  <div style={{ background: 'rgba(245, 158, 11, 0.15)', padding: '10px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Menu size={24} color="#f59e0b" />
+                  </div>
+                  <div>
+                    <h3 style={{ ...styles.cardTitle, margin: 0 }}>Mobile Navigation Settings</h3>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0, marginTop: '4px' }}>Configure floating mobile menu button display</p>
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderRadius: '12px', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid var(--border-light)', flexWrap: 'wrap', gap: '12px' }}>
+                  <div>
+                    <div style={{ fontWeight: '700', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                      Bottom Floating Hamburger Button
+                    </div>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                      ON: Bottom floating menu button | OFF: Top header banner menu button
+                    </div>
+                  </div>
+
+                  <label style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer', gap: '10px' }}>
+                    <span style={{ fontSize: '0.85rem', fontWeight: '700', color: showFloatingMobileMenu ? '#10b981' : '#64748b' }}>
+                      {showFloatingMobileMenu ? 'ON (Show)' : 'OFF (Hide)'}
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={showFloatingMobileMenu}
+                      onChange={handleToggleFloatingMobileMenu}
+                      style={{
+                        width: '44px',
+                        height: '24px',
+                        cursor: 'pointer',
+                        accentColor: '#f59e0b'
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
             </div>
           )}
 
@@ -4158,8 +4733,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                             <th style={styles.tableTh}>Roll No</th>
                             <th style={styles.tableTh}>Name</th>
                             <th style={styles.tableTh}>Division</th>
-                            <th style={styles.tableTh}>Status</th>
                             <th style={styles.tableTh}>Action</th>
+                            <th style={styles.tableTh}>Status</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -4195,21 +4770,6 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                                   ) : '-'}
                                 </td>
                                 <td style={styles.tableTd}>
-                                  {isPhone ? (
-                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', background: 'rgba(34,197,94,0.12)', color: '#4ade80', fontSize: '0.78rem', fontWeight: '700' }}>
-                                      <Smartphone size={12} /> Phone
-                                    </span>
-                                  ) : isManual ? (
-                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', background: 'rgba(245,158,11,0.15)', color: '#fbbf24', fontSize: '0.78rem', fontWeight: '700' }}>
-                                      <ClipboardList size={12} /> Manual
-                                    </span>
-                                  ) : (
-                                    <span style={{ padding: '4px 12px', borderRadius: '20px', background: 'rgba(239,68,68,0.1)', color: '#f87171', fontSize: '0.78rem', fontWeight: '600' }}>
-                                      Absent
-                                    </span>
-                                  )}
-                                </td>
-                                <td style={styles.tableTd}>
                                   {isActionPending && manualActionMsg.type === 'error' && manualActionMsg.text ? (
                                     <span style={{ fontSize: '0.8rem', color: '#f87171', fontWeight: '600' }}>
                                       {manualActionMsg.text}
@@ -4241,6 +4801,21 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                                     >
                                       Mark Present
                                     </button>
+                                  )}
+                                </td>
+                                <td style={styles.tableTd}>
+                                  {isPhone ? (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', background: 'rgba(34,197,94,0.12)', color: '#4ade80', fontSize: '0.78rem', fontWeight: '700' }}>
+                                      <Smartphone size={12} /> Phone
+                                    </span>
+                                  ) : isManual ? (
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', background: 'rgba(245,158,11,0.15)', color: '#fbbf24', fontSize: '0.78rem', fontWeight: '700' }}>
+                                      <ClipboardList size={12} /> Manual
+                                    </span>
+                                  ) : (
+                                    <span style={{ padding: '4px 12px', borderRadius: '20px', background: 'rgba(239,68,68,0.1)', color: '#f87171', fontSize: '0.78rem', fontWeight: '600' }}>
+                                      Absent
+                                    </span>
                                   )}
                                 </td>
                               </tr>
@@ -4398,17 +4973,26 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
       {semesterModal && (
         <div
           style={{
-            position: 'fixed', inset: 0, zIndex: 1100,
-            background: 'rgba(0,0,0,0.75)', backdropFilter: 'blur(6px)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+            position: 'fixed', top: 0, left: 0,
+            width: '100dvw', height: '100dvh', minHeight: '100%',
+            zIndex: 999999,
+            background: 'rgba(15, 23, 42, 0.75)',
+            backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '16px', boxSizing: 'border-box'
           }}
           onClick={() => setSemesterModal(null)}
         >
           <div
-            className="glass-panel"
             style={{
               width: '100%', maxWidth: '440px', borderRadius: '20px',
-              padding: '28px', position: 'relative', textAlign: 'center'
+              padding: isMobile ? '20px 16px' : '28px',
+              maxHeight: '90dvh', overflowY: 'auto',
+              position: 'relative', textAlign: 'center',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+              background: '#ffffff',
+              color: '#000000',
+              border: '1px solid #e2e8f0'
             }}
             onClick={e => e.stopPropagation()}
           >
@@ -4416,31 +5000,31 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               onClick={() => setSemesterModal(null)}
               style={{
                 position: 'absolute', top: '16px', right: '16px', background: 'none',
-                border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: '1.4rem'
+                border: 'none', color: '#000000', cursor: 'pointer', fontSize: '1.4rem', fontWeight: 'bold'
               }}
             >✕</button>
 
-            <h3 style={{ ...styles.cardTitle, marginBottom: '6px' }}>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: '800', color: '#000000', marginBottom: '6px' }}>
               Start {semesterModal === 'qr' ? 'QR Code' : 'OTP'} Session
             </h3>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px' }}>
+            <p style={{ color: '#000000', fontSize: '0.88rem', fontWeight: '600', marginBottom: '20px' }}>
               Select assigned semester, division & teaching subject:
             </p>
 
             {allFacultySubjects.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '12px 0' }}>
                 <div style={{ fontSize: '2.2rem', marginBottom: '10px' }}>⚠️</div>
-                <h4 style={{ color: '#f59e0b', fontSize: '1.05rem', fontWeight: '700', margin: '0 0 8px 0' }}>
+                <h4 style={{ color: '#d97706', fontSize: '1.08rem', fontWeight: '800', margin: '0 0 8px 0' }}>
                   No Subjects Mapped!
                 </h4>
-                <p style={{ color: 'var(--text-secondary)', fontSize: '0.84rem', margin: '0 0 20px 0', lineHeight: '1.5' }}>
+                <p style={{ color: '#000000', fontSize: '0.88rem', fontWeight: '600', margin: '0 0 20px 0', lineHeight: '1.5' }}>
                   Aapke account me koi teaching subject mapped nahi hai. Admin panel se is Faculty ko subject assign karayein tabhi session start kar payenge.
                 </p>
                 <button
                   type="button"
                   onClick={() => setSemesterModal(null)}
                   className="btn btn-secondary"
-                  style={{ width: '100%', padding: '10px' }}
+                  style={{ width: '100%', padding: '10px 16px', fontWeight: '700', borderRadius: '10px', background: '#e2e8f0', color: '#000000', border: 'none', cursor: 'pointer' }}
                 >
                   Close
                 </button>
@@ -4449,7 +5033,7 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
               <>
                 {/* Step 1: Assigned Semesters Only */}
                 <div style={{ textAlign: 'left', marginBottom: '16px' }}>
-                  <label style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)', display: 'block', marginBottom: '8px' }}>
+                  <label style={{ fontSize: '0.88rem', fontWeight: '800', color: '#000000', display: 'block', marginBottom: '8px' }}>
                     1️⃣ Select Semester:
                   </label>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
@@ -4461,9 +5045,9 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                         style={{
                           padding: '10px 6px', borderRadius: '10px', fontWeight: '700',
                           fontSize: '0.85rem', cursor: 'pointer', transition: 'all 0.15s ease',
-                          border: selectedSemester === String(s) ? '2px solid var(--primary)' : '1px solid var(--border-light)',
-                          background: selectedSemester === String(s) ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
-                          color: selectedSemester === String(s) ? '#a855f7' : 'var(--text-primary)'
+                          border: selectedSemester === String(s) ? '2px solid #7c3aed' : '1px solid #cbd5e1',
+                          background: selectedSemester === String(s) ? 'rgba(124, 58, 237, 0.12)' : '#f8fafc',
+                          color: selectedSemester === String(s) ? '#7c3aed' : '#000000'
                         }}
                       >
                         Sem {s}
@@ -4474,8 +5058,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
                 {/* Step 2: Division Selection (Conditional on Selected Semester) */}
                 {selectedSemester && (
-                  <div style={{ textAlign: 'left', marginBottom: '16px', paddingTop: '14px', borderTop: '1px solid var(--border-light)' }}>
-                    <label style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)', display: 'block', marginBottom: '8px' }}>
+                  <div style={{ textAlign: 'left', marginBottom: '16px', paddingTop: '14px', borderTop: '1px solid #e2e8f0' }}>
+                    <label style={{ fontSize: '0.88rem', fontWeight: '800', color: '#000000', display: 'block', marginBottom: '8px' }}>
                       2️⃣ Select Division (Sem {selectedSemester}):
                     </label>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -4483,11 +5067,11 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                         type="button"
                         onClick={() => setSelectedDivision('ALL')}
                         style={{
-                          padding: '7px 14px', borderRadius: '8px', fontWeight: '600',
+                          padding: '7px 14px', borderRadius: '8px', fontWeight: '700',
                           fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s ease',
-                          border: selectedDivision === 'ALL' ? '2px solid var(--primary)' : '1px solid var(--border-light)',
-                          background: selectedDivision === 'ALL' ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
-                          color: selectedDivision === 'ALL' ? '#a855f7' : 'var(--text-primary)'
+                          border: selectedDivision === 'ALL' ? '2px solid #7c3aed' : '1px solid #cbd5e1',
+                          background: selectedDivision === 'ALL' ? 'rgba(124, 58, 237, 0.12)' : '#f8fafc',
+                          color: selectedDivision === 'ALL' ? '#7c3aed' : '#000000'
                         }}
                       >
                         All Divisions
@@ -4498,11 +5082,11 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                           type="button"
                           onClick={() => setSelectedDivision(d)}
                           style={{
-                            padding: '7px 16px', borderRadius: '8px', fontWeight: '600',
+                            padding: '7px 16px', borderRadius: '8px', fontWeight: '700',
                             fontSize: '0.82rem', cursor: 'pointer', transition: 'all 0.15s ease',
-                            border: selectedDivision === d ? '2px solid var(--primary)' : '1px solid var(--border-light)',
-                            background: selectedDivision === d ? 'rgba(147,51,234,0.25)' : 'rgba(255,255,255,0.05)',
-                            color: selectedDivision === d ? '#a855f7' : 'var(--text-primary)'
+                            border: selectedDivision === d ? '2px solid #7c3aed' : '1px solid #cbd5e1',
+                            background: selectedDivision === d ? 'rgba(124, 58, 237, 0.12)' : '#f8fafc',
+                            color: selectedDivision === d ? '#7c3aed' : '#000000'
                           }}
                         >
                           Div {d}
@@ -4514,8 +5098,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
                 {/* Step 3: Subject Selection (Filtered for Selected Semester) */}
                 {selectedSemester && selectedDivision && (
-                  <div style={{ textAlign: 'left', marginBottom: '20px', paddingTop: '14px', borderTop: '1px solid var(--border-light)' }}>
-                    <label style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)', display: 'block', marginBottom: '8px' }}>
+                  <div style={{ textAlign: 'left', marginBottom: '20px', paddingTop: '14px', borderTop: '1px solid #e2e8f0' }}>
+                    <label style={{ fontSize: '0.88rem', fontWeight: '800', color: '#000000', display: 'block', marginBottom: '8px' }}>
                       3️⃣ Select Subject (Sem {selectedSemester}):
                     </label>
                     {availableSubjectsForSem.length > 0 ? (
@@ -4542,16 +5126,16 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                                 setSelectedSubject(fullSubValue);
                               }}
                               style={{
-                                padding: '8px 14px', borderRadius: '12px', fontWeight: '600',
+                                padding: '8px 14px', borderRadius: '12px', fontWeight: '700',
                                 fontSize: '0.84rem', cursor: 'pointer', transition: 'all 0.15s ease',
-                                border: isSelected ? '2px solid #a855f7' : '1px solid var(--border-light)',
-                                background: isSelected ? 'rgba(168,85,247,0.25)' : 'rgba(255,255,255,0.05)',
-                                color: isSelected ? '#c084fc' : 'var(--text-primary)',
+                                border: isSelected ? '2px solid #7c3aed' : '1px solid #cbd5e1',
+                                background: isSelected ? 'rgba(124, 58, 237, 0.12)' : '#f8fafc',
+                                color: isSelected ? '#7c3aed' : '#000000',
                                 display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start',
                                 gap: '4px', textAlign: 'left'
                               }}
                             >
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '700' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontWeight: '800', color: isSelected ? '#7c3aed' : '#000000' }}>
                                 📚 {subLabel}
                               </div>
                               <div style={{
@@ -4559,8 +5143,8 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                                 fontWeight: '700',
                                 padding: '2px 8px',
                                 borderRadius: '6px',
-                                background: isSelected ? 'rgba(168, 85, 247, 0.4)' : 'rgba(255, 255, 255, 0.1)',
-                                color: isSelected ? '#ffffff' : '#94a3b8',
+                                background: isSelected ? '#7c3aed' : '#e2e8f0',
+                                color: isSelected ? '#ffffff' : '#334155',
                                 letterSpacing: '0.02em'
                               }}>
                                 {subType} {subCode ? `(${subCode})` : ''}
@@ -4571,11 +5155,11 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                       </div>
                     ) : (
                       <div style={{
-                        background: 'rgba(245, 158, 11, 0.1)',
-                        border: '1px solid rgba(245, 158, 11, 0.25)',
+                        background: '#fffbeb',
+                        border: '1px solid #fde68a',
                         borderRadius: '12px',
                         padding: '12px 14px',
-                        color: '#fbbf24',
+                        color: '#92400e',
                         fontSize: '0.84rem',
                         lineHeight: '1.4'
                       }}>
@@ -4586,12 +5170,12 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   </div>
                 )}
 
-                <div style={{ display: 'flex', gap: '12px' }}>
+                <div style={{ display: 'flex', gap: '12px', marginTop: '10px' }}>
                   <button
                     type="button"
                     onClick={() => setSemesterModal(null)}
                     className="btn btn-secondary"
-                    style={{ flex: 1 }}
+                    style={{ flex: 1, padding: '10px 16px', fontWeight: '700', borderRadius: '10px', background: '#e2e8f0', color: '#000000', border: 'none', cursor: 'pointer' }}
                   >
                     Cancel
                   </button>
@@ -4599,7 +5183,17 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                     type="button"
                     onClick={confirmSemesterAndGenerate}
                     className="btn btn-primary"
-                    style={{ flex: 1 }}
+                    style={{
+                      flex: 1,
+                      padding: '10px 16px',
+                      fontWeight: '800',
+                      borderRadius: '10px',
+                      background: (!selectedSemester || !selectedDivision || availableSubjectsForSem.length === 0 || !selectedSubject) ? '#cbd5e1' : 'linear-gradient(135deg, #f59e0b, #d97706)',
+                      color: (!selectedSemester || !selectedDivision || availableSubjectsForSem.length === 0 || !selectedSubject) ? '#64748b' : '#ffffff',
+                      border: 'none',
+                      cursor: (!selectedSemester || !selectedDivision || availableSubjectsForSem.length === 0 || !selectedSubject) ? 'not-allowed' : 'pointer',
+                      boxShadow: (!selectedSemester || !selectedDivision || availableSubjectsForSem.length === 0 || !selectedSubject) ? 'none' : '0 4px 14px rgba(245, 158, 11, 0.35)'
+                    }}
                     disabled={!selectedSemester || !selectedDivision || availableSubjectsForSem.length === 0 || !selectedSubject}
                   >
                     Start Session →

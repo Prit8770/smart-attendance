@@ -91,12 +91,19 @@ router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
         } catch (e) {}
       }
 
-      let fileSubjects = subjectsMap[f.id] || subjectsMap[f.employee_no] || subjectsMap[String(f.id)] || subjectsMap[String(f.employee_no)] || [];
-      let finalSubjects = (embeddedSubjects && embeddedSubjects.length > 0) 
-        ? embeddedSubjects 
-        : (fileSubjects && fileSubjects.length > 0) 
-          ? fileSubjects 
-          : [];
+      const fileSubjects = subjectsMap[f.id] || subjectsMap[f.employee_no] || subjectsMap[String(f.id)] || subjectsMap[String(f.employee_no)] || [];
+      const subMap = new Map();
+      if (Array.isArray(fileSubjects)) {
+        fileSubjects.forEach(s => {
+          if (s && s.subjectName) subMap.set(String(s.subjectName).trim().toLowerCase(), s);
+        });
+      }
+      if (Array.isArray(embeddedSubjects)) {
+        embeddedSubjects.forEach(s => {
+          if (s && s.subjectName) subMap.set(String(s.subjectName).trim().toLowerCase(), s);
+        });
+      }
+      const finalSubjects = Array.from(subMap.values());
 
       return {
         ...f,

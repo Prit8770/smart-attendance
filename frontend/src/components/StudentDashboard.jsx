@@ -345,7 +345,33 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
       fetchWeeklyAnalysis(true);
       fetchHistory(true);
     }, 3000);
-    return () => clearInterval(interval);
+
+    const refreshAll = () => {
+      fetchSessionStatus();
+      fetchSubjectBreakdown();
+      fetchWeeklyAnalysis(true);
+      fetchHistory(true);
+    };
+
+    window.addEventListener('app_data_changed', refreshAll);
+
+    let bc = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        bc = new BroadcastChannel('attendance_system_sync');
+        bc.onmessage = (msg) => {
+          if (msg && msg.data && msg.data.type === 'DATA_CHANGED') {
+            refreshAll();
+          }
+        };
+      } catch (e) {}
+    }
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('app_data_changed', refreshAll);
+      if (bc) bc.close();
+    };
   }, []);
 
   // Pre-fetch & watch GPS location

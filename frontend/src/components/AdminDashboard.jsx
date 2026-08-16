@@ -3,7 +3,7 @@ import {
   Users, KeyRound, QrCode, MapPin, BarChart3, Download, Upload, TrendingUp, Plus, Search,
   Trash2, Edit, Check, CheckCircle, XCircle, Clock, ShieldAlert, LogOut, RefreshCw,
   Sun, Moon, GraduationCap, User, Settings, Folder, Calendar, Menu, RotateCcw, X,
-  LayoutGrid, ChevronDown, FileText, ClipboardList, AlertTriangle, UserPlus, BookOpen, FileSpreadsheet, Send, MessageSquare
+  LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileText, ClipboardList, AlertTriangle, UserPlus, BookOpen, FileSpreadsheet, Send, MessageSquare
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -121,6 +121,15 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const [stuSemFilter, setStuSemFilter] = useState('');
   const [stuDivFilter, setStuDivFilter] = useState('');
   const [stuPage, setStuPage] = useState(1);
+  const [showStudentMobileActions, setShowStudentMobileActions] = useState(false);
+  const [showFacultyMobileActions, setShowFacultyMobileActions] = useState(false);
+  const [showSubjectMobileActions, setShowSubjectMobileActions] = useState(false);
+
+  useEffect(() => {
+    setShowStudentMobileActions(false);
+    setShowFacultyMobileActions(false);
+    setShowSubjectMobileActions(false);
+  }, [activeTab]);
 
   useEffect(() => {
     setStuPage(1);
@@ -137,6 +146,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   });
   const [showStudentModal, setShowStudentModal] = useState(false);
   const [enrollmentTouched, setEnrollmentTouched] = useState(false);
+  const [nameTouched, setNameTouched] = useState(false);
   const [mobileTouched, setMobileTouched] = useState(false);
   const [modalMode, setModalMode] = useState('add'); // 'add' or 'edit'
   const [createdStudentCredentials, setCreatedStudentCredentials] = useState(null); // Save generated credentials
@@ -151,6 +161,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     return true;
   });
   const [selectedStudentIds, setSelectedStudentIds] = useState([]);
+  const [selectedFacultyIds, setSelectedFacultyIds] = useState([]);
+  const [selectedSubjectIds, setSelectedSubjectIds] = useState([]);
 
   // Custom React Delete Confirmation Modal State (No Browser Thread Blocking)
   const [deleteConfirmState, setDeleteConfirmState] = useState({
@@ -354,6 +366,26 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const [liveLogs, setLiveLogs] = useState([]);
   const [dateLogs, setDateLogs] = useState([]);
 
+  // Floating Mobile Hamburger Toggle Setting (ON/OFF)
+  const [showFloatingMobileMenu, setShowFloatingMobileMenu] = useState(() => {
+    const saved = localStorage.getItem('admin_show_floating_mobile_menu');
+    return saved !== null ? JSON.parse(saved) : true;
+  });
+
+  const handleToggleFloatingMobileMenu = (e) => {
+    const isChecked = e.target.checked;
+    setShowFloatingMobileMenu(isChecked);
+    localStorage.setItem('admin_show_floating_mobile_menu', JSON.stringify(isChecked));
+  };
+
+  const isAnyAdminModalOpen = Boolean(
+    showStudentModal ||
+    showFacultyModal ||
+    showAddSubjectModal ||
+    showAddRuleModal ||
+    (typeof promoteStep === 'number' && promoteStep > 0)
+  );
+
   const handleApplyDefaulterFilters = () => {
     setAppliedDefaulterSem(defaulterSemFilter);
     setAppliedDefaulterDiv(defaulterDivFilter);
@@ -373,9 +405,16 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const allFacultySubjects = (() => {
     let subs = [];
     (faculties || []).forEach(f => {
-      if (Array.isArray(f.subjects)) {
-        f.subjects.forEach(s => {
-          subs.push({ ...s, facultyId: f.id, facultyName: f.name });
+      let fSubs = [];
+      if (typeof f.subjects === 'string') {
+        try { fSubs = JSON.parse(f.subjects); } catch (e) { fSubs = []; }
+      } else if (Array.isArray(f.subjects)) {
+        fSubs = f.subjects;
+      }
+      if (Array.isArray(fSubs)) {
+        fSubs.forEach((s, idx) => {
+          const subKey = s.id || s.code || `${f.id}_${s.subjectName || s.name || 'sub'}_${idx}`;
+          subs.push({ ...s, subKey, facultyId: f.id, facultyName: f.name });
         });
       }
     });
@@ -1244,18 +1283,47 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     setShowAddSubjectModal(true);
   };
 
-  const handleEditSubject = (idxToEdit) => {
-    const sub = allFacultySubjects[idxToEdit];
+  const handleEditSubject = (targetSub) => {
+    let sub = null;
+    let targetIdx = null;
+
+    if (typeof targetSub === 'number') {
+      sub = allFacultySubjects[targetSub];
+      targetIdx = targetSub;
+    } else if (targetSub && typeof targetSub === 'object') {
+      sub = targetSub;
+      targetIdx = allFacultySubjects.findIndex(s => s.subKey === targetSub.subKey);
+      if (targetIdx === -1) {
+        targetIdx = allFacultySubjects.findIndex(s =>
+          (s.subjectName || s.name || '').toLowerCase() === (targetSub.subjectName || targetSub.name || '').toLowerCase() &&
+          String(s.semester || '1').replace(/\D/g, '') === String(targetSub.semester || '1').replace(/\D/g, '')
+        );
+      }
+    }
+
     if (!sub) return;
     setNewSubName(sub.subjectName || sub.name || '');
-    setNewSubShort(sub.shortName || sub.shortCode || '');
+    setNewSubShort(sub.shortName || sub.shortCode || sub.short || '');
     setNewSubCode(sub.code || sub.subjectCode || '');
     setNewSubSem(sub.semester ? String(sub.semester).replace(/\D/g, '') : '1');
     setNewSubType(sub.type || sub.subjectType || 'Theory');
     setNewSubFacultyId(sub.facultyId || '');
     setSubjectModalMode('edit');
-    setEditingSubjectIdx(idxToEdit);
+    setEditingSubjectIdx(targetIdx >= 0 ? targetIdx : 0);
     setShowAddSubjectModal(true);
+  };
+
+  const notifyDataChanged = () => {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('app_data_changed'));
+      if ('BroadcastChannel' in window) {
+        try {
+          const bc = new BroadcastChannel('attendance_system_sync');
+          bc.postMessage({ type: 'DATA_CHANGED', timestamp: Date.now() });
+          bc.close();
+        } catch(e) {}
+      }
+    }
   };
 
   const handleSaveSubjectsToBackend = async (facultyId, updatedSubjects, reload = true) => {
@@ -1280,13 +1348,14 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
           showToast('Subjects Updated! The teaching subjects list has been saved.', 'success', 3000);
           fetchFaculties(); // Reload the faculties list from backend
         }
+        notifyDataChanged();
       } else {
         const data = await res.json();
-        if (reload) Swal.fire('Error', data.error || 'Failed to save subjects', 'error');
+        if (reload) showToast(data.error || 'Failed to save subjects', 'error');
       }
     } catch (err) {
       console.error('Error saving subjects:', err);
-      if (reload) Swal.fire('Error', 'Network error saving subjects', 'error');
+      if (reload) showToast('Network error saving subjects', 'error');
     } finally {
       if (reload) setSavingSubjects(false);
     }
@@ -1295,11 +1364,11 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const handleAddSubjectSubmit = async (e) => {
     if (e && e.preventDefault) e.preventDefault();
     if (!newSubName.trim()) {
-      Swal.fire('Required Field', 'Please enter subject name.', 'warning');
+      showToast('Please enter subject name.', 'warning');
       return;
     }
     if (!newSubFacultyId) {
-      Swal.fire('Required Field', 'Please select a faculty.', 'warning');
+      showToast('Please select a faculty.', 'warning');
       return;
     }
 
@@ -1314,7 +1383,12 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     const targetFaculty = faculties.find(f => String(f.id) === String(newSubFacultyId));
     if (!targetFaculty) return;
 
-    let currentFacultySubjects = Array.isArray(targetFaculty.subjects) ? [...targetFaculty.subjects] : [];
+    let currentFacultySubjects = [];
+    if (typeof targetFaculty.subjects === 'string') {
+      try { currentFacultySubjects = JSON.parse(targetFaculty.subjects); } catch (e) { currentFacultySubjects = []; }
+    } else if (Array.isArray(targetFaculty.subjects)) {
+      currentFacultySubjects = [...targetFaculty.subjects];
+    }
 
     if (subjectModalMode === 'add') {
       const isDup = currentFacultySubjects.some(s =>
@@ -1322,24 +1396,38 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         String(s.semester || '1').replace(/\D/g, '') === String(newSubObj.semester).replace(/\D/g, '')
       );
       if (isDup) {
-        Swal.fire('Duplicate Subject', `Subject "${newSubObj.subjectName}" is already added to this faculty for Semester ${newSubObj.semester}.`, 'warning');
+        showToast(`Subject "${newSubObj.subjectName}" is already added to this faculty for Semester ${newSubObj.semester}.`, 'warning');
         return;
       }
       currentFacultySubjects.push(newSubObj);
     } else if (subjectModalMode === 'edit') {
-      const originalSub = allFacultySubjects[editingSubjectIdx];
+      const originalSub = (editingSubjectIdx !== null && editingSubjectIdx >= 0) ? allFacultySubjects[editingSubjectIdx] : null;
 
-      if (String(originalSub.facultyId) !== String(newSubFacultyId)) {
+      if (originalSub && String(originalSub.facultyId) !== String(newSubFacultyId)) {
         // Faculty changed. Remove from old faculty, add to new faculty.
         const oldFaculty = faculties.find(f => String(f.id) === String(originalSub.facultyId));
         if (oldFaculty) {
-          const oldSubjects = (oldFaculty.subjects || []).filter(s => s.subjectName !== originalSub.subjectName || s.semester !== originalSub.semester);
+          let oldSubjects = [];
+          if (typeof oldFaculty.subjects === 'string') {
+            try { oldSubjects = JSON.parse(oldFaculty.subjects); } catch (e) { oldSubjects = []; }
+          } else if (Array.isArray(oldFaculty.subjects)) {
+            oldSubjects = [...oldFaculty.subjects];
+          }
+          oldSubjects = oldSubjects.filter(s =>
+            (s.subjectName || s.name || '').toLowerCase() !== (originalSub.subjectName || originalSub.name || '').toLowerCase() ||
+            String(s.semester || '1').replace(/\D/g, '') !== String(originalSub.semester || '1').replace(/\D/g, '')
+          );
           await handleSaveSubjectsToBackend(oldFaculty.id, oldSubjects, false);
         }
         currentFacultySubjects.push(newSubObj);
       } else {
         // Same faculty
-        const localIdx = currentFacultySubjects.findIndex(s => s.subjectName === originalSub.subjectName && s.semester === originalSub.semester);
+        const localIdx = currentFacultySubjects.findIndex(s => {
+          if (!originalSub) return false;
+          const nameMatch = (s.subjectName || s.name || '').toLowerCase() === (originalSub.subjectName || originalSub.name || '').toLowerCase();
+          const semMatch = String(s.semester || '1').replace(/\D/g, '') === String(originalSub.semester || '1').replace(/\D/g, '');
+          return nameMatch && semMatch;
+        });
         if (localIdx >= 0) {
           currentFacultySubjects[localIdx] = newSubObj;
         } else {
@@ -1359,39 +1447,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     setShowAddSubjectModal(false);
 
     await handleSaveSubjectsToBackend(targetFaculty.id, currentFacultySubjects, true);
-  };
-
-  const handleDeleteSubject = async (idxToDelete) => {
-    const subToDelete = allFacultySubjects[idxToDelete];
-    if (!subToDelete) return;
-
-    const subTitle = subToDelete.subjectName || subToDelete.name || 'Subject';
-    const subSem = subToDelete.semester || '1';
-
-    const result = await Swal.fire({
-      title: 'Remove Subject?',
-      text: `Are you sure you want to remove "${subTitle}" from ${subToDelete.facultyName}?`,
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#ef4444',
-      cancelButtonColor: '#64748b',
-      confirmButtonText: 'Yes, Remove',
-      background: '#ffffff',
-      color: '#0f172a',
-      customClass: {
-        popup: 'swal2-light-popup',
-        title: 'swal2-light-title',
-        htmlContainer: 'swal2-light-text'
-      }
-    });
-
-    if (result.isConfirmed) {
-      const targetFaculty = faculties.find(f => String(f.id) === String(subToDelete.facultyId));
-      if (targetFaculty) {
-        const updatedList = (targetFaculty.subjects || []).filter(s => s.subjectName !== subToDelete.subjectName || s.semester !== subToDelete.semester);
-        await handleSaveSubjectsToBackend(targetFaculty.id, updatedList, true);
-      }
-    }
   };
 
   const formatDateDDMMYYYY = (dateStr) => {
@@ -1806,9 +1861,11 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     }
   };
 
-  // Fetch faculty records
-  const fetchFaculties = async () => {
-    setFacultyLoading(true);
+  // Fetch faculty records (Non-blocking background refresh if cached)
+  const fetchFaculties = async (forceLoading = false) => {
+    if (forceLoading || !faculties || faculties.length === 0) {
+      setFacultyLoading(true);
+    }
     try {
       const res = await fetch('/api/faculty', {
         headers: { Authorization: `Bearer ${token}` }
@@ -2119,20 +2176,56 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     fetchAllLeaves();
   }, []);
 
-  // Dynamic Polling for Stats & Live Logs (Poll every 3s during active QR session, else 10s)
+  // Smart Auto-Polling for Stats, Logs & Sessions (0ms Broadcast Sync for Instant Edits)
   useEffect(() => {
     const isSessionActive = stats.activeQrSession !== null || activeQrSessionDetails !== null;
-    const intervalTime = isSessionActive ? 3000 : 10000;
+    const intervalTime = isSessionActive ? 3000 : 25000;
 
     const interval = setInterval(() => {
-      fetchStats();
-      fetchLiveLogs();
-      fetchQrData();
-      fetchQrSettings();
+      if (isSessionActive) {
+        fetchStats();
+        fetchLiveLogs();
+        fetchQrData();
+      } else {
+        fetchStats();
+        fetchQrData();
+      }
     }, intervalTime);
 
     return () => clearInterval(interval);
   }, [stats.activeQrSession, activeQrSessionDetails]);
+
+  // Instant Cross-Panel BroadcastChannel & Custom Event Sync
+  useEffect(() => {
+    const refreshAll = () => {
+      fetchStats();
+      fetchLiveLogs();
+      fetchStudents();
+      fetchQrData();
+      fetchFaculties();
+      fetchQrSettings();
+      fetchAllLeaves();
+    };
+
+    window.addEventListener('app_data_changed', refreshAll);
+
+    let bc = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        bc = new BroadcastChannel('attendance_system_sync');
+        bc.onmessage = (msg) => {
+          if (msg && msg.data && msg.data.type === 'DATA_CHANGED') {
+            refreshAll();
+          }
+        };
+      } catch (e) {}
+    }
+
+    return () => {
+      window.removeEventListener('app_data_changed', refreshAll);
+      if (bc) bc.close();
+    };
+  }, []);
 
   // Handle QR session timers
   useEffect(() => {
@@ -2876,10 +2969,20 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
     const isEdit = modalMode === 'edit';
     if (!isEdit) {
-      if (!/^\d{10}$/.test(String(studentForm.enrollment_no || '').trim())) {
-        showToast('Please enter valid enrollment number', 'warning');
+      if (!studentForm.enrollment_no || !/^\d{10}$/.test(String(studentForm.enrollment_no || '').trim())) {
+        showToast('Please enter valid 10-digit Enrollment Number (Required)', 'warning');
         return;
       }
+    }
+
+    if (!studentForm.name || !studentForm.name.trim()) {
+      showToast('Please enter Student Full Name (Required)', 'warning');
+      return;
+    }
+
+    if (!/^[A-Za-z\s.'-]+$/.test(studentForm.name.trim())) {
+      showToast('Student Name should contain letters only (No numbers allowed)', 'warning');
+      return;
     }
 
     if (!studentForm.email || !studentForm.email.trim()) {
@@ -2888,12 +2991,12 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(studentForm.email.trim())) {
-      showToast('Please enter a valid email address (e.g. student@college.edu)', 'warning');
+      showToast('Please enter a valid email address (e.g. student@college.com)', 'warning');
       return;
     }
 
-    if (!/^\d{10}$/.test(String(studentForm.mobile || '').trim())) {
-      showToast('Please enter valid mobile number', 'warning');
+    if (!studentForm.mobile || !/^\d{10}$/.test(String(studentForm.mobile).trim())) {
+      showToast('Please enter valid 10-digit mobile number (Required)', 'warning');
       return;
     }
 
@@ -3026,29 +3129,94 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     setDeleteConfirmState({ isOpen: false, type: 'single', entityType: 'student', studentId: null, studentName: '', targetIds: [] });
 
     if (entityType === 'faculty') {
-      const targetId = studentId || (targetIds && targetIds[0]);
-      // Optimistic instant local removal
-      setFaculties(prev => prev.filter(f => String(f.id) !== String(targetId)));
-      setStats(prev => ({ ...prev, totalFaculty: Math.max(0, (prev.totalFaculty || 0) - 1) }));
+      const targetIdsList = targetIds && targetIds.length > 0 ? targetIds : (studentId ? [studentId] : []);
+      const prevFacs = [...faculties];
+      const targetSet = new Set(targetIdsList.map(id => String(id)));
+
+      // Optimistic instant local removal (0ms delay)
+      const updatedList = faculties.filter(f => !targetSet.has(String(f.id)));
+      setFaculties(updatedList);
+      setSelectedFacultyIds(prev => prev.filter(id => !targetSet.has(String(id))));
+      setStats(prev => ({ ...prev, totalFaculty: Math.max(0, (prev.totalFaculty || 0) - targetIdsList.length) }));
 
       try {
-        const res = await fetch(`/api/faculty/${targetId}`, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        const data = await res.json();
-        if (res.ok) {
-          showToast('Faculty member deleted successfully!', 'success');
+        let failedCount = 0;
+        for (const fId of targetIdsList) {
+          const res = await fetch(`/api/faculty/${fId}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          if (!res.ok) failedCount++;
+        }
+
+        if (failedCount === 0) {
+          showToast(targetIdsList.length === 1 ? 'Faculty member deleted successfully!' : `Successfully deleted ${targetIdsList.length} faculty member(s).`, 'success');
           fetchFaculties();
           fetchStats();
         } else {
           fetchFaculties();
-          showToast(data.error || 'Failed to delete faculty', 'error');
+          showToast(`Failed to delete ${failedCount} faculty member(s)`, 'error');
         }
       } catch (err) {
         console.error('Error deleting faculty:', err);
+        setFaculties(prevFacs);
+        showToast('Error deleting faculty member(s)', 'error');
+      }
+      return;
+    }
+
+    if (entityType === 'subject') {
+      const keysToDelete = new Set(targetIds);
+      const facultyUpdates = {};
+      allFacultySubjects.forEach(s => {
+        if (keysToDelete.has(s.subKey)) {
+          if (!facultyUpdates[s.facultyId]) {
+            facultyUpdates[s.facultyId] = [];
+          }
+          facultyUpdates[s.facultyId].push(s);
+        }
+      });
+
+      try {
+        let updatePromises = Object.keys(facultyUpdates).map(async (facId) => {
+          const faculty = faculties.find(f => String(f.id) === String(facId));
+          if (!faculty) return;
+          let currentSubs = [];
+          if (typeof faculty.subjects === 'string') {
+            try { currentSubs = JSON.parse(faculty.subjects); } catch(e) { currentSubs = []; }
+          } else if (Array.isArray(faculty.subjects)) {
+            currentSubs = faculty.subjects;
+          }
+
+          const removeKeys = new Set(facultyUpdates[facId].map(s => s.subKey));
+          const updatedSubs = currentSubs.filter((s, idx) => {
+            const key = s.id || s.code || `${faculty.id}_${s.subjectName || s.name || 'sub'}_${idx}`;
+            return !removeKeys.has(key);
+          });
+
+          await fetch(`/api/faculty/${facId}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              name: faculty.name,
+              email: faculty.email,
+              department: faculty.department,
+              mobile: faculty.mobile,
+              subjects: updatedSubs
+            })
+          });
+        });
+
+        await Promise.all(updatePromises);
+        setSelectedSubjectIds(prev => prev.filter(k => !keysToDelete.has(k)));
+        showToast(keysToDelete.size === 1 ? 'Subject deleted successfully!' : `Successfully deleted ${keysToDelete.size} subject(s).`, 'success');
         fetchFaculties();
-        showToast('Error deleting faculty member', 'error');
+      } catch (err) {
+        console.error('Error deleting subjects:', err);
+        showToast('Error deleting subject(s)', 'error');
       }
       return;
     }
@@ -3132,6 +3300,124 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     }
   };
 
+  const toggleSelectFaculty = (id) => {
+    setSelectedFacultyIds(prev => {
+      if (prev.includes(id)) {
+        return prev.filter(item => item !== id);
+      } else {
+        return [...prev, id];
+      }
+    });
+  };
+
+  const toggleSelectAllFaculty = () => {
+    const filteredFacs = faculties.filter(f =>
+      (f.name && f.name.toLowerCase().includes(facultySearchQuery.toLowerCase())) ||
+      (f.email && f.email.toLowerCase().includes(facultySearchQuery.toLowerCase()))
+    );
+    const filteredIds = filteredFacs.map(f => f.id);
+    const allSelected = filteredIds.length > 0 && filteredIds.every(id => selectedFacultyIds.includes(id));
+
+    if (allSelected) {
+      setSelectedFacultyIds(prev => prev.filter(id => !filteredIds.includes(id)));
+    } else {
+      setSelectedFacultyIds(prev => Array.from(new Set([...prev, ...filteredIds])));
+    }
+  };
+
+  const handleBulkDeleteFaculty = (idsToDelete) => {
+    const ids = idsToDelete || selectedFacultyIds;
+    if (!ids || ids.length === 0) {
+      showToast('Please select at least one faculty member to delete.', 'warning');
+      return;
+    }
+
+    setDeleteConfirmState({
+      isOpen: true,
+      type: 'bulk',
+      entityType: 'faculty',
+      studentId: null,
+      studentName: `${ids.length} selected faculty member(s)`,
+      targetIds: ids
+    });
+  };
+
+  const toggleSelectSubject = (subKey) => {
+    setSelectedSubjectIds(prev => {
+      if (prev.includes(subKey)) {
+        return prev.filter(item => item !== subKey);
+      } else {
+        return [...prev, subKey];
+      }
+    });
+  };
+
+  const toggleSelectAllSubjects = () => {
+    const filteredSubs = allFacultySubjects.filter(sub => {
+      if (!subjectSearchQuery || !subjectSearchQuery.trim()) return true;
+      const q = subjectSearchQuery.toLowerCase().trim();
+      const subName = String(sub.subjectName || sub.name || '').toLowerCase();
+      const shortCode = String(sub.shortName || sub.shortCode || sub.short || '').toLowerCase();
+      const subCode = String(sub.code || sub.subjectCode || '').toLowerCase();
+      const facultyName = String(sub.facultyName || '').toLowerCase();
+      return subName.includes(q) || shortCode.includes(q) || subCode.includes(q) || facultyName.includes(q);
+    });
+
+    const filteredKeys = filteredSubs.map(s => s.subKey);
+    const allSelected = filteredKeys.length > 0 && filteredKeys.every(k => selectedSubjectIds.includes(k));
+
+    if (allSelected) {
+      setSelectedSubjectIds(prev => prev.filter(k => !filteredKeys.includes(k)));
+    } else {
+      setSelectedSubjectIds(prev => Array.from(new Set([...prev, ...filteredKeys])));
+    }
+  };
+
+  const handleBulkDeleteSubjects = (keysToDelete) => {
+    const keys = keysToDelete || selectedSubjectIds;
+    if (!keys || keys.length === 0) {
+      showToast('Please select at least one subject to delete.', 'warning');
+      return;
+    }
+
+    setDeleteConfirmState({
+      isOpen: true,
+      type: 'bulk',
+      entityType: 'subject',
+      studentId: null,
+      studentName: `${keys.length} selected subject(s)`,
+      targetIds: keys
+    });
+  };
+
+  const handleDeleteSubject = (targetSub) => {
+    let subKey = null;
+    let subName = 'this subject';
+    if (typeof targetSub === 'number') {
+      const s = allFacultySubjects[targetSub];
+      if (s) {
+        subKey = s.subKey;
+        subName = s.subjectName || s.name || 'this subject';
+      }
+    } else if (targetSub && typeof targetSub === 'object') {
+      subKey = targetSub.subKey;
+      subName = targetSub.subjectName || targetSub.name || 'this subject';
+    } else {
+      subKey = targetSub;
+    }
+
+    if (!subKey) return;
+
+    setDeleteConfirmState({
+      isOpen: true,
+      type: 'single',
+      entityType: 'subject',
+      studentId: null,
+      studentName: subName,
+      targetIds: [subKey]
+    });
+  };
+
   // Open Add Modal
   const openAddModal = () => {
     setModalMode('add');
@@ -3149,6 +3435,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     });
     setCreatedStudentCredentials(null);
     setEnrollmentTouched(false);
+    setNameTouched(false);
     setMobileTouched(false);
     setShowStudentModal(true);
   };
@@ -3171,6 +3458,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     });
     setCreatedStudentCredentials(null);
     setEnrollmentTouched(false);
+    setNameTouched(false);
     setMobileTouched(false);
     setShowStudentModal(true);
   };
@@ -3630,6 +3918,19 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       const { rows } = subjectDateWiseMatrixData;
       const worksheet = XLSX.utils.json_to_sheet(rows);
 
+      worksheet['!autofilter'] = { ref: 'C1:E1' };
+
+      if (rows && rows.length > 0) {
+        const colKeys = Object.keys(rows[0]);
+        worksheet['!cols'] = colKeys.map(k => {
+          if (k === 'Student Name') return { wch: 22 };
+          if (k === 'Subject') return { wch: 24 };
+          if (k === 'Subject Code') return { wch: 14 };
+          if (k === 'Roll No' || k === 'Sem' || k === 'Division') return { wch: 10 };
+          return { wch: 14 };
+        });
+      }
+
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, 'Subject Attendance with Dates');
       XLSX.writeFile(workbook, `Subject_Attendance_With_Dates_${new Date().toISOString().split('T')[0]}.xlsx`);
@@ -3887,9 +4188,10 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
   const filteredStudents = sortStudentList(students.filter(
     (s) => {
-      const matchSearch = s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        s.enrollment_no.includes(searchQuery) ||
-        (s.email && s.email.toLowerCase().includes(searchQuery.toLowerCase()));
+      const q = searchQuery.trim().toLowerCase();
+      const matchSearch = !q ||
+        (s.name && String(s.name).toLowerCase().includes(q)) ||
+        (s.enrollment_no && String(s.enrollment_no).toLowerCase().includes(q));
       const matchSem = !stuSemFilter || String(s.semester) === String(stuSemFilter);
       const matchDiv = !stuDivFilter ||
         (stuDivFilter === 'none' ? !s.division || s.division.trim() === '' : String(s.division).toLowerCase() === stuDivFilter.toLowerCase());
@@ -4319,14 +4621,366 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   return (
     <div className="admin-dashboard-root">
       {/* Mobile Floating Bottom-Right Hamburger Menu Button */}
-      <button
-        type="button"
-        className="admin-floating-mobile-toggle"
-        onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
-        title={mobileSidebarOpen ? "Close Menu" : "Open Menu"}
-      >
-        {mobileSidebarOpen ? <X size={26} strokeWidth={2.5} /> : <Menu size={26} strokeWidth={2.5} />}
-      </button>
+      {showFloatingMobileMenu && !isAnyAdminModalOpen && (
+        <button
+          type="button"
+          className="admin-floating-mobile-toggle"
+          onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+          title={mobileSidebarOpen ? "Close Menu" : "Open Menu"}
+        >
+          {mobileSidebarOpen ? <X size={26} strokeWidth={2.5} /> : <Menu size={26} strokeWidth={2.5} />}
+        </button>
+      )}
+
+      {/* Mobile Floating Bottom-Right Student Actions Toggle Button (Positioned right ABOVE the hamburger button when in Students tab, or at bottom 24px when hamburger is OFF) */}
+      {activeTab === 'students' && !isAnyAdminModalOpen && (
+        <button
+          type="button"
+          className={`student-floating-mobile-actions-toggle ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+          onClick={() => setShowStudentMobileActions(!showStudentMobileActions)}
+          title={showStudentMobileActions ? "Close Student Actions" : "Open Student Actions"}
+          style={{
+            bottom: showFloatingMobileMenu ? '92px' : '24px'
+          }}
+        >
+          {showStudentMobileActions ? (
+            <ChevronRight size={26} strokeWidth={2.5} />
+          ) : (
+            <ChevronLeft size={26} strokeWidth={2.5} />
+          )}
+        </button>
+      )}
+
+      {/* Mobile Backdrop Overlay for Student Actions */}
+      {activeTab === 'students' && !isAnyAdminModalOpen && showStudentMobileActions && (
+        <div
+          className="student-mobile-actions-backdrop"
+          onClick={() => setShowStudentMobileActions(false)}
+        />
+      )}
+
+      {/* Mobile Floating Action Buttons Container (Positioned dynamically based on hamburger setting) */}
+      {activeTab === 'students' && !isAnyAdminModalOpen && showStudentMobileActions && (
+        <div
+          className={`admin-action-btn-group mobile-actions-open ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+          style={{
+            bottom: showFloatingMobileMenu ? '160px' : '92px'
+          }}
+        >
+          <button
+            onClick={() => { setShowStudentMobileActions(false); handleDownloadStudentSampleTemplate(); }}
+            style={{
+              padding: '8px 14px',
+              fontSize: '0.85rem',
+              fontWeight: '600',
+              borderRadius: '8px',
+              border: '1px solid rgba(168, 85, 247, 0.4)',
+              background: 'rgba(168, 85, 247, 0.15)',
+              color: '#c084fc',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease'
+            }}
+            title="Download sample Excel file format for student import"
+          >
+            <FileSpreadsheet size={16} color="#c084fc" />
+            <span>Sample Format</span>
+          </button>
+
+          <button
+            onClick={() => { setShowStudentMobileActions(false); fileInputRef.current && fileInputRef.current.click(); }}
+            style={{
+              padding: '8px 16px',
+              fontSize: '0.85rem',
+              fontWeight: '700',
+              borderRadius: '8px',
+              border: 'none',
+              background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
+              color: '#ffffff',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
+              transition: 'all 0.15s ease'
+            }}
+            title="Import student records batch from CSV/Excel"
+          >
+            <Upload size={16} color="#ffffff" />
+            <span style={{ color: '#ffffff' }}>Bulk Upload</span>
+          </button>
+
+          <button
+            onClick={() => { setShowStudentMobileActions(false); handleExportStudentsData(); }}
+            style={{
+              padding: '8px 16px',
+              fontSize: '0.85rem',
+              fontWeight: '700',
+              borderRadius: '8px',
+              border: 'none',
+              background: 'linear-gradient(135deg, #10b981, #059669)',
+              color: '#ffffff',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
+              transition: 'all 0.15s ease'
+            }}
+            title="Export all student records to Excel file"
+          >
+            <Download size={16} color="#ffffff" />
+            <span style={{ color: '#ffffff' }}>Export Data</span>
+          </button>
+
+          <button
+            onClick={() => { setShowStudentMobileActions(false); setPromoteStep(1); }}
+            style={{
+              padding: '8px 16px',
+              fontSize: '0.85rem',
+              fontWeight: '700',
+              borderRadius: '8px',
+              border: 'none',
+              background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+              color: '#ffffff',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
+              transition: 'all 0.15s ease'
+            }}
+            title="Promote all students to next semester (Sem 1..7 -> +1, Sem 8 -> Graduate & Remove)"
+          >
+            <TrendingUp size={16} color="#ffffff" />
+            <span style={{ color: '#ffffff' }}>Promote</span>
+          </button>
+
+          <button className="btn btn-primary full-width-mobile" onClick={() => { setShowStudentMobileActions(false); openAddModal(); }} style={{ color: '#ffffff' }}>
+            <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Student</span>
+          </button>
+        </div>
+      )}
+
+      {/* Mobile Floating Bottom-Right Faculty Actions Toggle Button */}
+      {activeTab === 'faculty' && !isAnyAdminModalOpen && (
+        <button
+          type="button"
+          className={`student-floating-mobile-actions-toggle ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+          onClick={() => setShowFacultyMobileActions(!showFacultyMobileActions)}
+          title={showFacultyMobileActions ? "Close Faculty Actions" : "Open Faculty Actions"}
+          style={{
+            bottom: showFloatingMobileMenu ? '92px' : '24px'
+          }}
+        >
+          {showFacultyMobileActions ? (
+            <ChevronRight size={26} strokeWidth={2.5} />
+          ) : (
+            <ChevronLeft size={26} strokeWidth={2.5} />
+          )}
+        </button>
+      )}
+
+      {/* Mobile Backdrop Overlay for Faculty Actions */}
+      {activeTab === 'faculty' && !isAnyAdminModalOpen && showFacultyMobileActions && (
+        <div
+          className="student-mobile-actions-backdrop"
+          onClick={() => setShowFacultyMobileActions(false)}
+        />
+      )}
+
+      {/* Mobile Floating Action Buttons Container for Faculty */}
+      {activeTab === 'faculty' && !isAnyAdminModalOpen && showFacultyMobileActions && (
+        <div
+          className={`admin-action-btn-group mobile-actions-open ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+          style={{
+            bottom: showFloatingMobileMenu ? '160px' : '92px'
+          }}
+        >
+          <button
+            onClick={() => { setShowFacultyMobileActions(false); handleDownloadFacultySampleTemplate(); }}
+            style={{
+              padding: '8px 14px',
+              fontSize: '0.85rem',
+              fontWeight: '600',
+              borderRadius: '8px',
+              border: '1px solid rgba(168, 85, 247, 0.4)',
+              background: 'rgba(168, 85, 247, 0.15)',
+              color: '#c084fc',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease'
+            }}
+            title="Download sample Excel file format for faculty import"
+          >
+            <FileSpreadsheet size={16} color="#c084fc" />
+            <span>Sample Format</span>
+          </button>
+
+          <button
+            onClick={() => { setShowFacultyMobileActions(false); facultyFileInputRef.current && facultyFileInputRef.current.click(); }}
+            style={{
+              padding: '8px 16px',
+              fontSize: '0.85rem',
+              fontWeight: '700',
+              borderRadius: '8px',
+              border: 'none',
+              background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
+              color: '#ffffff',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
+              transition: 'all 0.15s ease'
+            }}
+            title="Import faculty batch from CSV or Excel"
+          >
+            <Upload size={16} color="#ffffff" />
+            <span style={{ color: '#ffffff' }}>Bulk Upload</span>
+          </button>
+
+          <button
+            onClick={() => { setShowFacultyMobileActions(false); handleExportFacultyData(); }}
+            style={{
+              padding: '8px 16px',
+              fontSize: '0.85rem',
+              fontWeight: '700',
+              borderRadius: '8px',
+              border: 'none',
+              background: 'linear-gradient(135deg, #10b981, #059669)',
+              color: '#ffffff',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
+              transition: 'all 0.15s ease'
+            }}
+            title="Export faculty records to Excel file"
+          >
+            <Download size={16} color="#ffffff" />
+            <span style={{ color: '#ffffff' }}>Export Data</span>
+          </button>
+
+          <button className="btn btn-primary full-width-mobile" onClick={() => { setShowFacultyMobileActions(false); openAddFacultyModal(); }} style={{ color: '#ffffff' }}>
+            <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Faculty</span>
+          </button>
+        </div>
+      )}
+
+      {/* Mobile Floating Bottom-Right Subject Actions Toggle Button */}
+      {activeTab === 'subjects' && !isAnyAdminModalOpen && (
+        <button
+          type="button"
+          className={`student-floating-mobile-actions-toggle ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+          onClick={() => setShowSubjectMobileActions(!showSubjectMobileActions)}
+          title={showSubjectMobileActions ? "Close Subject Actions" : "Open Subject Actions"}
+          style={{
+            bottom: showFloatingMobileMenu ? '92px' : '24px'
+          }}
+        >
+          {showSubjectMobileActions ? (
+            <ChevronRight size={26} strokeWidth={2.5} />
+          ) : (
+            <ChevronLeft size={26} strokeWidth={2.5} />
+          )}
+        </button>
+      )}
+
+      {/* Mobile Backdrop Overlay for Subject Actions */}
+      {activeTab === 'subjects' && !isAnyAdminModalOpen && showSubjectMobileActions && (
+        <div
+          className="student-mobile-actions-backdrop"
+          onClick={() => setShowSubjectMobileActions(false)}
+        />
+      )}
+
+      {/* Mobile Floating Action Buttons Container for Subject */}
+      {activeTab === 'subjects' && !isAnyAdminModalOpen && showSubjectMobileActions && (
+        <div
+          className={`admin-action-btn-group mobile-actions-open ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+          style={{
+            bottom: showFloatingMobileMenu ? '160px' : '92px'
+          }}
+        >
+          <button
+            onClick={() => { setShowSubjectMobileActions(false); handleDownloadSubjectSampleTemplate(); }}
+            style={{
+              padding: '8px 14px',
+              fontSize: '0.85rem',
+              fontWeight: '600',
+              borderRadius: '8px',
+              border: '1px solid rgba(168, 85, 247, 0.4)',
+              background: 'rgba(168, 85, 247, 0.15)',
+              color: '#c084fc',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              transition: 'all 0.15s ease'
+            }}
+            title="Download sample Excel file format for subject import"
+          >
+            <FileSpreadsheet size={16} color="#c084fc" />
+            <span>Sample Format</span>
+          </button>
+
+          <button
+            onClick={() => { setShowSubjectMobileActions(false); subjectFileInputRef.current && subjectFileInputRef.current.click(); }}
+            style={{
+              padding: '8px 16px',
+              fontSize: '0.85rem',
+              fontWeight: '700',
+              borderRadius: '8px',
+              border: 'none',
+              background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
+              color: '#ffffff',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
+              transition: 'all 0.15s ease'
+            }}
+            title="Import subject records batch from CSV or Excel"
+          >
+            <Upload size={16} color="#ffffff" />
+            <span style={{ color: '#ffffff' }}>Bulk Upload</span>
+          </button>
+
+          <button
+            onClick={() => { setShowSubjectMobileActions(false); handleExportSubjectsData(); }}
+            style={{
+              padding: '8px 16px',
+              fontSize: '0.85rem',
+              fontWeight: '700',
+              borderRadius: '8px',
+              border: 'none',
+              background: 'linear-gradient(135deg, #10b981, #059669)',
+              color: '#ffffff',
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
+              transition: 'all 0.15s ease'
+            }}
+            title="Export subject records to Excel file"
+          >
+            <Download size={16} color="#ffffff" />
+            <span style={{ color: '#ffffff' }}>Export Data</span>
+          </button>
+
+          <button className="btn btn-primary full-width-mobile" onClick={() => { setShowSubjectMobileActions(false); handleOpenAddSubjectModal(); }} style={{ color: '#ffffff' }}>
+            <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Subject</span>
+          </button>
+        </div>
+      )}
 
       {/* Mobile Backdrop Overlay when sidebar is open */}
       {mobileSidebarOpen && (
@@ -4458,31 +5112,40 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         <div className="admin-main-wrapper content-light">
           <header className={`admin-top-header-banner ${activeTab === 'dashboard' ? 'dashboard-header-tall' : ''}`}>
             <div className="admin-banner-content">
-              <div className="admin-header-title-row">
-                <button
-                  className="admin-mobile-toggle-btn"
-                  onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
-                  title="Toggle Menu"
-                >
-                  <Menu size={22} />
-                </button>
-                <h1 className="admin-banner-title">
-                  {activeTab === 'dashboard' ? 'Dashboard' :
-                    activeTab === 'students' ? 'Students' :
-                      activeTab === 'faculty' ? 'Faculty' :
-                        activeTab === 'attendance_logs' ? 'Attendance Logs' :
-                          activeTab === 'subjects' ? 'Subject' :
-                            activeTab === 'otp' ? 'QR Attendance' :
-                              activeTab === 'location' ? 'College Location' :
-                                activeTab === 'leaves' ? 'Leave Request' :
-                                  activeTab === 'defaulters' ? 'Defaulters' :
-                                    activeTab === 'reports' ? 'Reports' :
-                                      activeTab === 'settings' ? 'Profile & Settings' : 'Dashboard'}
-                </h1>
+              <div className="admin-header-title-row" style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                {!showFloatingMobileMenu && (
+                  <button
+                    type="button"
+                    className="admin-side-menu-top-btn"
+                    onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+                    title={mobileSidebarOpen ? "Close Side Menu" : "Open Side Menu"}
+                  >
+                    {mobileSidebarOpen ? (
+                      <X size={22} color="#ffffff" strokeWidth={2.5} />
+                    ) : (
+                      <Menu size={22} color="#ffffff" strokeWidth={2.5} />
+                    )}
+                  </button>
+                )}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                  <h1 className="admin-banner-title">
+                    {activeTab === 'dashboard' ? 'Dashboard' :
+                      activeTab === 'students' ? 'Students' :
+                        activeTab === 'faculty' ? 'Faculty' :
+                          activeTab === 'attendance_logs' ? 'Attendance Logs' :
+                            activeTab === 'subjects' ? 'Subject' :
+                              activeTab === 'otp' ? 'QR Attendance' :
+                                activeTab === 'location' ? 'College Location' :
+                                  activeTab === 'leaves' ? 'Leave Request' :
+                                    activeTab === 'defaulters' ? 'Defaulters' :
+                                      activeTab === 'reports' ? 'Reports' :
+                                        activeTab === 'settings' ? 'Profile & Settings' : 'Dashboard'}
+                  </h1>
+                  <p className="admin-banner-subtitle" style={{ margin: 0 }}>
+                    Welcome back, <strong className="admin-banner-username">{user?.name || 'Parth Joshi'}</strong> 👋
+                  </p>
+                </div>
               </div>
-              <p className="admin-banner-subtitle">
-                Welcome back, <strong className="admin-banner-username">{user?.name || 'Parth Joshi'}</strong> 👋
-              </p>
             </div>
           </header>
 
@@ -5999,7 +6662,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                 <div className="glass-panel" style={{ ...styles.cardPadding, padding: isMobile ? '16px 12px' : '28px' }}>
                   {/* Header Row with Search on Left and Add Button on Right */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
-                    <div style={styles.searchContainer}>
+                  <div className="student-search-bar-wrapper" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', width: '100%' }}>
+                    <div style={{ ...styles.searchContainer, flex: 1, margin: 0, minWidth: '200px' }}>
                       <Search size={18} style={styles.searchIcon} />
                       <input
                         type="text"
@@ -6010,100 +6674,141 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         style={{ paddingLeft: '40px' }}
                       />
                     </div>
-
-                    <input
-                      type="file"
-                      accept=".csv,.xlsx"
-                      ref={subjectFileInputRef}
-                      onChange={handleSubjectImportFile}
-                      style={{ display: 'none' }}
-                    />
-                    <div className="admin-action-btn-group">
+                    {selectedSubjectIds.length > 0 && (
                       <button
-                        onClick={handleDownloadSubjectSampleTemplate}
+                        className="btn btn-danger mobile-only-delete-btn"
+                        onClick={() => handleBulkDeleteSubjects(selectedSubjectIds)}
                         style={{
-                          padding: '10px 16px',
-                          fontSize: '0.88rem',
-                          fontWeight: '600',
-                          borderRadius: '12px',
-                          border: '1px solid rgba(168, 85, 247, 0.4)',
-                          background: 'rgba(168, 85, 247, 0.15)',
-                          color: '#c084fc',
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          transition: 'all 0.15s ease'
-                        }}
-                        title="Download sample Excel file format for subject import"
-                      >
-                        <FileSpreadsheet size={16} color="#c084fc" />
-                        <span>Sample Format</span>
-                      </button>
-
-                      <button
-                        onClick={() => subjectFileInputRef.current && subjectFileInputRef.current.click()}
-                        style={{
-                          padding: '10px 16px',
-                          fontSize: '0.88rem',
-                          fontWeight: '700',
-                          borderRadius: '12px',
-                          border: 'none',
-                          background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
-                          color: '#ffffff',
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
                           gap: '8px',
-                          boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
-                          transition: 'all 0.15s ease'
-                        }}
-                        title="Import subject records batch from CSV or Excel"
-                      >
-                        <Upload size={16} color="#ffffff" />
-                        <span style={{ color: '#ffffff' }}>Bulk Upload</span>
-                      </button>
-
-                      <button
-                        onClick={handleExportSubjectsData}
-                        style={{
-                          padding: '10px 16px',
-                          fontSize: '0.88rem',
+                          background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
+                          color: '#ffffff',
+                          border: 'none',
+                          padding: '8px 16px',
+                          borderRadius: '10px',
                           fontWeight: '700',
-                          borderRadius: '12px',
-                          border: 'none',
-                          background: 'linear-gradient(135deg, #10b981, #059669)',
-                          color: '#ffffff',
-                          cursor: 'pointer',
-                          display: 'inline-flex',
+                          boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
                           alignItems: 'center',
-                          gap: '8px',
-                          boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
-                          transition: 'all 0.15s ease'
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap'
                         }}
-                        title="Export subject records to Excel file"
                       >
-                        <Download size={16} color="#ffffff" />
-                        <span style={{ color: '#ffffff' }}>Export</span>
+                        <Trash2 size={16} color="#ffffff" /> Delete Selected ({selectedSubjectIds.length})
                       </button>
+                    )}
+                  </div>
 
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx"
+                    ref={subjectFileInputRef}
+                    onChange={handleSubjectImportFile}
+                    style={{ display: 'none' }}
+                  />
+                  <div className="admin-action-btn-group desktop-student-action-group">
+                    <button
+                      onClick={() => { setShowSubjectMobileActions(false); handleDownloadSubjectSampleTemplate(); }}
+                      style={{
+                        padding: '10px 16px',
+                        fontSize: '0.88rem',
+                        fontWeight: '600',
+                        borderRadius: '12px',
+                        border: '1px solid rgba(168, 85, 247, 0.4)',
+                        background: 'rgba(168, 85, 247, 0.15)',
+                        color: '#c084fc',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        transition: 'all 0.15s ease'
+                      }}
+                      title="Download sample Excel file format for subject import"
+                    >
+                      <FileSpreadsheet size={16} color="#c084fc" />
+                      <span>Sample Format</span>
+                    </button>
+
+                    <button
+                      onClick={() => { setShowSubjectMobileActions(false); subjectFileInputRef.current && subjectFileInputRef.current.click(); }}
+                      style={{
+                        padding: '10px 16px',
+                        fontSize: '0.88rem',
+                        fontWeight: '700',
+                        borderRadius: '12px',
+                        border: 'none',
+                        background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
+                        color: '#ffffff',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
+                        transition: 'all 0.15s ease'
+                      }}
+                      title="Import subject records batch from CSV or Excel"
+                    >
+                      <Upload size={16} color="#ffffff" />
+                      <span style={{ color: '#ffffff' }}>Bulk Upload</span>
+                    </button>
+
+                    <button
+                      onClick={() => { setShowSubjectMobileActions(false); handleExportSubjectsData(); }}
+                      style={{
+                        padding: '10px 16px',
+                        fontSize: '0.88rem',
+                        fontWeight: '700',
+                        borderRadius: '12px',
+                        border: 'none',
+                        background: 'linear-gradient(135deg, #10b981, #059669)',
+                        color: '#ffffff',
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
+                        transition: 'all 0.15s ease'
+                      }}
+                      title="Export subject records to Excel file"
+                    >
+                      <Download size={16} color="#ffffff" />
+                      <span style={{ color: '#ffffff' }}>Export</span>
+                    </button>
+
+                    <button
+                      onClick={() => { setShowSubjectMobileActions(false); handleOpenAddSubjectModal(); }}
+                      className="btn btn-primary"
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '8px',
+                        padding: '10px 18px', borderRadius: '12px', fontSize: '0.88rem', fontWeight: '700',
+                        background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                        color: '#ffffff',
+                        boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
+                        border: 'none',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <Plus size={18} color="#ffffff" />
+                      <span style={{ color: '#ffffff' }}>Add Subject</span>
+                    </button>
+                    {selectedSubjectIds.length > 0 && (
                       <button
-                        onClick={handleOpenAddSubjectModal}
-                        className="btn btn-primary"
+                        className="btn btn-danger"
+                        onClick={() => handleBulkDeleteSubjects(selectedSubjectIds)}
                         style={{
-                          display: 'flex', alignItems: 'center', gap: '8px',
-                          padding: '10px 18px', borderRadius: '12px', fontSize: '0.88rem', fontWeight: '700',
-                          background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                          gap: '8px',
+                          background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
                           color: '#ffffff',
-                          boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
                           border: 'none',
+                          padding: '8px 18px',
+                          borderRadius: '10px',
+                          fontWeight: '700',
+                          boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
                           cursor: 'pointer'
                         }}
                       >
-                        <Plus size={18} color="#ffffff" />
-                        <span style={{ color: '#ffffff' }}>Add Subject</span>
+                        <Trash2 size={16} color="#ffffff" /> Delete Selected ({selectedSubjectIds.length})
                       </button>
-                    </div>
+                    )}
+                  </div>
                   </div>
 
                   {/* Subject List / Table */}
@@ -6125,119 +6830,141 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       </button>
                     </div>
                   ) : (
-                    <div className="custom-table-container">
-                      <table className="custom-table">
-                        <thead>
-                          <tr>
-                            <th style={{ width: '50px', textAlign: 'center', whiteSpace: 'nowrap' }}>#</th>
-                            <th style={{ whiteSpace: 'nowrap' }}>Subject Name</th>
-                            <th style={{ whiteSpace: 'nowrap' }}>Short Name</th>
-                            <th style={{ whiteSpace: 'nowrap' }}>Subject Code</th>
-                            <th style={{ whiteSpace: 'nowrap' }}>Semester</th>
-                            <th style={{ whiteSpace: 'nowrap' }}>Faculty</th>
-                            <th style={{ whiteSpace: 'nowrap' }}>Type</th>
-                            <th style={{ textAlign: 'center', width: '110px', whiteSpace: 'nowrap' }}>Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {allFacultySubjects
-                            .filter(sub => {
-                              if (!subjectSearchQuery || !subjectSearchQuery.trim()) return true;
-                              const q = subjectSearchQuery.toLowerCase().trim();
-                              const subName = String(sub.subjectName || sub.name || '').toLowerCase();
-                              const shortCode = String(sub.shortName || sub.shortCode || sub.short || '').toLowerCase();
-                              const subCode = String(sub.code || sub.subjectCode || '').toLowerCase();
-                              const facultyName = String(sub.facultyName || '').toLowerCase();
-                              return subName.includes(q) || shortCode.includes(q) || subCode.includes(q) || facultyName.includes(q);
-                            })
-                            .map((sub, idx) => {
-                              const subName = sub.subjectName || sub.name || 'Subject';
-                              const shortCode = sub.shortName || sub.shortCode || '-';
-                              const subCode = sub.code || sub.subjectCode || '-';
-                              const semNum = sub.semester ? String(sub.semester).replace(/\D/g, '') : '1';
-                              const subType = sub.type || sub.subjectType || 'Theory';
-                              const facultyName = sub.facultyName || 'Unknown';
+                    (() => {
+                      const filteredSubjects = allFacultySubjects.filter(sub => {
+                        if (!subjectSearchQuery || !subjectSearchQuery.trim()) return true;
+                        const q = subjectSearchQuery.toLowerCase().trim();
+                        const subName = String(sub.subjectName || sub.name || '').toLowerCase();
+                        const shortCode = String(sub.shortName || sub.shortCode || sub.short || '').toLowerCase();
+                        const subCode = String(sub.code || sub.subjectCode || '').toLowerCase();
+                        const facultyName = String(sub.facultyName || '').toLowerCase();
+                        return subName.includes(q) || shortCode.includes(q) || subCode.includes(q) || facultyName.includes(q);
+                      });
 
-                              return (
-                                <tr key={idx}>
-                                  <td style={{ textAlign: 'center', fontWeight: '700', color: 'var(--text-muted)' }}>{idx + 1}</td>
-                                  <td style={{ fontWeight: '700', color: 'var(--text-primary)', fontSize: '0.92rem' }}>
-                                    {subName}
-                                  </td>
-                                  <td style={{ whiteSpace: 'nowrap' }}>
-                                    <span style={{
-                                      padding: '2px 10px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: '700',
-                                      background: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)',
-                                      whiteSpace: 'nowrap', display: 'inline-block'
-                                    }}>
-                                      {shortCode}
-                                    </span>
-                                  </td>
-                                  <td style={{ whiteSpace: 'nowrap' }}>
-                                    {subCode && subCode !== '-' ? (
+                      return (
+                        <div className="custom-table-container">
+                          <table className="custom-table">
+                            <thead>
+                              <tr>
+                                <th style={{ width: '40px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={filteredSubjects.length > 0 && filteredSubjects.every(s => selectedSubjectIds.includes(s.subKey))}
+                                    onChange={toggleSelectAllSubjects}
+                                    title="Select / Unselect All"
+                                    style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                  />
+                                </th>
+                                <th style={{ width: '50px', textAlign: 'center', whiteSpace: 'nowrap' }}>No</th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Subject Name</th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Short Name</th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Subject Code</th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Semester</th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Faculty</th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Type</th>
+                                <th style={{ textAlign: 'center', width: '110px', whiteSpace: 'nowrap' }}>Action</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredSubjects.map((sub, idx) => {
+                                const isChecked = selectedSubjectIds.includes(sub.subKey);
+                                const subName = sub.subjectName || sub.name || 'Subject';
+                                const shortCode = sub.shortName || sub.shortCode || '-';
+                                const subCode = sub.code || sub.subjectCode || '-';
+                                const semNum = sub.semester ? String(sub.semester).replace(/\D/g, '') : '1';
+                                const subType = sub.type || sub.subjectType || 'Theory';
+                                const facultyName = sub.facultyName || 'Unknown';
+
+                                return (
+                                  <tr key={sub.subKey} style={{ background: isChecked ? 'rgba(147, 51, 234, 0.08)' : 'transparent' }}>
+                                    <td style={{ textAlign: 'center' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => toggleSelectSubject(sub.subKey)}
+                                        style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                      />
+                                    </td>
+                                    <td style={{ textAlign: 'center', fontWeight: '700', color: 'var(--text-muted)' }}>{idx + 1}</td>
+                                    <td style={{ fontWeight: '700', color: 'var(--text-primary)', fontSize: '0.92rem' }}>
+                                      {subName}
+                                    </td>
+                                    <td style={{ whiteSpace: 'nowrap' }}>
                                       <span style={{
                                         padding: '2px 10px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: '700',
-                                        background: 'rgba(59, 130, 246, 0.12)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.25)',
+                                        background: 'rgba(255,255,255,0.08)', color: 'var(--text-secondary)',
                                         whiteSpace: 'nowrap', display: 'inline-block'
                                       }}>
-                                        {subCode}
+                                        {shortCode}
                                       </span>
-                                    ) : (
-                                      <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>-</span>
-                                    )}
-                                  </td>
-                                  <td style={{ whiteSpace: 'nowrap' }}>
-                                    <span style={{
-                                      padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: '700',
-                                      background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.3)',
-                                      whiteSpace: 'nowrap', display: 'inline-block'
-                                    }}>
-                                      Semester {semNum}
-                                    </span>
-                                  </td>
-                                  <td style={{ whiteSpace: 'nowrap' }}>
-                                    <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                                      {facultyName}
-                                    </span>
-                                  </td>
-                                  <td style={{ whiteSpace: 'nowrap' }}>
-                                    <span style={{
-                                      padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: '700',
-                                      background: subType.includes('Both') || subType.includes('+') ? 'rgba(168, 85, 247, 0.15)' : subType === 'Practical' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(59, 130, 246, 0.15)',
-                                      color: subType.includes('Both') || subType.includes('+') ? '#c084fc' : subType === 'Practical' ? '#34d399' : '#60a5fa',
-                                      border: `1px solid ${subType.includes('Both') || subType.includes('+') ? 'rgba(168, 85, 247, 0.3)' : subType === 'Practical' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`,
-                                      whiteSpace: 'nowrap', display: 'inline-block'
-                                    }}>
-                                      {subType}
-                                    </span>
-                                  </td>
-                                  <td style={{ textAlign: 'center' }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-                                      <button
-                                        className="btn btn-secondary"
-                                        onClick={() => handleEditSubject(idx)}
-                                        style={styles.actionBtn}
-                                        title="Edit Subject Details"
-                                      >
-                                        <Edit size={14} />
-                                      </button>
+                                    </td>
+                                    <td style={{ whiteSpace: 'nowrap' }}>
+                                      {subCode && subCode !== '-' ? (
+                                        <span style={{
+                                          padding: '2px 10px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: '700',
+                                          background: 'rgba(59, 130, 246, 0.12)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.25)',
+                                          whiteSpace: 'nowrap', display: 'inline-block'
+                                        }}>
+                                          {subCode}
+                                        </span>
+                                      ) : (
+                                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>-</span>
+                                      )}
+                                    </td>
+                                    <td style={{ whiteSpace: 'nowrap' }}>
+                                      <span style={{
+                                        padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: '700',
+                                        background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.3)',
+                                        whiteSpace: 'nowrap', display: 'inline-block'
+                                      }}>
+                                        Semester {semNum}
+                                      </span>
+                                    </td>
+                                    <td style={{ whiteSpace: 'nowrap' }}>
+                                      <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+                                        {facultyName}
+                                      </span>
+                                    </td>
+                                    <td style={{ whiteSpace: 'nowrap' }}>
+                                      <span style={{
+                                        padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: '700',
+                                        background: subType.includes('Both') || subType.includes('+') ? 'rgba(168, 85, 247, 0.15)' : subType === 'Practical' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(59, 130, 246, 0.15)',
+                                        color: subType.includes('Both') || subType.includes('+') ? '#c084fc' : subType === 'Practical' ? '#34d399' : '#60a5fa',
+                                        border: `1px solid ${subType.includes('Both') || subType.includes('+') ? 'rgba(168, 85, 247, 0.3)' : subType === 'Practical' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`,
+                                        whiteSpace: 'nowrap', display: 'inline-block'
+                                      }}>
+                                        {subType}
+                                      </span>
+                                    </td>
+                                    <td style={{ textAlign: 'center' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                                        <button
+                                          className="btn btn-secondary"
+                                          onClick={() => handleEditSubject(sub)}
+                                          style={styles.actionBtn}
+                                          title="Edit Subject Details"
+                                        >
+                                          <Edit size={14} />
+                                        </button>
 
-                                      <button
-                                        className="btn btn-danger"
-                                        onClick={() => handleDeleteSubject(idx)}
-                                        style={styles.actionBtn}
-                                        title="Delete Subject"
-                                      >
-                                        <Trash2 size={14} />
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                        </tbody>
-                      </table>
-                    </div>
+                                        <button
+                                          className="btn btn-danger"
+                                          onClick={() => handleDeleteSubject(sub)}
+                                          style={styles.actionBtn}
+                                          title="Delete Subject"
+                                        >
+                                          <Trash2 size={14} />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    })()
                   )}
                 </div>
               </div>
@@ -6250,9 +6977,9 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                 top: 0, left: 0, right: 0, bottom: 0,
                 width: '100vw', width: '100dvw',
                 height: '100vh', height: '100dvh',
-                background: 'rgba(15, 23, 42, 0.75)',
-                backdropFilter: 'blur(12px)',
-                WebkitBackdropFilter: 'blur(12px)',
+                background: 'transparent',
+                backdropFilter: 'blur(5px)',
+                WebkitBackdropFilter: 'blur(5px)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -6327,6 +7054,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           value={newSubName}
                           onChange={e => setNewSubName(e.target.value)}
                           autoFocus
+                          tabIndex={1}
                           style={{
                             width: '100%',
                             padding: '10px 14px',
@@ -6352,6 +7080,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           placeholder="e.g. JAVA, C, DBMS"
                           value={newSubShort}
                           onChange={e => setNewSubShort(e.target.value)}
+                          tabIndex={2}
                           style={{
                             width: '100%',
                             padding: '10px 14px',
@@ -6377,6 +7106,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           placeholder="e.g. BCA-101, CS-202"
                           value={newSubCode}
                           onChange={e => setNewSubCode(e.target.value)}
+                          tabIndex={3}
                           style={{
                             width: '100%',
                             padding: '10px 14px',
@@ -6402,6 +7132,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           onChange={(val) => setNewSubSem(val)}
                           placeholder="Select Semester (1-8)"
                           isDark={false}
+                          tabIndex={4}
                         />
                       </div>
 
@@ -6413,6 +7144,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         <select
                           value={newSubType}
                           onChange={e => setNewSubType(e.target.value)}
+                          tabIndex={5}
                           style={{
                             width: '100%',
                             padding: '10px 14px',
@@ -6441,6 +7173,13 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         <select
                           value={newSubFacultyId}
                           onChange={e => setNewSubFacultyId(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddSubjectSubmit(e);
+                            }
+                          }}
+                          tabIndex={6}
                           style={{
                             width: '100%',
                             padding: '10px 14px',
@@ -6476,15 +7215,30 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <button
                         type="button"
                         onClick={() => setShowAddSubjectModal(false)}
+                        tabIndex={7}
                         style={{
                           padding: '9px 20px',
                           borderRadius: '10px',
                           fontSize: '0.88rem',
-                          fontWeight: '600',
+                          fontWeight: '700',
                           background: '#e2e8f0',
-                          color: '#475569',
-                          border: 'none',
-                          cursor: 'pointer'
+                          color: '#334155',
+                          border: '2px solid #cbd5e1',
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          outline: 'none'
+                        }}
+                        onFocus={e => {
+                          e.currentTarget.style.border = '2px solid #2563eb';
+                          e.currentTarget.style.boxShadow = '0 0 0 4px rgba(37, 99, 235, 0.35)';
+                          e.currentTarget.style.background = '#dbeafe';
+                          e.currentTarget.style.color = '#1d4ed8';
+                        }}
+                        onBlur={e => {
+                          e.currentTarget.style.border = '2px solid #cbd5e1';
+                          e.currentTarget.style.boxShadow = 'none';
+                          e.currentTarget.style.background = '#e2e8f0';
+                          e.currentTarget.style.color = '#334155';
                         }}
                       >
                         Cancel
@@ -6492,16 +7246,27 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <button
                         type="submit"
                         disabled={savingSubjects}
+                        tabIndex={8}
                         style={{
                           padding: '9px 24px',
                           borderRadius: '10px',
                           fontSize: '0.88rem',
-                          fontWeight: '700',
+                          fontWeight: '800',
                           background: 'linear-gradient(135deg, #f59e0b, #d97706)',
                           color: '#0f172a',
-                          border: 'none',
+                          border: '2px solid #d97706',
                           boxShadow: '0 4px 14px rgba(245, 158, 11, 0.4)',
-                          cursor: 'pointer'
+                          cursor: 'pointer',
+                          transition: 'all 0.15s ease',
+                          outline: 'none'
+                        }}
+                        onFocus={e => {
+                          e.currentTarget.style.border = '2px solid #0f172a';
+                          e.currentTarget.style.boxShadow = '0 0 0 5px rgba(245, 158, 11, 0.6), 0 4px 14px rgba(245, 158, 11, 0.5)';
+                        }}
+                        onBlur={e => {
+                          e.currentTarget.style.border = '2px solid #d97706';
+                          e.currentTarget.style.boxShadow = '0 4px 14px rgba(245, 158, 11, 0.4)';
                         }}
                       >
                         {savingSubjects ? (subjectModalMode === 'edit' ? 'Updating...' : 'Saving...') : (subjectModalMode === 'edit' ? 'Update Subject' : 'Save Subject')}
@@ -6571,7 +7336,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           </div>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'nowrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                           {selectedSemFolder === null ? (
                             <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
                               📅 Date Archive
@@ -6647,7 +7412,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                                     fetchQrData(),
                                     fetchStats()
                                   ]);
-                                  showToast('Session attendance data refreshed!', 'success', 2500);
                                 } catch (err) {
                                   console.error('Error refreshing session logs:', err);
                                 } finally {
@@ -6988,14 +7752,14 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                                       onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 30px rgba(245, 158, 11, 0.25)'; }}
                                       onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
                                     >
-                                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                        <Folder size={32} color="#f59e0b" />
-                                        <div style={{ display: 'flex', gap: '6px' }}>
-                                          <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '10px', background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', fontWeight: '700' }}>
-                                            ✓ {sess.presentCount} Present
+                                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
+                                        <Folder size={28} color="#f59e0b" style={{ flexShrink: 0 }} />
+                                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                          <span style={{ fontSize: '0.72rem', padding: '2px 6px', borderRadius: '8px', background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', fontWeight: '700', whiteSpace: 'nowrap' }} title={`${sess.presentCount} Present`}>
+                                            ✓ {sess.presentCount}
                                           </span>
-                                          <span style={{ fontSize: '0.75rem', padding: '3px 8px', borderRadius: '10px', background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', fontWeight: '700' }}>
-                                            ✕ {sess.absentCount} Absent
+                                          <span style={{ fontSize: '0.72rem', padding: '2px 6px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', fontWeight: '700', whiteSpace: 'nowrap' }} title={`${sess.absentCount} Absent`}>
+                                            ✕ {sess.absentCount}
                                           </span>
                                         </div>
                                       </div>
@@ -7264,17 +8028,41 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             {activeTab === 'students' && (
               <div style={{ ...styles.tabPanel, ...styles.studentCrudPanel }} className="glass-panel">
                 <div style={styles.crudHeader}>
-                  <div style={styles.searchContainer}>
-                    <Search size={18} style={styles.searchIcon} />
-                    <input
-                      type="text"
-                      className="glass-input"
-                      placeholder="Search student by Name or Enrollment..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      style={{ paddingLeft: '40px' }}
-                    />
+                  <div className="student-search-bar-wrapper" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', width: '100%' }}>
+                    <div style={{ ...styles.searchContainer, flex: 1, margin: 0, minWidth: '200px' }}>
+                      <Search size={18} style={styles.searchIcon} />
+                      <input
+                        type="text"
+                        className="glass-input"
+                        placeholder="Search by Name or Enrollment No..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        style={{ paddingLeft: '40px' }}
+                      />
+                    </div>
+                    {selectedStudentIds.length > 0 && (
+                      <button
+                        className="btn btn-danger mobile-only-delete-btn"
+                        onClick={() => handleBulkDeleteStudents(selectedStudentIds)}
+                        style={{
+                          gap: '8px',
+                          background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
+                          color: '#ffffff',
+                          border: 'none',
+                          padding: '8px 16px',
+                          borderRadius: '10px',
+                          fontWeight: '700',
+                          boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
+                          alignItems: 'center',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap'
+                        }}
+                      >
+                        <Trash2 size={16} color="#ffffff" /> Delete Selected ({selectedStudentIds.length})
+                      </button>
+                    )}
                   </div>
+
                   <input
                     type="file"
                     accept=".csv,.xlsx"
@@ -7282,101 +8070,103 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     onChange={handleImportFile}
                     style={{ display: 'none' }}
                   />
-                  <div className="admin-action-btn-group">
-                    <button
-                      onClick={handleDownloadStudentSampleTemplate}
-                      style={{
-                        padding: '8px 14px',
-                        fontSize: '0.85rem',
-                        fontWeight: '600',
-                        borderRadius: '8px',
-                        border: '1px solid rgba(168, 85, 247, 0.4)',
-                        background: 'rgba(168, 85, 247, 0.15)',
-                        color: '#c084fc',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        transition: 'all 0.15s ease'
-                      }}
-                      title="Download sample Excel file format for student import"
-                    >
-                      <FileSpreadsheet size={16} color="#c084fc" />
-                      <span>Sample Format</span>
-                    </button>
+                  <div className="admin-action-btn-group desktop-student-action-group" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'nowrap' }}>
+                      <button
+                        onClick={() => { setShowStudentMobileActions(false); handleDownloadStudentSampleTemplate(); }}
+                        style={{
+                          padding: '8px 14px',
+                          fontSize: '0.85rem',
+                          fontWeight: '600',
+                          borderRadius: '8px',
+                          border: '1px solid rgba(168, 85, 247, 0.4)',
+                          background: 'rgba(168, 85, 247, 0.15)',
+                          color: '#c084fc',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          transition: 'all 0.15s ease'
+                        }}
+                        title="Download sample Excel file format for student import"
+                      >
+                        <FileSpreadsheet size={16} color="#c084fc" />
+                        <span>Sample Format</span>
+                      </button>
 
-                    <button
-                      onClick={() => fileInputRef.current && fileInputRef.current.click()}
-                      style={{
-                        padding: '8px 16px',
-                        fontSize: '0.85rem',
-                        fontWeight: '700',
-                        borderRadius: '8px',
-                        border: 'none',
-                        background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
-                        color: '#ffffff',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
-                        transition: 'all 0.15s ease'
-                      }}
-                      title="Import student records batch from CSV/Excel"
-                    >
-                      <Upload size={16} color="#ffffff" />
-                      <span style={{ color: '#ffffff' }}>Bulk Upload</span>
-                    </button>
+                      <button
+                        onClick={() => { setShowStudentMobileActions(false); fileInputRef.current && fileInputRef.current.click(); }}
+                        style={{
+                          padding: '8px 16px',
+                          fontSize: '0.85rem',
+                          fontWeight: '700',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
+                          color: '#ffffff',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
+                          transition: 'all 0.15s ease'
+                        }}
+                        title="Import student records batch from CSV/Excel"
+                      >
+                        <Upload size={16} color="#ffffff" />
+                        <span style={{ color: '#ffffff' }}>Bulk Upload</span>
+                      </button>
 
-                    <button
-                      onClick={handleExportStudentsData}
-                      style={{
-                        padding: '8px 16px',
-                        fontSize: '0.85rem',
-                        fontWeight: '700',
-                        borderRadius: '8px',
-                        border: 'none',
-                        background: 'linear-gradient(135deg, #10b981, #059669)',
-                        color: '#ffffff',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
-                        transition: 'all 0.15s ease'
-                      }}
-                      title="Export all student records to Excel file"
-                    >
-                      <Download size={16} color="#ffffff" />
-                      <span style={{ color: '#ffffff' }}>Export Data</span>
-                    </button>
+                      <button
+                        onClick={() => { setShowStudentMobileActions(false); handleExportStudentsData(); }}
+                        style={{
+                          padding: '8px 16px',
+                          fontSize: '0.85rem',
+                          fontWeight: '700',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: 'linear-gradient(135deg, #10b981, #059669)',
+                          color: '#ffffff',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
+                          transition: 'all 0.15s ease'
+                        }}
+                        title="Export all student records to Excel file"
+                      >
+                        <Download size={16} color="#ffffff" />
+                        <span style={{ color: '#ffffff' }}>Export Data</span>
+                      </button>
 
-                    <button
-                      onClick={() => setPromoteStep(1)}
-                      style={{
-                        padding: '8px 16px',
-                        fontSize: '0.85rem',
-                        fontWeight: '700',
-                        borderRadius: '8px',
-                        border: 'none',
-                        background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                        color: '#ffffff',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
-                        transition: 'all 0.15s ease'
-                      }}
-                      title="Promote all students to next semester (Sem 1..7 -> +1, Sem 8 -> Graduate & Remove)"
-                    >
-                      <TrendingUp size={16} color="#ffffff" />
-                      <span style={{ color: '#ffffff' }}>Promote</span>
-                    </button>
+                      <button
+                        onClick={() => { setShowStudentMobileActions(false); setPromoteStep(1); }}
+                        style={{
+                          padding: '8px 16px',
+                          fontSize: '0.85rem',
+                          fontWeight: '700',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                          color: '#ffffff',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
+                          transition: 'all 0.15s ease'
+                        }}
+                        title="Promote all students to next semester (Sem 1..7 -> +1, Sem 8 -> Graduate & Remove)"
+                      >
+                        <TrendingUp size={16} color="#ffffff" />
+                        <span style={{ color: '#ffffff' }}>Promote</span>
+                      </button>
 
-                    <button className="btn btn-primary full-width-mobile" onClick={openAddModal} style={{ color: '#ffffff' }}>
-                      <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Student</span>
-                    </button>
+                      <button className="btn btn-primary full-width-mobile" onClick={() => { setShowStudentMobileActions(false); openAddModal(); }} style={{ color: '#ffffff' }}>
+                        <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Student</span>
+                      </button>
+                    </div>
                     {selectedStudentIds.length > 0 && (
                       <button
                         className="btn btn-danger"
@@ -7387,65 +8177,17 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           color: '#ffffff',
                           border: 'none',
                           padding: '8px 18px',
+                          borderRadius: '10px',
                           fontWeight: '700',
-                          boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)'
+                          boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
+                          cursor: 'pointer',
+                          alignSelf: 'flex-end'
                         }}
                       >
-                        <Trash2 size={16} /> Delete Selected ({selectedStudentIds.length})
+                        <Trash2 size={16} color="#ffffff" /> Delete Selected ({selectedStudentIds.length})
                       </button>
                     )}
                   </div>
-                </div>
-
-                {/* Semester & Division filter dropdowns + Select All Control Bar */}
-                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', marginBottom: '16px', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(255,255,255,0.03)', padding: '12px 16px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.08)' }}>
-                  <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-                    <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)' }}>Filter Students:</span>
-                    <select
-                      className="glass-input"
-                      style={{ width: '160px', padding: '6px 12px', background: '#001b3d', color: '#ffffff', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px' }}
-                      value={stuSemFilter}
-                      onChange={(e) => { setStuSemFilter(e.target.value); setStuDivFilter(''); }}
-                    >
-                      <option value="" style={{ background: '#001b3d', color: '#ffffff' }}>All Semesters</option>
-                      {[1, 2, 3, 4, 5, 6, 7, 8].map(s => (
-                        <option key={s} value={s} style={{ background: '#001b3d', color: '#ffffff' }}>Sem {s}</option>
-                      ))}
-                    </select>
-                    <select
-                      className="glass-input"
-                      style={{ width: '160px', padding: '6px 12px', background: '#001b3d', color: '#ffffff', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '8px' }}
-                      value={stuDivFilter}
-                      onChange={(e) => setStuDivFilter(e.target.value)}
-                    >
-                      <option value="" style={{ background: '#001b3d', color: '#ffffff' }}>All Divisions</option>
-                      {Array.from(new Set(
-                        students
-                          .filter(s => !stuSemFilter || String(s.semester) === String(stuSemFilter))
-                          .map(s => s.division)
-                          .filter(d => d && d.trim() !== '')
-                      )).sort().map(div => (
-                        <option key={div} value={div} style={{ background: '#001b3d', color: '#ffffff' }}>Div {div}</option>
-                      ))}
-                      <option value="none" style={{ background: '#001b3d', color: '#ffffff' }}>No Division (Blank)</option>
-                    </select>
-                    {(stuSemFilter || stuDivFilter) && (
-                      <button
-                        className="btn btn-secondary"
-                        onClick={() => { setStuSemFilter(''); setStuDivFilter(''); }}
-                        style={{ padding: '4px 10px', fontSize: '0.78rem' }}
-                      >
-                        Reset
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Selected count indicator */}
-                  {selectedStudentIds.length > 0 && (
-                    <span style={{ fontSize: '0.82rem', color: '#c084fc', fontWeight: '600' }}>
-                      ({selectedStudentIds.length} Selected)
-                    </span>
-                  )}
                 </div>
 
                 {/* Paginated Student Table Rendering */}
@@ -7580,16 +8322,39 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             {activeTab === 'faculty' && (
               <div style={{ ...styles.tabPanel, ...styles.studentCrudPanel }} className="glass-panel">
                 <div style={styles.crudHeader}>
-                  <div style={styles.searchContainer}>
-                    <Search size={18} style={styles.searchIcon} />
-                    <input
-                      type="text"
-                      className="glass-input"
-                      placeholder="Search faculty by Name or Email..."
-                      value={facultySearchQuery}
-                      onChange={(e) => setFacultySearchQuery(e.target.value)}
-                      style={{ paddingLeft: '40px' }}
-                    />
+                  <div className="student-search-bar-wrapper" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', width: '100%' }}>
+                    <div style={{ ...styles.searchContainer, flex: 1, margin: 0, minWidth: '200px' }}>
+                      <Search size={18} style={styles.searchIcon} />
+                      <input
+                        type="text"
+                        className="glass-input"
+                        placeholder="Search faculty by Name or Email..."
+                        value={facultySearchQuery}
+                        onChange={(e) => setFacultySearchQuery(e.target.value)}
+                        style={{ paddingLeft: '40px' }}
+                      />
+                    </div>
+                    {selectedFacultyIds.length > 0 && (
+                      <button
+                        className="btn btn-danger mobile-only-delete-btn"
+                        onClick={() => handleBulkDeleteFaculty(selectedFacultyIds)}
+                        style={{
+                          gap: '8px',
+                          background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
+                          color: '#ffffff',
+                          border: 'none',
+                          padding: '8px 16px',
+                          borderRadius: '10px',
+                          fontWeight: '700',
+                          boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
+                          alignItems: 'center',
+                          cursor: 'pointer',
+                          whiteSpace: 'nowrap'
+                        }}
+                      >
+                        <Trash2 size={16} color="#ffffff" /> Delete Selected ({selectedFacultyIds.length})
+                      </button>
+                    )}
                   </div>
                   <input
                     type="file"
@@ -7598,9 +8363,9 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     onChange={handleFacultyImportFile}
                     style={{ display: 'none' }}
                   />
-                  <div className="admin-action-btn-group">
+                  <div className="admin-action-btn-group desktop-student-action-group">
                     <button
-                      onClick={handleDownloadFacultySampleTemplate}
+                      onClick={() => { setShowFacultyMobileActions(false); handleDownloadFacultySampleTemplate(); }}
                       style={{
                         padding: '8px 14px',
                         fontSize: '0.85rem',
@@ -7622,7 +8387,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     </button>
 
                     <button
-                      onClick={() => facultyFileInputRef.current && facultyFileInputRef.current.click()}
+                      onClick={() => { setShowFacultyMobileActions(false); facultyFileInputRef.current && facultyFileInputRef.current.click(); }}
                       style={{
                         padding: '8px 16px',
                         fontSize: '0.85rem',
@@ -7645,7 +8410,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     </button>
 
                     <button
-                      onClick={handleExportFacultyData}
+                      onClick={() => { setShowFacultyMobileActions(false); handleExportFacultyData(); }}
                       style={{
                         padding: '8px 16px',
                         fontSize: '0.85rem',
@@ -7667,9 +8432,28 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <span style={{ color: '#ffffff' }}>Export</span>
                     </button>
 
-                    <button className="btn btn-primary" onClick={openAddFacultyModal} style={{ color: '#ffffff' }}>
+                    <button className="btn btn-primary" onClick={() => { setShowFacultyMobileActions(false); openAddFacultyModal(); }} style={{ color: '#ffffff' }}>
                       <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Faculty</span>
                     </button>
+                    {selectedFacultyIds.length > 0 && (
+                      <button
+                        className="btn btn-danger"
+                        onClick={() => handleBulkDeleteFaculty(selectedFacultyIds)}
+                        style={{
+                          gap: '8px',
+                          background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
+                          color: '#ffffff',
+                          border: 'none',
+                          padding: '8px 18px',
+                          borderRadius: '10px',
+                          fontWeight: '700',
+                          boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <Trash2 size={16} color="#ffffff" /> Delete Selected ({selectedFacultyIds.length})
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -7679,44 +8463,68 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   ) : faculties.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No faculty members found.</div>
                   ) : (
-                    <table className="custom-table">
-                      <thead>
-                        <tr>
-                          <th>Name</th>
-                          <th>Gmail ID</th>
-                          <th>Department</th>
-                          <th>Mobile</th>
-                          <th>Password</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {faculties
-                          .filter(f =>
-                            (f.name && f.name.toLowerCase().includes(facultySearchQuery.toLowerCase())) ||
-                            (f.email && f.email.toLowerCase().includes(facultySearchQuery.toLowerCase()))
-                          )
-                          .map((fac) => (
-                            <tr key={fac.id}>
-                              <td style={{ fontWeight: 600 }}>{fac.name}</td>
-                              <td style={{ color: 'var(--text-secondary)', fontSize: '0.86rem' }}>{fac.email || '—'}</td>
-                              <td>{fac.department}</td>
-                              <td>{fac.mobile}</td>
-                              <td><code>{fac.plain_password}</code></td>
-                              <td>
-                                <div style={styles.actionButtonContainer}>
-                                  <button className="btn btn-secondary" onClick={() => openEditFacultyModal(fac)} style={styles.actionBtn} title="Edit Details">
-                                    <Edit size={14} />
-                                  </button>
-                                  <button className="btn btn-danger" onClick={() => handleDeleteFaculty(fac.id)} style={styles.actionBtn} title="Delete">
-                                    <Trash2 size={14} />
-                                  </button>
-                                </div>
-                              </td>
+                    (() => {
+                      const filteredFaculties = faculties.filter(f =>
+                        (f.name && f.name.toLowerCase().includes(facultySearchQuery.toLowerCase())) ||
+                        (f.email && f.email.toLowerCase().includes(facultySearchQuery.toLowerCase()))
+                      );
+
+                      return (
+                        <table className="custom-table">
+                          <thead>
+                            <tr>
+                              <th style={{ width: '40px', textAlign: 'center' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={filteredFaculties.length > 0 && filteredFaculties.every(f => selectedFacultyIds.includes(f.id))}
+                                  onChange={toggleSelectAllFaculty}
+                                  title="Select / Unselect All"
+                                  style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                />
+                              </th>
+                              <th>Name</th>
+                              <th>Gmail ID</th>
+                              <th>Department</th>
+                              <th>Mobile</th>
+                              <th>Password</th>
+                              <th>Actions</th>
                             </tr>
-                          ))}
-                      </tbody>
-                    </table>
+                          </thead>
+                          <tbody>
+                            {filteredFaculties.map((fac) => {
+                              const isChecked = selectedFacultyIds.includes(fac.id);
+                              return (
+                                <tr key={fac.id} style={{ background: isChecked ? 'rgba(147, 51, 234, 0.08)' : 'transparent' }}>
+                                  <td style={{ textAlign: 'center' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={() => toggleSelectFaculty(fac.id)}
+                                      style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                    />
+                                  </td>
+                                  <td style={{ fontWeight: 600 }}>{fac.name}</td>
+                                  <td style={{ color: 'var(--text-secondary)', fontSize: '0.86rem' }}>{fac.email || '—'}</td>
+                                  <td>{fac.department}</td>
+                                  <td>{fac.mobile}</td>
+                                  <td><code>{fac.plain_password}</code></td>
+                                  <td>
+                                    <div style={styles.actionButtonContainer}>
+                                      <button className="btn btn-secondary" onClick={() => openEditFacultyModal(fac)} style={styles.actionBtn} title="Edit Details">
+                                        <Edit size={14} />
+                                      </button>
+                                      <button className="btn btn-danger" onClick={() => handleDeleteFaculty(fac.id)} style={styles.actionBtn} title="Delete">
+                                        <Trash2 size={14} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      );
+                    })()
                   )}
                 </div>
               </div>
@@ -9084,6 +9892,47 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     </form>
                   </div>
 
+                  {/* CARD 3: MOBILE NAVIGATION SETTINGS */}
+                  <div className="glass-panel" style={{ padding: '30px', display: 'flex', flexDirection: 'column', gap: '18px', gridColumn: '1 / -1' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '14px' }}>
+                      <div style={{ background: 'rgba(245, 158, 11, 0.15)', padding: '10px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Menu size={24} color="#f59e0b" />
+                      </div>
+                      <div>
+                        <h3 style={{ ...styles.cardTitle, margin: 0 }}>Mobile Navigation Settings</h3>
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0, marginTop: '4px' }}>Configure floating mobile menu button display</p>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderRadius: '12px', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid var(--border-light)', flexWrap: 'wrap', gap: '12px' }}>
+                      <div>
+                        <div style={{ fontWeight: '700', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                          Bottom Floating Hamburger Button
+                        </div>
+                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                          ON: Bottom floating menu button | OFF: Top header banner menu button
+                        </div>
+                      </div>
+
+                      <label style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer', gap: '10px' }}>
+                        <span style={{ fontSize: '0.85rem', fontWeight: '700', color: showFloatingMobileMenu ? '#10b981' : '#64748b' }}>
+                          {showFloatingMobileMenu ? 'ON (Show)' : 'OFF (Hide)'}
+                        </span>
+                        <input
+                          type="checkbox"
+                          checked={showFloatingMobileMenu}
+                          onChange={handleToggleFloatingMobileMenu}
+                          style={{
+                            width: '44px',
+                            height: '24px',
+                            cursor: 'pointer',
+                            accentColor: '#f59e0b'
+                          }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+
                 </div>
               </div>
             )}
@@ -9145,9 +9994,10 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     </button>
                   </div>
                 ) : (
-                  <form onSubmit={handleStudentSubmit} style={styles.modalForm}>
-                    <div style={styles.formGroup}>
-                      <label style={styles.formLabel}>Enrollment Number</label>
+                    <form onSubmit={handleStudentSubmit} style={styles.modalForm}>
+                    <div style={styles.modalFormBody}>
+                      <div style={styles.formGroup}>
+                      <label style={styles.formLabel}>Enrollment Number *</label>
                       <input
                         type="text"
                         className="glass-input"
@@ -9163,7 +10013,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         }}
                         onBlur={() => {
                           setEnrollmentTouched(true);
-                          if (studentForm.enrollment_no && !/^\d{10}$/.test(studentForm.enrollment_no)) {
+                          if (!/^\d{10}$/.test(studentForm.enrollment_no || '')) {
                             showToast('Please enter valid 10-digit enrollment number', 'warning', 3000);
                           }
                         }}
@@ -9171,11 +10021,13 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         pattern="^\d{10}$"
                         title="Please enter valid enrollment number"
                         disabled={modalMode === 'edit'}
-                        style={enrollmentTouched && studentForm.enrollment_no && !/^\d{10}$/.test(studentForm.enrollment_no) ? { borderColor: '#ff4d4f', boxShadow: '0 0 0 2px rgba(255, 77, 79, 0.2)' } : {}}
+                        autoFocus
+                        tabIndex={1}
+                        style={enrollmentTouched && !/^\d{10}$/.test(studentForm.enrollment_no || '') ? { borderColor: '#ff4d4f', boxShadow: '0 0 0 2px rgba(255, 77, 79, 0.2)' } : {}}
                       />
-                      {enrollmentTouched && studentForm.enrollment_no && !/^\d{10}$/.test(studentForm.enrollment_no) && (
+                      {enrollmentTouched && !/^\d{10}$/.test(studentForm.enrollment_no || '') && (
                         <div style={{ color: '#ff4d4f', fontSize: '0.82rem', marginTop: '6px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'rgba(255, 77, 79, 0.08)', padding: '6px 10px', borderRadius: '6px', border: '1px solid rgba(255, 77, 79, 0.25)' }}>
-                          ⚠️ Please enter valid enrollment number
+                          ⚠️ Enrollment Number is required (Must be 10 digits)
                         </div>
                       )}
                     </div>
@@ -9188,19 +10040,47 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         placeholder="e.g. 101"
                         value={studentForm.roll_no || ''}
                         onChange={(e) => setStudentForm({ ...studentForm, roll_no: e.target.value })}
+                        tabIndex={2}
                       />
                     </div>
 
                     <div style={styles.formGroup}>
-                      <label style={styles.formLabel}>Student Full Name</label>
+                      <label style={styles.formLabel}>Student Full Name *</label>
                       <input
                         type="text"
                         className="glass-input"
                         placeholder="e.g. Amit Patel"
                         value={studentForm.name}
-                        onChange={(e) => setStudentForm({ ...studentForm, name: e.target.value })}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (/\d/.test(val)) {
+                            showToast('Student Name should contain letters only (No numbers allowed)', 'warning', 2500);
+                          }
+                          const cleanVal = val.replace(/\d/g, '');
+                          setStudentForm({ ...studentForm, name: cleanVal });
+                        }}
+                        onBlur={() => {
+                          setNameTouched(true);
+                          if (!studentForm.name || !studentForm.name.trim()) {
+                            showToast('Please enter Student Full Name', 'warning', 3000);
+                          } else if (!/^[A-Za-z\s.'-]+$/.test(studentForm.name.trim())) {
+                            showToast('Student Name should contain letters only', 'warning', 3000);
+                          }
+                        }}
                         required
+                        tabIndex={3}
+                        style={nameTouched && (!studentForm.name || !studentForm.name.trim() || !/^[A-Za-z\s.'-]+$/.test(studentForm.name.trim())) ? { borderColor: '#ff4d4f', boxShadow: '0 0 0 2px rgba(255, 77, 79, 0.2)' } : {}}
                       />
+                      {nameTouched && (!studentForm.name || !studentForm.name.trim()) && (
+                        <div style={{ color: '#ff4d4f', fontSize: '0.82rem', marginTop: '6px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'rgba(255, 77, 79, 0.08)', padding: '6px 10px', borderRadius: '6px', border: '1px solid rgba(255, 77, 79, 0.25)' }}>
+                          ⚠️ Student Full Name is required
+                        </div>
+                      )}
+                      {nameTouched && studentForm.name && !/^[A-Za-z\s.'-]+$/.test(studentForm.name.trim()) && (
+                        <div style={{ color: '#ff4d4f', fontSize: '0.82rem', marginTop: '6px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'rgba(255, 77, 79, 0.08)', padding: '6px 10px', borderRadius: '6px', border: '1px solid rgba(255, 77, 79, 0.25)' }}>
+                          ⚠️ Student Name should contain letters only (No numbers allowed)
+                        </div>
+                      )}
                     </div>
 
                     <div style={styles.formGroup}>
@@ -9208,14 +10088,15 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <input
                         type="email"
                         className="glass-input"
-                        placeholder="e.g. student@college.edu"
+                        placeholder="e.g. student@college.com"
                         value={studentForm.email || ''}
                         onChange={(e) => setStudentForm({ ...studentForm, email: e.target.value })}
                         required
+                        tabIndex={4}
                         onBlur={(e) => {
                           const val = e.target.value.trim();
                           if (val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
-                            showToast('Please enter a valid email address (e.g. student@college.edu)', 'warning', 3000);
+                            showToast('Please enter a valid email address (e.g. student@college.com)', 'warning', 3000);
                           }
                         }}
                       />
@@ -9230,6 +10111,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         value={studentForm.course}
                         onChange={(e) => setStudentForm({ ...studentForm, course: e.target.value })}
                         required
+                        tabIndex={5}
                       />
                     </div>
 
@@ -9240,6 +10122,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         onChange={(val) => setStudentForm({ ...studentForm, semester: val })}
                         placeholder="Select Semester (1-8)"
                         isDark={false}
+                        tabIndex={6}
                       />
                     </div>
 
@@ -9251,11 +10134,12 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         placeholder="e.g. A, B, Div-1 (Leave blank if no division)"
                         value={studentForm.division || ''}
                         onChange={(e) => setStudentForm({ ...studentForm, division: e.target.value })}
+                        tabIndex={7}
                       />
                     </div>
 
                     <div style={styles.formGroup}>
-                      <label style={styles.formLabel}>Mobile Number</label>
+                      <label style={styles.formLabel}>Mobile Number *</label>
                       <input
                         type="text"
                         className="glass-input"
@@ -9269,20 +10153,27 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           const cleanVal = val.replace(/\D/g, '').slice(0, 10);
                           setStudentForm({ ...studentForm, mobile: cleanVal });
                         }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleStudentSubmit(e);
+                          }
+                        }}
                         onBlur={() => {
                           setMobileTouched(true);
-                          if (studentForm.mobile && !/^\d{10}$/.test(studentForm.mobile)) {
+                          if (!/^\d{10}$/.test(studentForm.mobile || '')) {
                             showToast('Please enter valid 10-digit mobile number', 'warning', 3000);
                           }
                         }}
                         required
                         pattern="^\d{10}$"
-                        title="Please enter valid mobile number"
-                        style={mobileTouched && studentForm.mobile && !/^\d{10}$/.test(studentForm.mobile) ? { borderColor: '#ff4d4f', boxShadow: '0 0 0 2px rgba(255, 77, 79, 0.2)' } : {}}
+                        title="Please enter valid 10-digit mobile number"
+                        tabIndex={8}
+                        style={mobileTouched && !/^\d{10}$/.test(studentForm.mobile || '') ? { borderColor: '#ff4d4f', boxShadow: '0 0 0 2px rgba(255, 77, 79, 0.2)' } : {}}
                       />
-                      {mobileTouched && studentForm.mobile && !/^\d{10}$/.test(studentForm.mobile) && (
+                      {mobileTouched && !/^\d{10}$/.test(studentForm.mobile || '') && (
                         <div style={{ color: '#ff4d4f', fontSize: '0.82rem', marginTop: '6px', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'rgba(255, 77, 79, 0.08)', padding: '6px 10px', borderRadius: '6px', border: '1px solid rgba(255, 77, 79, 0.25)' }}>
-                          ⚠️ Please enter valid mobile number
+                          ⚠️ Mobile number is required (Must be 10 digits)
                         </div>
                       )}
                     </div>
@@ -9298,6 +10189,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           placeholder="Keep current or set new (e.g. Pass@123)"
                           value={studentForm.password || ''}
                           onChange={(e) => setStudentForm({ ...studentForm, password: e.target.value })}
+                          tabIndex={9}
                           onBlur={(e) => {
                             const val = e.target.value;
                             if (val && val.trim()) {
@@ -9318,6 +10210,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           id="resetPass"
                           checked={studentForm.resetPassword || false}
                           onChange={(e) => setStudentForm({ ...studentForm, resetPassword: e.target.checked })}
+                          tabIndex={10}
                           style={{ width: '16px', height: '16px', cursor: 'pointer' }}
                         />
                         <label htmlFor="resetPass" style={{ fontSize: '0.85rem', cursor: 'pointer', color: 'var(--text-secondary)' }}>
@@ -9325,12 +10218,44 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         </label>
                       </div>
                     )}
+                    </div>
 
                     <div style={styles.modalActions}>
-                      <button type="button" className="btn btn-secondary" onClick={() => setShowStudentModal(false)}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setShowStudentModal(false)}
+                        tabIndex={11}
+                        style={{ outline: 'none', transition: 'all 0.15s ease' }}
+                        onFocus={e => {
+                          e.currentTarget.style.border = '2px solid #2563eb';
+                          e.currentTarget.style.boxShadow = '0 0 0 4px rgba(37, 99, 235, 0.35)';
+                          e.currentTarget.style.background = '#dbeafe';
+                          e.currentTarget.style.color = '#1d4ed8';
+                        }}
+                        onBlur={e => {
+                          e.currentTarget.style.border = '1px solid var(--border-light)';
+                          e.currentTarget.style.boxShadow = 'none';
+                          e.currentTarget.style.background = 'transparent';
+                          e.currentTarget.style.color = 'var(--text-primary)';
+                        }}
+                      >
                         Cancel
                       </button>
-                      <button type="submit" className="btn btn-primary">
+                      <button
+                        type="submit"
+                        className="btn btn-primary"
+                        tabIndex={12}
+                        style={{ outline: 'none', transition: 'all 0.15s ease' }}
+                        onFocus={e => {
+                          e.currentTarget.style.border = '2px solid #0f172a';
+                          e.currentTarget.style.boxShadow = '0 0 0 5px rgba(245, 158, 11, 0.6), 0 4px 14px rgba(245, 158, 11, 0.5)';
+                        }}
+                        onBlur={e => {
+                          e.currentTarget.style.border = 'none';
+                          e.currentTarget.style.boxShadow = 'none';
+                        }}
+                      >
                         {modalMode === 'add' ? 'Generate Credentials & Save' : 'Update Student'}
                       </button>
                     </div>
@@ -9400,15 +10325,25 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   </div>
                 ) : (
                   <form onSubmit={handleSaveFaculty} style={styles.modalForm}>
-                    <div style={styles.formGroup}>
-                      <label style={styles.formLabel}>Faculty Full Name</label>
+                    <div style={styles.modalFormBody}>
+                      <div style={styles.formGroup}>
+                      <label style={styles.formLabel}>Faculty Full Name *</label>
                       <input
                         type="text"
                         className="glass-input"
                         placeholder="e.g. Dr. Sarah Connor"
                         value={facultyForm.name}
-                        onChange={(e) => setFacultyForm({ ...facultyForm, name: e.target.value })}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (/\d/.test(val)) {
+                            showToast('Faculty Name should contain letters only (No numbers allowed)', 'warning', 2500);
+                          }
+                          const cleanVal = val.replace(/\d/g, '');
+                          setFacultyForm({ ...facultyForm, name: cleanVal });
+                        }}
                         required
+                        autoFocus
+                        tabIndex={1}
                       />
                     </div>
 
@@ -9417,15 +10352,16 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <input
                         type="email"
                         className="glass-input"
-                        placeholder="e.g. faculty@college.edu"
+                        placeholder="e.g. faculty@college.com"
                         value={facultyForm.email || ''}
                         onChange={(e) => setFacultyForm({ ...facultyForm, email: e.target.value })}
+                        tabIndex={2}
                         onBlur={(e) => {
                           const val = e.target.value.trim();
                           if (!val) {
                             showToast('Email ID is required for faculty members', 'warning', 3000);
                           } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
-                            showToast('Please enter a valid email address (e.g. faculty@college.edu)', 'warning', 3000);
+                            showToast('Please enter a valid email address (e.g. faculty@college.com)', 'warning', 3000);
                           }
                         }}
                         required
@@ -9441,6 +10377,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         value={facultyForm.department}
                         onChange={(e) => setFacultyForm({ ...facultyForm, department: e.target.value })}
                         required
+                        tabIndex={3}
                       />
                     </div>
 
@@ -9459,6 +10396,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           const cleanVal = val.replace(/\D/g, '').slice(0, 10);
                           setFacultyForm({ ...facultyForm, mobile: cleanVal });
                         }}
+                        tabIndex={4}
                         onBlur={(e) => {
                           const val = e.target.value.trim();
                           if (val && !/^\d{10}$/.test(val)) {
@@ -9479,6 +10417,13 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         placeholder={facultyModalMode === 'add' ? 'Set custom password (e.g. Pass@123)' : 'Keep current or set new (e.g. Pass@123)'}
                         value={facultyForm.password || ''}
                         onChange={(e) => setFacultyForm({ ...facultyForm, password: e.target.value })}
+                        tabIndex={5}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSaveFaculty(e);
+                          }
+                        }}
                         onBlur={(e) => {
                           const val = e.target.value;
                           if (val && val.trim()) {
@@ -9491,11 +10436,44 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       />
                     </div>
 
+                    </div>
+
                     <div style={styles.modalActions}>
-                      <button type="button" className="btn btn-secondary" onClick={() => setShowFacultyModal(false)}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={() => setShowFacultyModal(false)}
+                        tabIndex={6}
+                        style={{ outline: 'none', transition: 'all 0.15s ease' }}
+                        onFocus={e => {
+                          e.currentTarget.style.border = '2px solid #2563eb';
+                          e.currentTarget.style.boxShadow = '0 0 0 4px rgba(37, 99, 235, 0.35)';
+                          e.currentTarget.style.background = '#dbeafe';
+                          e.currentTarget.style.color = '#1d4ed8';
+                        }}
+                        onBlur={e => {
+                          e.currentTarget.style.border = '1px solid var(--border-light)';
+                          e.currentTarget.style.boxShadow = 'none';
+                          e.currentTarget.style.background = 'transparent';
+                          e.currentTarget.style.color = 'var(--text-primary)';
+                        }}
+                      >
                         Cancel
                       </button>
-                      <button type="submit" className="btn btn-primary">
+                      <button
+                        type="submit"
+                        className="btn btn-primary"
+                        tabIndex={7}
+                        style={{ outline: 'none', transition: 'all 0.15s ease' }}
+                        onFocus={e => {
+                          e.currentTarget.style.border = '2px solid #0f172a';
+                          e.currentTarget.style.boxShadow = '0 0 0 5px rgba(245, 158, 11, 0.6), 0 4px 14px rgba(245, 158, 11, 0.5)';
+                        }}
+                        onBlur={e => {
+                          e.currentTarget.style.border = 'none';
+                          e.currentTarget.style.boxShadow = 'none';
+                        }}
+                      >
                         {facultyModalMode === 'add' ? 'Generate Credentials & Save' : 'Update Faculty'}
                       </button>
                     </div>
@@ -9514,9 +10492,9 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
               width: '100vw', width: '100dvw',
               height: '100vh', height: '100dvh',
               zIndex: 999999,
-              background: 'rgba(15, 23, 42, 0.75)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
+              background: 'transparent',
+              backdropFilter: 'blur(5px)',
+              WebkitBackdropFilter: 'blur(5px)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -9624,15 +10602,18 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             const isEvenToOddTerm = hasSem8Students || (evenSemCount > oddSemCount);
 
             return (
-              <div style={{
+              <div className="promote-modal-overlay" style={{
                 position: 'fixed',
                 top: 0, left: 0, right: 0, bottom: 0,
-                zIndex: 99999,
-                background: 'rgba(15, 23, 42, 0.65)',
-                backdropFilter: 'blur(8px)',
-                WebkitBackdropFilter: 'blur(8px)',
+                width: '100vw', height: '100vh',
+                width: '100dvw', height: '100dvh',
+                zIndex: 999999,
+                background: 'transparent',
+                backdropFilter: 'blur(5px)',
+                WebkitBackdropFilter: 'blur(5px)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                padding: '20px'
+                padding: '20px',
+                boxSizing: 'border-box'
               }}>
                 <div className="custom-confirm-modal" style={{
                   width: '480px',
@@ -9835,9 +10816,9 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
               top: 0, left: 0, right: 0, bottom: 0,
               width: '100vw', width: '100dvw',
               height: '100vh', height: '100dvh',
-              background: 'rgba(15, 23, 42, 0.75)',
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
+              background: 'transparent',
+              backdropFilter: 'blur(5px)',
+              WebkitBackdropFilter: 'blur(5px)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
@@ -9905,6 +10886,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         placeholder="e.g., Engineering Theory Cutoff"
                         value={newRuleName}
                         onChange={e => setNewRuleName(e.target.value)}
+                        autoFocus
+                        tabIndex={1}
                         style={{
                           padding: '10px 14px', borderRadius: '10px', border: '1.5px solid #cbd5e1',
                           background: '#ffffff', color: '#0f172a', fontSize: '0.88rem', outline: 'none'
@@ -9925,6 +10908,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         placeholder="75"
                         value={newRulePercentage}
                         onChange={e => setNewRulePercentage(e.target.value)}
+                        tabIndex={2}
                         style={{
                           padding: '10px 14px', borderRadius: '10px', border: '1.5px solid #cbd5e1',
                           background: '#ffffff', color: '#0f172a', fontSize: '0.88rem', outline: 'none'
@@ -9945,6 +10929,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         placeholder="80"
                         value={newRuleWarningPercentage}
                         onChange={e => setNewRuleWarningPercentage(e.target.value)}
+                        tabIndex={3}
                         style={{
                           padding: '10px 14px', borderRadius: '10px', border: '1.5px solid #cbd5e1',
                           background: '#ffffff', color: '#0f172a', fontSize: '0.88rem', outline: 'none'
@@ -9967,6 +10952,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <select
                         value={newRuleProgram}
                         onChange={e => setNewRuleProgram(e.target.value)}
+                        tabIndex={4}
                         style={{
                           padding: '10px 14px', borderRadius: '10px', border: '1.5px solid #cbd5e1',
                           background: '#ffffff', color: '#0f172a', fontSize: '0.88rem', outline: 'none', cursor: 'pointer'
@@ -9987,6 +10973,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <select
                         value={newRuleSemester}
                         onChange={e => setNewRuleSemester(e.target.value)}
+                        tabIndex={5}
                         style={{
                           padding: '10px 14px', borderRadius: '10px', border: '1.5px solid #cbd5e1',
                           background: '#ffffff', color: '#0f172a', fontSize: '0.88rem', outline: 'none', cursor: 'pointer'
@@ -10010,6 +10997,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <select
                         value={newRuleSubject}
                         onChange={e => setNewRuleSubject(e.target.value)}
+                        tabIndex={6}
                         style={{
                           padding: '10px 14px', borderRadius: '10px', border: '1.5px solid #cbd5e1',
                           background: '#ffffff', color: '#0f172a', fontSize: '0.88rem', outline: 'none', cursor: 'pointer'
@@ -10028,6 +11016,13 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <select
                         value={newRuleSubjectType}
                         onChange={e => setNewRuleSubjectType(e.target.value)}
+                        tabIndex={7}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleSaveRule(e);
+                          }
+                        }}
                         style={{
                           padding: '10px 14px', borderRadius: '10px', border: '1.5px solid #cbd5e1',
                           background: '#ffffff', color: '#0f172a', fontSize: '0.88rem', outline: 'none', cursor: 'pointer'
@@ -10051,16 +11046,43 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     <button
                       type="button"
                       onClick={() => setShowAddRuleModal(false)}
-                      style={{ padding: '9px 18px', borderRadius: '10px', fontSize: '0.88rem', fontWeight: '600', background: '#e2e8f0', color: '#475569', border: 'none', cursor: 'pointer' }}
+                      tabIndex={8}
+                      style={{
+                        padding: '9px 18px', borderRadius: '10px', fontSize: '0.88rem', fontWeight: '700',
+                        background: '#e2e8f0', color: '#334155', border: '2px solid #cbd5e1', cursor: 'pointer',
+                        transition: 'all 0.15s ease', outline: 'none'
+                      }}
+                      onFocus={e => {
+                        e.currentTarget.style.border = '2px solid #2563eb';
+                        e.currentTarget.style.boxShadow = '0 0 0 4px rgba(37, 99, 235, 0.35)';
+                        e.currentTarget.style.background = '#dbeafe';
+                        e.currentTarget.style.color = '#1d4ed8';
+                      }}
+                      onBlur={e => {
+                        e.currentTarget.style.border = '2px solid #cbd5e1';
+                        e.currentTarget.style.boxShadow = 'none';
+                        e.currentTarget.style.background = '#e2e8f0';
+                        e.currentTarget.style.color = '#334155';
+                      }}
                     >
                       Cancel
                     </button>
                     <button
                       type="submit"
+                      tabIndex={9}
                       style={{
-                        padding: '9px 22px', borderRadius: '10px', fontSize: '0.88rem', fontWeight: '700',
+                        padding: '9px 22px', borderRadius: '10px', fontSize: '0.88rem', fontWeight: '800',
                         background: 'linear-gradient(135deg, #e11d48, #be123c)', color: '#ffffff',
-                        border: 'none', boxShadow: '0 4px 14px rgba(225, 29, 72, 0.4)', cursor: 'pointer'
+                        border: '2px solid #be123c', boxShadow: '0 4px 14px rgba(225, 29, 72, 0.4)', cursor: 'pointer',
+                        transition: 'all 0.15s ease', outline: 'none'
+                      }}
+                      onFocus={e => {
+                        e.currentTarget.style.border = '2px solid #0f172a';
+                        e.currentTarget.style.boxShadow = '0 0 0 5px rgba(225, 29, 72, 0.6), 0 4px 14px rgba(225, 29, 72, 0.5)';
+                      }}
+                      onBlur={e => {
+                        e.currentTarget.style.border = '2px solid #be123c';
+                        e.currentTarget.style.boxShadow = '0 4px 14px rgba(225, 29, 72, 0.4)';
                       }}
                     >
                       Apply Rule
@@ -10071,10 +11093,11 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             </div>
           )}
 
-          {/* Floating Toastr Notification Container */}
-          <ToastContainer toasts={toasts} removeToast={removeToast} />
         </div>
       </div>
+
+      {/* Floating Toastr Notification Container */}
+      <ToastContainer toasts={toasts} removeToast={removeToast} />
     </div>
   );
 }
@@ -10220,7 +11243,8 @@ const styles = {
     alignItems: 'center',
     gap: '16px',
     flexWrap: 'wrap',
-    marginBottom: '24px'
+    marginBottom: '24px',
+    position: 'relative'
   },
   searchContainer: {
     position: 'relative',
@@ -10404,9 +11428,9 @@ const styles = {
     width: '100dvw',
     height: '100vh',
     height: '100dvh',
-    background: 'rgba(15, 23, 42, 0.75)',
-    backdropFilter: 'blur(12px)',
-    WebkitBackdropFilter: 'blur(12px)',
+    background: 'transparent',
+    backdropFilter: 'blur(5px)',
+    WebkitBackdropFilter: 'blur(5px)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -10437,18 +11461,31 @@ const styles = {
   modalForm: {
     display: 'flex',
     flexDirection: 'column',
+    flex: 1,
+    overflow: 'visible',
+    minHeight: 0
+  },
+  modalFormBody: {
+    display: 'flex',
+    flexDirection: 'column',
     gap: '14px',
     overflowY: 'auto',
     paddingRight: '6px',
+    paddingBottom: '6px',
+    paddingTop: '2px',
     flex: 1
   },
   modalActions: {
     display: 'flex',
     justifyContent: 'flex-end',
-    gap: '10px',
+    alignItems: 'center',
+    gap: '12px',
     marginTop: '16px',
-    paddingTop: '14px',
-    borderTop: '1px solid rgba(255,255,255,0.08)',
+    paddingTop: '16px',
+    paddingBottom: '6px',
+    paddingRight: '6px',
+    paddingLeft: '6px',
+    borderTop: '1px solid var(--border-light)',
     flexShrink: 0
   },
   credentialsSuccessCard: {
