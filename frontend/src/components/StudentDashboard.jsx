@@ -1445,7 +1445,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             className={`admin-nav-item ${activeTab === 'report' ? 'active' : ''}`}
             onClick={() => { setActiveTab('report'); setMobileMenuOpen(false); }}
           >
-            <Download size={19} />
+            <BarChart3 size={19} />
             <span>Report</span>
           </button>
 
@@ -1455,6 +1455,14 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           >
             <FileText size={19} />
             <span>Leave Request</span>
+          </button>
+
+          <button 
+            className={`admin-nav-item ${activeTab === 'notices' ? 'active' : ''}`}
+            onClick={() => { setActiveTab('notices'); setMobileMenuOpen(false); }}
+          >
+            <Bell size={19} />
+            <span>Notice Board</span>
           </button>
 
 
@@ -1507,6 +1515,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                  activeTab === 'analytics' ? 'Attendance Analytics & Logs' :
                  activeTab === 'report' ? 'Attendance Report' :
                  activeTab === 'leave' ? 'Leave Applications' :
+                 activeTab === 'notices' ? 'Notice Board & Announcements' :
                  activeTab === 'profile' ? 'My Student Profile' :
                  activeTab === 'settings' ? 'Account & Security Settings' : 'Student Portal'}
               </h1>
@@ -2013,6 +2022,33 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                   </div>
                 </div>
 
+                {/* Sign Out Button inside Profile Page */}
+                <button
+                  type="button"
+                  className="student-profile-mobile-logout-btn"
+                  onClick={handleLogoutConfirm}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '10px',
+                    width: '100%',
+                    padding: '14px 20px',
+                    borderRadius: '14px',
+                    fontSize: '0.95rem',
+                    fontWeight: '700',
+                    background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                    color: '#ffffff',
+                    border: 'none',
+                    boxShadow: '0 4px 16px rgba(239, 68, 68, 0.35)',
+                    cursor: 'pointer',
+                    marginTop: '10px',
+                    transition: 'all 0.2s ease'
+                  }}
+                >
+                  <LogOut size={20} />
+                  <span>Sign Out of Account</span>
+                </button>
               </div>
             </div>
           )}
@@ -2063,7 +2099,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
         </svg>
 
         <div className="student-dock-content">
-          {/* Left Slot 1: Leave */}
+          {/* Slot 1: Leave */}
           <button
             type="button"
             className={`student-dock-item ${activeTab === 'leave' ? 'active' : ''}`}
@@ -2073,14 +2109,14 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             <span>Leave</span>
           </button>
 
-          {/* Left Slot 2: Report */}
+          {/* Slot 2: Notice / Notification */}
           <button
             type="button"
-            className={`student-dock-item ${activeTab === 'report' ? 'active' : ''}`}
-            onClick={() => setActiveTab('report')}
+            className={`student-dock-item ${activeTab === 'notices' ? 'active' : ''}`}
+            onClick={() => setActiveTab('notices')}
           >
-            <Download size={20} />
-            <span>Report</span>
+            <Bell size={20} />
+            <span>Notice</span>
           </button>
 
           {/* Center Elevated Floating Action Button (FAB): Mark Attendance / QR */}
@@ -2095,7 +2131,17 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             </button>
           </div>
 
-          {/* Right Slot 1: Profile */}
+          {/* Slot 4: Report */}
+          <button
+            type="button"
+            className={`student-dock-item ${activeTab === 'report' ? 'active' : ''}`}
+            onClick={() => setActiveTab('report')}
+          >
+            <BarChart3 size={20} />
+            <span>Report</span>
+          </button>
+
+          {/* Slot 5: Profile (Last option in footer dock) */}
           <button
             type="button"
             className={`student-dock-item ${activeTab === 'profile' ? 'active' : ''}`}
@@ -2103,17 +2149,6 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           >
             <User size={20} />
             <span>Profile</span>
-          </button>
-
-          {/* Right Slot 2: Sign Out (Last option in footer dock) */}
-          <button
-            type="button"
-            className="student-dock-item"
-            onClick={handleLogoutConfirm}
-            style={{ color: '#ef4444' }}
-          >
-            <LogOut size={20} />
-            <span>Sign Out</span>
           </button>
         </div>
       </div>
