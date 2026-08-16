@@ -5,19 +5,9 @@ import {
 } from 'lucide-react';
 
 const LandingPage = ({ onGetStarted }) => {
-  const [isDark, setIsDark] = useState(() => {
-    return localStorage.getItem('theme') !== 'light';
-  });
-
   useEffect(() => {
-    if (isDark) {
-      document.body.classList.remove('light-theme');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.body.classList.add('light-theme');
-      localStorage.setItem('theme', 'light');
-    }
-  }, [isDark]);
+    document.body.classList.remove('light-theme');
+  }, []);
 
   return (
     <div style={styles.container}>
@@ -42,13 +32,6 @@ const LandingPage = ({ onGetStarted }) => {
           <h1 style={styles.logoText}>Edu<span style={{color: '#f59e0b'}}>Mark</span></h1>
         </div>
         <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <button 
-            style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: '8px', display: 'flex', color: 'var(--text-primary)' }} 
-            onClick={() => setIsDark(!isDark)}
-            title="Toggle Theme"
-          >
-            {isDark ? <Sun size={20} /> : <Moon size={20} />}
-          </button>
           <button className="btn" style={styles.ghostBtn} onClick={() => {
             document.getElementById('how-it-works').scrollIntoView({ behavior: 'smooth' });
           }}>

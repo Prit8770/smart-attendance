@@ -23,6 +23,106 @@ const setAdminOverride = (data) => {
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_college_attendance_key_123!';
 
+// Universal Unified Login Route (Auto-detect Admin, Faculty, or Student)
+router.post('/login', async (req, res) => {
+  const { identifier, email, username, password } = req.body;
+  const rawId = (identifier || email || username || '').trim();
+
+  if (!rawId || !password) {
+    return res.status(400).json({ error: 'Email Address (Gmail) and Password are required.' });
+  }
+
+  try {
+    const cleanId = rawId.toLowerCase();
+
+    // 1. Check Admin Table
+    const { data: admin } = await supabase.from('admin').select('*').eq('email', cleanId).maybeSingle();
+    if (admin) {
+      const isMatch = bcrypt.compareSync(password, admin.password);
+      if (isMatch) {
+        const override = getAdminOverride();
+        const finalAdmin = {
+          id: admin.id,
+          name: override && override.name ? override.name : admin.name,
+          email: override && override.email ? override.email : admin.email,
+          mobile: override && override.mobile !== undefined ? override.mobile : (admin.mobile || ''),
+          role: 'admin'
+        };
+        const token = jwt.sign(finalAdmin, JWT_SECRET, { expiresIn: '24h' });
+        return res.json({ token, user: finalAdmin });
+      }
+    }
+
+    // 2. Check Faculty Table
+    let { data: faculty, error: facErr } = await supabase
+      .from('faculty')
+      .select('*')
+      .or(`email.eq.${cleanId},username.eq.${rawId},employee_no.eq.${rawId}`)
+      .maybeSingle();
+
+    if (facErr && (facErr.code === '42703' || facErr.message?.includes('employee_no'))) {
+      const retry = await supabase
+        .from('faculty')
+        .select('*')
+        .or(`email.eq.${cleanId},username.eq.${rawId}`)
+        .maybeSingle();
+      faculty = retry.data;
+    }
+
+    if (faculty) {
+      const isMatch = bcrypt.compareSync(password, faculty.password);
+      if (isMatch) {
+        const facUser = {
+          id: faculty.id,
+          name: faculty.name,
+          username: faculty.username,
+          employee_no: faculty.employee_no,
+          department: faculty.department,
+          mobile: faculty.mobile,
+          role: 'faculty'
+        };
+        const token = jwt.sign({ ...facUser }, JWT_SECRET, { expiresIn: '24h' });
+        return res.json({ token, user: facUser });
+      }
+    }
+
+    // 3. Check Student Table (Prioritize Gmail ID)
+    const { data: student } = await supabase
+      .from('students')
+      .select('*')
+      .or(`email.eq.${cleanId},username.eq.${rawId},enrollment_no.eq.${rawId}`)
+      .maybeSingle();
+
+    if (student) {
+
+
+      const isMatch = bcrypt.compareSync(password, student.password);
+      if (isMatch) {
+        const stuUser = {
+          id: student.id,
+          name: student.name,
+          username: student.username,
+          enrollment_no: student.enrollment_no,
+          roll_no: student.roll_no,
+          division: student.division,
+          course: student.course,
+          semester: student.semester,
+          mobile: student.mobile,
+          role: 'student'
+        };
+        const token = jwt.sign({ ...stuUser }, JWT_SECRET, { expiresIn: '24h' });
+        return res.json({ token, user: stuUser });
+      }
+    }
+
+    // 4. No matching account or wrong password
+    return res.status(401).json({ error: 'Invalid Email / Enrollment No or Password.' });
+  } catch (err) {
+    console.error('Universal login error:', err);
+    res.status(500).json({ error: 'Internal server error during login.' });
+  }
+});
+
 // Admin Login
 router.post('/admin/login', async (req, res) => {
   const { email, password } = req.body;
@@ -45,8 +145,9 @@ router.post('/admin/login', async (req, res) => {
     const override = getAdminOverride();
     const finalAdmin = {
       id: admin.id,
-      name: override ? override.name : admin.name,
-      email: override ? override.email : admin.email,
+      name: override && override.name ? override.name : admin.name,
+      email: override && override.email ? override.email : admin.email,
+      mobile: override && override.mobile !== undefined ? override.mobile : (admin.mobile || ''),
       role: 'admin'
     };
 
@@ -80,20 +181,7 @@ router.post('/student/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalid username or password' });
     }
 
-    // Check if student is currently locked out (exited website)
-    if (student.locked_until) {
-      const lockedUntilTime = parseInt(student.locked_until, 10);
-      const currentTime = Date.now();
-      if (currentTime < lockedUntilTime) {
-        const remainingSeconds = Math.ceil((lockedUntilTime - currentTime) / 1000);
-        const minutes = Math.floor(remainingSeconds / 60);
-        const seconds = remainingSeconds % 60;
-        const timeStr = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
-        return res.status(403).json({
-          error: `You exited the website. Login is locked. Please wait ${timeStr} before trying again.`
-        });
-      }
-    }
+
 
     const isMatch = bcrypt.compareSync(password, student.password);
     if (!isMatch) {
@@ -139,21 +227,37 @@ router.post('/student/login', async (req, res) => {
 
 // Faculty Login
 router.post('/faculty/login', async (req, res) => {
-  const { username, password } = req.body;
+  const { email, username, password } = req.body;
+  const loginId = (email || username || '').trim();
 
-  if (!username || !password) {
-    return res.status(400).json({ error: 'Username and password are required' });
+  if (!loginId || !password) {
+    return res.status(400).json({ error: 'Faculty email address and password are required' });
   }
 
   try {
-    const { data: faculty, error } = await supabase.from('faculty').select('*').eq('username', username).maybeSingle();
+    let { data: faculty, error } = await supabase
+      .from('faculty')
+      .select('*')
+      .or(`email.eq.${loginId},username.eq.${loginId},employee_no.eq.${loginId}`)
+      .maybeSingle();
+
+    if (error && (error.code === '42703' || error.message?.includes('employee_no'))) {
+      const retry = await supabase
+        .from('faculty')
+        .select('*')
+        .or(`email.eq.${loginId},username.eq.${loginId}`)
+        .maybeSingle();
+      faculty = retry.data;
+      error = retry.error;
+    }
+
     if (error || !faculty) {
-      return res.status(401).json({ error: 'Invalid username or password' });
+      return res.status(401).json({ error: 'Invalid email address or password' });
     }
 
     const isMatch = bcrypt.compareSync(password, faculty.password);
     if (!isMatch) {
-      return res.status(401).json({ error: 'Invalid username or password' });
+      return res.status(401).json({ error: 'Invalid email address or password' });
     }
 
     const token = jwt.sign(
@@ -279,7 +383,7 @@ router.post('/change-password', authenticateJWT, async (req, res) => {
 
 // Update profile details
 router.post('/update-profile', authenticateJWT, async (req, res) => {
-  const { name, email } = req.body;
+  const { name, email, mobile } = req.body;
 
   if (!name || !name.trim()) {
     return res.status(400).json({ error: 'Name is required' });
@@ -306,7 +410,8 @@ router.post('/update-profile', authenticateJWT, async (req, res) => {
 
       const updatedData = {
         name: name.trim(),
-        email: email.trim()
+        email: email.trim(),
+        mobile: mobile ? mobile.trim() : ''
       };
 
       const { error } = await supabase
@@ -325,6 +430,7 @@ router.post('/update-profile', authenticateJWT, async (req, res) => {
         id: req.user.id,
         name: updatedData.name,
         email: updatedData.email,
+        mobile: updatedData.mobile,
         role: 'admin'
       };
 
@@ -390,8 +496,9 @@ router.get('/me', authenticateJWT, async (req, res) => {
       return res.json({
         user: {
           id: req.user.id,
-          name: override ? override.name : req.user.name,
-          email: override ? override.email : req.user.email,
+          name: override && override.name ? override.name : req.user.name,
+          email: override && override.email ? override.email : req.user.email,
+          mobile: override && override.mobile !== undefined ? override.mobile : (req.user.mobile || ''),
           role: 'admin'
         }
       });
@@ -404,17 +511,13 @@ router.get('/me', authenticateJWT, async (req, res) => {
   }
 });
 
-// Student specific endpoints
 router.post('/student/lock', authenticateJWT, async (req, res) => {
   if (req.user.role !== 'student') return res.status(403).json({ error: 'Students only' });
-  
   try {
-    const lockTime = Date.now() + (3 * 60 * 1000); // Lock for 3 minutes
-    await supabase.from('students').update({ locked_until: lockTime.toString() }).eq('id', req.user.id);
-    res.json({ success: true, locked_until: lockTime });
+    await supabase.from('students').update({ locked_until: null }).eq('id', req.user.id);
+    res.json({ success: true });
   } catch (err) {
-    console.error('Lock error:', err);
-    res.status(500).json({ error: 'Failed to lock account' });
+    res.json({ success: true });
   }
 });
 

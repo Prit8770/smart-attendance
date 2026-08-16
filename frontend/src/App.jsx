@@ -37,6 +37,9 @@ export default function App() {
         setUser(parsed);
         setToken(savedToken);
       } catch (e) {}
+      
+      // Unblock UI immediately for 1-second instant loading
+      setInitializing(false);
 
       fetch('/api/auth/me', {
         headers: { Authorization: `Bearer ${savedToken}` }
@@ -59,9 +62,6 @@ export default function App() {
         localStorage.removeItem('attendance_user');
         setUser(null);
         setToken(null);
-      })
-      .finally(() => {
-        setInitializing(false);
       });
     } else {
       setInitializing(false);
@@ -83,22 +83,7 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    if (user && user.role === 'student' && token) {
-      try {
-        await fetch('/api/auth/student/lock', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`
-          }
-        });
-      } catch (err) {
-        console.error('Failed to lock student on logout:', err);
-      }
-      // Set 3-minute (180 seconds) device login cooldown for student role
-      const lockUntil = Date.now() + 3 * 60 * 1000;
-      localStorage.setItem('student_device_lock_until', lockUntil.toString());
-    }
+    localStorage.removeItem('student_device_lock_until');
     localStorage.removeItem('attendance_token');
     localStorage.removeItem('attendance_user');
     setUser(null);

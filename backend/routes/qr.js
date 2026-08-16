@@ -1,8 +1,29 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
+
+const sessionMetaPath = path.join(__dirname, '../data/session_meta.json');
+function saveLocalSessionMeta(type, id, subject, division) {
+  try {
+    let meta = {};
+    if (fs.existsSync(sessionMetaPath)) {
+      try { meta = JSON.parse(fs.readFileSync(sessionMetaPath, 'utf8')); } catch(e) {}
+    }
+    meta[`${type}_${id}`] = {
+      subject: subject || null,
+      division: division || null,
+      updated_at: new Date().toISOString()
+    };
+    if (!fs.existsSync(path.dirname(sessionMetaPath))) fs.mkdirSync(path.dirname(sessionMetaPath), { recursive: true });
+    fs.writeFileSync(sessionMetaPath, JSON.stringify(meta, null, 2), 'utf8');
+  } catch (e) {
+    console.error('Error saving local session meta:', e);
+  }
+}
 
 // Middleware to restrict to admins or faculty
 const requireAdminOrFaculty = (req, res, next) => {
@@ -41,7 +62,7 @@ router.get('/settings', authenticateJWT, async (req, res) => {
   }
 });
 
-// POST toggle the global QR generation setting (Admins only)
+// TOGGLE global QR generation (Admin only)
 router.post('/toggle-settings', authenticateJWT, async (req, res) => {
   if (!req.user || req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Access denied. Admins only.' });
@@ -58,7 +79,7 @@ router.post('/toggle-settings', authenticateJWT, async (req, res) => {
 
 // POST start new QR session (Faculty only)
 router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, res) => {
-  const { semester, division } = req.body;
+  const { semester, division, subject } = req.body;
   const today = getLocalDateString();
   try {
     // 1. Check if global QR generation is enabled by Admin
@@ -86,23 +107,36 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
     const createdAt = now.toISOString();
     const expiresAt = new Date(now.getTime() + 2 * 60 * 1000).toISOString(); // 2 minutes
 
-    const { data: result, error } = await supabase.from('qr_sessions').insert([{
+    let insertPayload = {
       created_at: createdAt,
       expires_at: expiresAt,
       created_by_faculty_id: req.user.id,
       date: today,
       tokens: JSON.stringify(tokens),
       semester: semester ? parseInt(semester) : null,
-      division: (division && String(division).trim() !== '') ? String(division).trim().toUpperCase() : null
-    }]).select().single();
-    
+      division: (division && String(division).trim() !== '') ? String(division).trim().toUpperCase() : null,
+      subject: (subject && String(subject).trim() !== '') ? String(subject).trim() : null
+    };
+
+    let { data: result, error } = await supabase.from('qr_sessions').insert([insertPayload]).select().single();
+
+    // Fallback: If DB table lacks 'subject' or 'division' columns, retry without missing column and save local meta
+    if (error && error.message && (error.message.includes('subject') || error.message.includes('division') || error.message.includes('schema cache'))) {
+      if (error.message.includes('subject')) delete insertPayload.subject;
+      if (error.message.includes('division')) delete insertPayload.division;
+
+      const retry = await supabase.from('qr_sessions').insert([insertPayload]).select().single();
+      result = retry.data;
+      error = retry.error;
+    }
+
     if (error) {
-      if (error.code === 'PGRST204' || (error.message && (error.message.includes('division') || error.message.includes('schema cache')))) {
-        return res.status(400).json({ 
-          error: "Supabase DB Error: 'division' column qr_sessions table me nahi hai.\n\nKripya Supabase Dashboard -> SQL Editor me ye command run karein:\n\nALTER TABLE qr_sessions ADD COLUMN IF NOT EXISTS division TEXT;\nALTER TABLE otp ADD COLUMN IF NOT EXISTS division TEXT;" 
-        });
-      }
-      throw error;
+      console.error('QR Session Insert Error:', error);
+      return res.status(500).json({ error: 'Failed to start QR session: ' + error.message });
+    }
+
+    if (result && result.id) {
+      saveLocalSessionMeta('qr', result.id, subject, division);
     }
 
     res.status(201).json({
@@ -114,7 +148,8 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
         tokens,
         secondsLeft: 120,
         semester: result.semester || null,
-        division: result.division || null
+        division: result.division || null,
+        subject: result.subject || subject || null
       }
     });
   } catch (err) {
@@ -172,7 +207,7 @@ router.get('/active', authenticateJWT, async (req, res) => {
 
 // GET today's QR sessions list (history)
 router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) => {
-  const today = getLocalDateString();
+  const today = req.query.date || getLocalDateString();
   try {
     const { data: faculties } = await supabase.from('faculty').select('id, name');
     const facMap = new Map((faculties || []).map(f => [String(f.id), f.name]));
@@ -187,7 +222,7 @@ router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) =>
     const { data: sessions, error } = await sessionsQuery;
 
     if (error) throw error;
-    
+
     const safeSessions = sessions || [];
 
     // Get count of checkins for each session
@@ -216,6 +251,36 @@ router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) =>
   } catch (err) {
     console.error('Error fetching today\'s QR sessions:', err);
     res.status(500).json({ error: 'Failed to retrieve today\'s QR sessions' });
+  }
+});
+
+// POST end active QR session
+router.post('/end', authenticateJWT, requireAdminOrFaculty, async (req, res) => {
+  try {
+    const nowIso = new Date().toISOString();
+    let endQuery = supabase.from('qr_sessions').update({ expires_at: nowIso }).gt('expires_at', nowIso);
+    if (req.user.role === 'faculty') {
+      endQuery = endQuery.eq('created_by_faculty_id', req.user.id);
+    }
+    await endQuery;
+    res.json({ success: true, message: 'QR session ended successfully' });
+  } catch (err) {
+    console.error('Error ending QR session:', err);
+    res.status(500).json({ error: 'Failed to end QR session' });
+  }
+});
+
+// DELETE clear old QR sessions history (Admin only)
+router.delete('/clear-history', authenticateJWT, async (req, res) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Access denied. Admins only.' });
+  }
+  try {
+    await supabase.from('qr_sessions').delete().neq('id', 0);
+    res.json({ success: true, message: 'QR session history cleared successfully' });
+  } catch (err) {
+    console.error('Error clearing QR session history:', err);
+    res.status(500).json({ error: 'Failed to clear session history' });
   }
 });
 

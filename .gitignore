@@ -6,4 +6,7 @@ dist
 backend/data
 .agents
 * (2)*
+scratch/
+frontend/scratch/
+frontend/src/components/subject_ui_temp.jsx
 

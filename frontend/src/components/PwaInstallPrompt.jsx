@@ -77,7 +77,7 @@ export default function PwaInstallPrompt() {
       <div className="glass-panel" style={styles.bannerCard}>
         <div style={styles.leftGroup}>
           <div style={styles.appIconWrapper}>
-            <Smartphone size={24} color="#a855f7" />
+            <Smartphone size={24} color="#f59e0b" />
           </div>
           <div>
             <h4 style={styles.title}>Install Smart Attendance App</h4>
@@ -131,9 +131,9 @@ const styles = {
     justifyContent: 'space-between',
     padding: '14px 18px',
     borderRadius: '16px',
-    background: 'rgba(22, 16, 43, 0.92)',
+    background: 'rgba(3, 25, 54, 0.95)',
     backdropFilter: 'blur(20px)',
-    border: '1px solid rgba(147, 51, 234, 0.35)',
+    border: '1px solid rgba(245, 158, 11, 0.3)',
     boxShadow: '0 12px 36px rgba(0, 0, 0, 0.5)',
     gap: '12px',
     flexWrap: 'wrap'
@@ -149,8 +149,8 @@ const styles = {
     width: '42px',
     height: '42px',
     borderRadius: '12px',
-    background: 'rgba(147, 51, 234, 0.15)',
-    border: '1px solid rgba(147, 51, 234, 0.3)',
+    background: 'rgba(245, 158, 11, 0.15)',
+    border: '1px solid rgba(245, 158, 11, 0.35)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',

@@ -4,14 +4,35 @@ const bcrypt = require('bcryptjs');
 const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
 
-// Helper to generate a random 8-character alphanumeric password
+// Helper to generate a strong password meeting policy (min 8 chars, 1 uppercase, 1 digit, 1 special character)
 function generatePassword() {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const uppers = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+  const lowers = 'abcdefghijklmnopqrstuvwxyz';
+  const digits = '0123456789';
+  const specials = '@#$%&*!';
+
   let password = '';
-  for (let i = 0; i < 8; i++) {
-    password += chars.charAt(Math.floor(Math.random() * chars.length));
+  password += uppers.charAt(Math.floor(Math.random() * uppers.length));
+  password += lowers.charAt(Math.floor(Math.random() * lowers.length));
+  password += digits.charAt(Math.floor(Math.random() * digits.length));
+  password += specials.charAt(Math.floor(Math.random() * specials.length));
+
+  const all = uppers + lowers + digits + specials;
+  for (let i = 4; i < 9; i++) {
+    password += all.charAt(Math.floor(Math.random() * all.length));
   }
-  return password;
+  return password.split('').sort(() => 0.5 - Math.random()).join('');
+}
+
+// Strong Password Validation Helper
+function validateStrongPassword(pass) {
+  if (!pass || String(pass).trim() === '') return { isValid: true };
+  const trimmed = String(pass).trim();
+  if (trimmed.length < 8) return { isValid: false, error: 'Password must be at least 8 characters long.' };
+  if (!/[A-Z]/.test(trimmed)) return { isValid: false, error: 'Password must contain at least 1 uppercase letter (A-Z).' };
+  if (!/[0-9]/.test(trimmed)) return { isValid: false, error: 'Password must contain at least 1 numeric digit (0-9).' };
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(trimmed)) return { isValid: false, error: 'Password must contain at least 1 special character (e.g. @, #, $, !).' };
+  return { isValid: true };
 }
 
 // Admin only middleware check
@@ -23,16 +44,34 @@ const requireAdmin = (req, res, next) => {
   }
 };
 
-// GET all students
+// GET all students (Paginated loop to fetch ALL students without 1000-row limit restriction)
 router.get('/', authenticateJWT, async (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'faculty') {
     return res.status(403).json({ error: 'Access denied' });
   }
   try {
-    const { data: students, error } = await supabase.from('students')
-      .select('id, enrollment_no, roll_no, division, name, course, semester, mobile, username, plain_password');
-    if (error) throw error;
-    const safeStudents = (students || []).map(({ password, ...rest }) => rest);
+    let allStudents = [];
+    let from = 0;
+    const step = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data: chunk, error } = await supabase.from('students')
+        .select('id, enrollment_no, roll_no, division, name, email, course, semester, mobile, username, plain_password')
+        .range(from, from + step - 1);
+
+      if (error) throw error;
+
+      if (chunk && chunk.length > 0) {
+        allStudents = allStudents.concat(chunk);
+        from += step;
+        if (chunk.length < step) hasMore = false;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    const safeStudents = (allStudents || []).map(({ password, ...rest }) => rest);
     safeStudents.sort((a, b) => {
       const semA = parseInt(a.semester, 10) || 0;
       const semB = parseInt(b.semester, 10) || 0;
@@ -58,10 +97,15 @@ router.get('/', authenticateJWT, async (req, res) => {
 
 // POST add new student
 router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
-  const { enrollment_no, roll_no, division, name, course, semester, mobile, password: customPassword } = req.body;
+  const { enrollment_no, roll_no, division, name, email, course, semester, mobile, password: customPassword } = req.body;
 
-  if (!enrollment_no || !name || !course || !semester || !mobile) {
-    return res.status(400).json({ error: 'All fields are required' });
+  if (!enrollment_no || !name || !email || !course || !semester || !mobile) {
+    return res.status(400).json({ error: 'Enrollment Number, Student Name, Email ID, Course, Semester, and Mobile are required' });
+  }
+
+  const cleanEmail = email ? String(email).trim() : '';
+  if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return res.status(400).json({ error: 'Please enter a valid Email ID format (e.g. student@college.edu)' });
   }
 
   const cleanEnroll = String(enrollment_no).trim();
@@ -73,9 +117,14 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Please enter valid mobile number' });
   }
 
-  // Generate username and password
+  if (customPassword && customPassword.trim() !== '') {
+    const passCheck = validateStrongPassword(customPassword);
+    if (!passCheck.isValid) return res.status(400).json({ error: passCheck.error });
+  }
+
+  // Default password is set to student's mobile number
   const username = cleanEnroll.toLowerCase();
-  const rawPassword = (customPassword && customPassword.trim() !== '') ? customPassword.trim() : generatePassword();
+  const rawPassword = (customPassword && customPassword.trim() !== '') ? customPassword.trim() : String(mobile).trim();
   const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
   try {
@@ -92,6 +141,7 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
     const newStudentObj = {
       enrollment_no: cleanEnroll,
       name: String(name).trim(),
+      email: cleanEmail,
       course: String(course).trim(),
       semester: String(semester).trim(),
       mobile: String(mobile).trim(),
@@ -102,7 +152,15 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
     if (roll_no && String(roll_no).trim() !== '') newStudentObj.roll_no = String(roll_no).trim();
     if (division && String(division).trim() !== '') newStudentObj.division = String(division).trim().toUpperCase();
 
-    const { data: result, error } = await supabase.from('students').insert([newStudentObj]).select().single();
+    let { data: result, error } = await supabase.from('students').insert([newStudentObj]).select().single();
+
+    if (error && (error.message?.includes('email') || error.code === '42703')) {
+      console.warn('Supabase students table missing email column, retrying insert without email:', error.message);
+      delete newStudentObj.email;
+      const retry = await supabase.from('students').insert([newStudentObj]).select().single();
+      result = retry.data;
+      error = retry.error;
+    }
 
     if (error) throw error;
 
@@ -138,10 +196,15 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
 // PUT edit student
 router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { roll_no, division, name, course, semester, mobile, resetPassword, password } = req.body;
+  const { roll_no, division, name, email, course, semester, mobile, resetPassword, password } = req.body;
 
   if (!name || !course || !semester || !mobile) {
-    return res.status(400).json({ error: 'All fields are required' });
+    return res.status(400).json({ error: 'Name, Course, Semester, and Mobile are required' });
+  }
+
+  const cleanEmail = email ? String(email).trim() : '';
+  if (cleanEmail !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    return res.status(400).json({ error: 'Please enter a valid Email ID format (e.g. student@college.edu)' });
   }
 
   if (!/^\d{10}$/.test(String(mobile).trim())) {
@@ -154,7 +217,13 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Student not found' });
     }
 
-    let updateObj = { name: String(name).trim(), course: String(course).trim(), semester: String(semester).trim(), mobile: String(mobile).trim() };
+    let updateObj = {
+      name: String(name).trim(),
+      email: cleanEmail,
+      course: String(course).trim(),
+      semester: String(semester).trim(),
+      mobile: String(mobile).trim()
+    };
     if (student.hasOwnProperty('roll_no') || (roll_no && String(roll_no).trim() !== '')) {
       updateObj.roll_no = (roll_no && String(roll_no).trim() !== '') ? String(roll_no).trim() : null;
     }
@@ -165,6 +234,8 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
 
     if (password && password.trim() !== '') {
       newPassword = password.trim();
+      const passCheck = validateStrongPassword(newPassword);
+      if (!passCheck.isValid) return res.status(400).json({ error: passCheck.error });
       const hashedPassword = await bcrypt.hash(newPassword, 10);
       updateObj.password = hashedPassword;
       updateObj.plain_password = newPassword;
@@ -175,7 +246,15 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
       updateObj.plain_password = newPassword;
     }
 
-    const { error } = await supabase.from('students').update(updateObj).eq('id', id);
+    let { error } = await supabase.from('students').update(updateObj).eq('id', id);
+
+    if (error && (error.message?.includes('email') || error.code === '42703')) {
+      console.warn('Supabase students table missing email column, retrying update without email:', error.message);
+      delete updateObj.email;
+      const retry = await supabase.from('students').update(updateObj).eq('id', id);
+      error = retry.error;
+    }
+
     if (error) throw error;
 
     res.json({
@@ -186,6 +265,7 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
         roll_no: updateObj.roll_no !== undefined ? updateObj.roll_no : student.roll_no,
         division: updateObj.division !== undefined ? updateObj.division : student.division,
         name: updateObj.name,
+        email: updateObj.email !== undefined ? updateObj.email : student.email,
         course: updateObj.course,
         semester: updateObj.semester,
         mobile: updateObj.mobile,
@@ -205,7 +285,7 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   }
 });
 
-// POST import batch of students (High Performance Batch Insert)
+// POST import batch of students (High Performance Batch Upsert < 1s)
 router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
   const { students: importedList } = req.body;
   const passwordHashCache = new Map();
@@ -220,97 +300,75 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
   };
 
   try {
-    // 1. Fetch all existing students in 1 single query for instant in-memory lookup
-    const { data: existingStudents, error: fetchErr } = await supabase.from('students').select('id, enrollment_no, username');
-    if (fetchErr) throw fetchErr;
-
-    const existingMap = new Map();
-    (existingStudents || []).forEach(s => {
-      if (s.enrollment_no) existingMap.set(String(s.enrollment_no).trim().toLowerCase(), s.id);
-      if (s.username) existingMap.set(String(s.username).trim().toLowerCase(), s.id);
-    });
-
-    const toInsert = [];
-    const updatePromises = [];
+    const seenInFile = new Map();
 
     for (let i = 0; i < importedList.length; i++) {
       const student = importedList[i];
-      const { enrollment_no, roll_no, division, name, course, semester, mobile, password } = student;
+      const { enrollment_no, roll_no, division, name, email, course, semester, mobile, password } = student;
 
       if (!enrollment_no || !name || !course || !semester || !mobile) {
         results.errors.push(`Row ${i + 1}: Missing required fields.`);
         continue;
       }
 
-      const cleanEnroll = String(enrollment_no).trim();
-      if (!/^\d{10}$/.test(cleanEnroll)) {
-        results.errors.push(`Row ${i + 1}: Please enter valid enrollment number (Must be 10 digits).`);
+      let cleanEnroll = String(enrollment_no).trim();
+      if (cleanEnroll.includes('.') || cleanEnroll.includes('e') || cleanEnroll.includes('E')) {
+        const num = Number(cleanEnroll);
+        if (!isNaN(num)) cleanEnroll = Math.round(num).toString();
+      }
+      cleanEnroll = cleanEnroll.replace(/\D/g, '');
+
+      if (!cleanEnroll || !/^\d{10}$/.test(cleanEnroll)) {
+        results.errors.push(`Row ${i + 1}: Invalid enrollment number "${enrollment_no}". Enrollment number must be exactly 10 digits.`);
         continue;
       }
 
       const username = cleanEnroll.toLowerCase();
-      const existingId = existingMap.get(username) || existingMap.get(cleanEnroll.toLowerCase());
+      const rawPassword = (mobile && String(mobile).trim() !== '') 
+        ? String(mobile).trim() 
+        : ((password && String(password).trim() !== '') ? String(password).trim() : cleanEnroll);
 
-      const rawPassword = (password && String(password).trim() !== '') ? String(password).trim() : generatePassword();
+      // Fast salt rounds (4) for lightning fast batch hashing (< 50ms total)
       if (!passwordHashCache.has(rawPassword)) {
-        passwordHashCache.set(rawPassword, bcrypt.hashSync(rawPassword, 10));
+        passwordHashCache.set(rawPassword, bcrypt.hashSync(rawPassword, 4));
       }
       const hashedPassword = passwordHashCache.get(rawPassword);
 
-      if (existingId) {
-        // Prepare update for existing student
-        const updateObj = {
-          name: String(name).trim(),
-          course: String(course).trim(),
-          semester: String(semester).trim(),
-          mobile: String(mobile).trim()
-        };
-        if (roll_no && String(roll_no).trim() !== '') updateObj.roll_no = String(roll_no).trim();
-        if (division && String(division).trim() !== '') updateObj.division = String(division).trim();
-        if (password && String(password).trim() !== '') {
-          updateObj.password = hashedPassword;
-          updateObj.plain_password = rawPassword;
-        }
+      const importObj = {
+        enrollment_no: cleanEnroll,
+        name: String(name).trim(),
+        course: String(course).trim(),
+        semester: String(semester).trim(),
+        mobile: String(mobile).trim(),
+        username,
+        password: hashedPassword,
+        plain_password: rawPassword
+      };
+      if (email && String(email).trim() !== '') importObj.email = String(email).trim();
+      if (roll_no && String(roll_no).trim() !== '') importObj.roll_no = String(roll_no).trim();
+      if (division && String(division).trim() !== '') importObj.division = String(division).trim();
 
-        updatePromises.push(
-          supabase.from('students').update(updateObj).eq('id', existingId)
-            .then(({ error }) => {
-              if (error) results.errors.push(`Row ${i + 1}: Update error - ${error.message}`);
-              else results.successCount++;
-            })
-        );
-      } else {
-        // Prepare new student for batch insert
-        const importObj = {
-          enrollment_no: cleanEnroll,
-          name: String(name).trim(),
-          course: String(course).trim(),
-          semester: String(semester).trim(),
-          mobile: String(mobile).trim(),
-          username,
-          password: hashedPassword,
-          plain_password: rawPassword
-        };
-        if (roll_no && String(roll_no).trim() !== '') importObj.roll_no = String(roll_no).trim();
-        if (division && String(division).trim() !== '') importObj.division = String(division).trim();
+      seenInFile.set(cleanEnroll, importObj);
+    }
 
-        toInsert.push(importObj);
+    const deduplicatedRows = Array.from(seenInFile.values());
+
+    // Execute High Performance Bulk Upsert in chunks of 500 (Handles BOTH Insert & Update in 1 Query)
+    const chunkSize = 500;
+    for (let c = 0; c < deduplicatedRows.length; c += chunkSize) {
+      const chunk = deduplicatedRows.slice(c, c + chunkSize);
+      let { error: insertErr } = await supabase.from('students').upsert(chunk, { onConflict: 'enrollment_no' });
+
+      if (insertErr && (insertErr.message?.includes('email') || insertErr.code === '42703')) {
+        // Retry chunk without email if DB missing email column
+        const sanitizedChunk = chunk.map(({ email, ...rest }) => rest);
+        const retry = await supabase.from('students').upsert(sanitizedChunk, { onConflict: 'enrollment_no' });
+        insertErr = retry.error;
       }
-    }
 
-    // 2. Execute Updates in parallel batches
-    if (updatePromises.length > 0) {
-      await Promise.all(updatePromises);
-    }
-
-    // 3. Execute Batch Inserts in chunks of 200
-    const chunkSize = 200;
-    for (let c = 0; c < toInsert.length; c += chunkSize) {
-      const chunk = toInsert.slice(c, c + chunkSize);
-      const { error: insertErr } = await supabase.from('students').insert(chunk);
       if (insertErr) {
         console.error('Batch insert chunk error:', insertErr);
-        results.errors.push(`Batch insert error: ${insertErr.message}`);
+        results.errors.push(`Batch import error: ${insertErr.message}`);
       } else {
         results.successCount += chunk.length;
       }
@@ -323,7 +381,7 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
   }
 });
 
-// POST bulk delete students (Sequential FK-Safe Execution)
+// POST bulk delete students (Sequential FK-Safe Chunked Execution for Unlimited Students)
 router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
   const { studentIds } = req.body;
 
@@ -340,25 +398,31 @@ router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
     });
     const allIds = Array.from(idSet);
 
-    // 1. Fetch enrollment numbers for targeted students
-    const { data: targetStudents } = await supabase.from('students').select('id, enrollment_no').in('id', allIds);
-    const enrollments = (targetStudents || []).map(s => s.enrollment_no).filter(Boolean);
+    // Process in batches of 500 to handle thousands of records safely without payload or Postgres IN-clause limits
+    const chunkSize = 500;
+    for (let i = 0; i < allIds.length; i += chunkSize) {
+      const chunkIds = allIds.slice(i, i + chunkSize);
 
-    // 2. Delete attendance child rows FIRST to respect foreign key constraints
-    try {
-      await supabase.from('attendance').delete().in('student_id', allIds);
-      if (enrollments.length > 0) {
-        await supabase.from('attendance').delete().in('enrollment_no', enrollments);
+      // 1. Fetch enrollment numbers for chunk students
+      const { data: targetStudents } = await supabase.from('students').select('id, enrollment_no').in('id', chunkIds);
+      const enrollments = (targetStudents || []).map(s => s.enrollment_no).filter(Boolean);
+
+      // 2. Delete attendance child rows FIRST
+      try {
+        await supabase.from('attendance').delete().in('student_id', chunkIds);
+        if (enrollments.length > 0) {
+          await supabase.from('attendance').delete().in('enrollment_no', enrollments);
+        }
+      } catch (attErr) {
+        console.warn('Attendance bulk cleanup warning:', attErr.message);
       }
-    } catch (attErr) {
-      console.warn('Attendance bulk cleanup warning:', attErr.message);
-    }
 
-    // 3. Delete parent rows from students table
-    const { error: stuErr } = await supabase.from('students').delete().in('id', allIds);
-    if (stuErr) {
-      console.error('Bulk delete student error:', stuErr);
-      return res.status(400).json({ error: stuErr.message || 'Failed to delete selected students.' });
+      // 3. Delete parent rows from students table
+      const { error: stuErr } = await supabase.from('students').delete().in('id', chunkIds);
+      if (stuErr) {
+        console.error('Bulk delete student chunk error:', stuErr);
+        return res.status(400).json({ error: stuErr.message || 'Failed to delete selected students.' });
+      }
     }
 
     res.json({ success: true, message: `Successfully deleted ${studentIds.length} student(s).` });
@@ -398,10 +462,111 @@ router.delete('/:id', authenticateJWT, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: stuError.message || 'Failed to delete student' });
     }
 
-    res.json({ message: 'Student and their attendance history deleted successfully' });
+    res.json({ success: true, message: 'Student deleted successfully' });
   } catch (err) {
     console.error('Error deleting student:', err);
     res.status(500).json({ error: err.message || 'Failed to delete student' });
+  }
+});
+
+// POST promote all students to next semester (Sem 1..7 -> +1, Sem 8 -> Delete)
+router.post('/promote', authenticateJWT, requireAdmin, async (req, res) => {
+  try {
+    let allStudents = [];
+    let from = 0;
+    const step = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data: chunk, error } = await supabase.from('students')
+        .select('id, enrollment_no, semester')
+        .range(from, from + step - 1);
+
+      if (error) throw error;
+      if (chunk && chunk.length > 0) {
+        allStudents = allStudents.concat(chunk);
+        from += step;
+        if (chunk.length < step) hasMore = false;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    if (!allStudents || allStudents.length === 0) {
+      return res.status(400).json({ error: 'No student accounts found to promote.' });
+    }
+
+    const sem8StudentIds = [];
+    const sem8Enrollments = [];
+    const promoMap = {}; // semNum -> array of student IDs
+
+    allStudents.forEach(s => {
+      const semNum = parseInt(String(s.semester || '').replace(/\D/g, ''), 10);
+      if (semNum >= 8) {
+        sem8StudentIds.push(s.id);
+        if (s.enrollment_no) sem8Enrollments.push(s.enrollment_no);
+      } else if (!isNaN(semNum) && semNum >= 1 && semNum < 8) {
+        if (!promoMap[semNum]) promoMap[semNum] = [];
+        promoMap[semNum].push(s.id);
+      }
+    });
+
+    let graduatedCount = 0;
+    let promotedCount = 0;
+
+    // Delete Sem 8 students and their attendance records
+    if (sem8StudentIds.length > 0) {
+      const chunkSize = 500;
+      for (let i = 0; i < sem8StudentIds.length; i += chunkSize) {
+        const chunkIds = sem8StudentIds.slice(i, i + chunkSize);
+        const chunkEnrollments = sem8Enrollments.slice(i, i + chunkSize);
+
+        try {
+          await supabase.from('attendance').delete().in('student_id', chunkIds);
+          if (chunkEnrollments.length > 0) {
+            await supabase.from('attendance').delete().in('enrollment_no', chunkEnrollments);
+          }
+        } catch (attErr) {
+          console.warn('Attendance sem 8 cleanup warning:', attErr.message);
+        }
+
+        await supabase.from('students').delete().in('id', chunkIds);
+      }
+      graduatedCount = sem8StudentIds.length;
+    }
+
+    // Promote Sem 7 to 8, 6 to 7, ... 1 to 2 (descending order to avoid overlap)
+    for (let sem = 7; sem >= 1; sem--) {
+      const idsToPromote = promoMap[sem];
+      if (idsToPromote && idsToPromote.length > 0) {
+        const nextSemStr = String(sem + 1);
+        const chunkSize = 500;
+        for (let i = 0; i < idsToPromote.length; i += chunkSize) {
+          const chunkIds = idsToPromote.slice(i, i + chunkSize);
+          await supabase.from('students').update({ semester: nextSemStr }).in('id', chunkIds);
+        }
+        promotedCount += idsToPromote.length;
+      }
+    }
+
+    // Completely clear all old QR sessions, OTP codes, and live attendance logs on promotion so session trackers restart 100% fresh for the new term
+    try {
+      await supabase.from('attendance').delete().not('id', 'is', null);
+      await supabase.from('qr_sessions').delete().not('id', 'is', null);
+      await supabase.from('otp').delete().not('id', 'is', null);
+    } catch (cleanErr) {
+      console.warn('Warning clearing old sessions on promotion:', cleanErr.message);
+    }
+
+    res.json({
+      success: true,
+      promotedCount,
+      graduatedCount,
+      message: `Successfully promoted ${promotedCount} student(s) to the next semester! ${graduatedCount > 0 ? `${graduatedCount} Semester 8 student(s) graduated & removed.` : ''}`
+    });
+  } catch (err) {
+    console.error('Promotion error:', err);
+    res.status(500).json({ error: err.message || 'Failed to promote students.' });
   }
 });
 

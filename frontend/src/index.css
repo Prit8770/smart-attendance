@@ -129,38 +129,169 @@ body {
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--panel-border);
   border-radius: 18px;
-  box-shadow: 0 10px 32px 0 rgba(0, 0, 0, 0.45);
+  box-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.18);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .glass-panel:hover {
   border-color: rgba(245, 158, 11, 0.45);
-  box-shadow: 0 14px 40px 0 rgba(245, 158, 11, 0.2);
+  box-shadow: 0 8px 24px 0 rgba(0, 0, 0, 0.25);
 }
 
-/* Inputs and interactive elements */
-.glass-input {
-  background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 10px;
+/* Faculty Header & Sidebar & Stat Cards Layout Enhancements */
+.faculty-header {
+  border-radius: 0 !important;
+}
+
+.faculty-sidebar {
+  border-radius: 0 !important;
+}
+
+.stat-card-hover {
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.25s ease !important;
+}
+
+.stat-card-hover:hover {
+  transform: translateY(-4px) !important;
+  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.4) !important;
+}
+
+.stat-card-hover:hover span:last-child {
+  transform: translateX(4px);
+  transition: transform 0.2s ease;
+}
+
+/* Inputs and interactive elements - High Visibility & Crisp Contrast */
+.glass-input,
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="password"],
+input[type="date"],
+input[type="time"],
+select.glass-input,
+select,
+textarea.glass-input,
+textarea {
+  background: rgba(0, 24, 52, 0.75);
+  border: 1.5px solid rgba(255, 255, 255, 0.28);
+  border-radius: 12px;
   padding: 12px 16px;
-  color: var(--text-primary);
+  color: #ffffff;
   font-family: var(--font-sans);
   font-size: 0.95rem;
+  font-weight: 500;
   transition: all 0.2s ease;
   outline: none;
   width: 100%;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
 }
 
-.glass-input:focus {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: #f59e0b;
-  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.3);
+.glass-input:hover,
+input[type="text"]:hover,
+input[type="number"]:hover,
+input[type="email"]:hover,
+input[type="password"]:hover,
+input[type="date"]:hover,
+input[type="time"]:hover,
+select:hover,
+textarea:hover {
+  border-color: rgba(255, 183, 3, 0.7);
+  background: rgba(0, 32, 68, 0.88);
 }
 
-.glass-input::placeholder {
-  color: #93c5fd;
-  opacity: 0.7;
+.glass-input:focus,
+input[type="text"]:focus,
+input[type="number"]:focus,
+input[type="email"]:focus,
+input[type="password"]:focus,
+input[type="date"]:focus,
+input[type="time"]:focus,
+select:focus,
+textarea:focus {
+  background: rgba(0, 40, 85, 0.95);
+  border-color: #ffb703;
+  box-shadow: 0 0 0 3.5px rgba(255, 183, 3, 0.35), inset 0 2px 4px rgba(0, 0, 0, 0.3);
+  color: #ffffff;
+}
+
+.glass-input::placeholder,
+input::placeholder,
+textarea::placeholder {
+  color: #94a3b8;
+  opacity: 0.9;
+  font-weight: 400;
+}
+
+/* Light Theme Overrides for Inputs & Form Controls */
+.light-theme .glass-input,
+.light-theme input[type="text"],
+.light-theme input[type="number"],
+.light-theme input[type="email"],
+.light-theme input[type="password"],
+.light-theme input[type="date"],
+.light-theme input[type="time"],
+.light-theme select.glass-input,
+.light-theme select,
+.light-theme textarea {
+  background: #ffffff !important;
+  border: 1.5px solid #94a3b8 !important;
+  color: #0f172a !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.06) !important;
+}
+
+.light-theme .glass-input:hover,
+.light-theme input:hover,
+.light-theme select:hover {
+  border-color: #0284c7 !important;
+}
+
+.light-theme .glass-input:focus,
+.light-theme input:focus,
+.light-theme select:focus {
+  background: #ffffff !important;
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 0 3.5px rgba(245, 158, 11, 0.3) !important;
+  color: #0f172a !important;
+}
+
+.light-theme .glass-input::placeholder,
+.light-theme input::placeholder,
+.light-theme textarea::placeholder {
+  color: #64748b !important;
+  opacity: 0.9 !important;
+}
+
+.light-theme label,
+.light-theme .formLabel {
+  color: #1e293b !important;
+  font-weight: 600 !important;
+}
+
+/* Light Theme Soft Card & Panel Shadows */
+.light-theme .glass-panel,
+.light-theme .stat-card-v2,
+.light-theme div[style*="modalContent"] {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05), 0 1px 3px rgba(0, 0, 0, 0.03) !important;
+}
+
+.light-theme .glass-panel:hover,
+.light-theme .stat-card-v2:hover {
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08) !important;
+}
+
+.light-theme .admin-top-header-banner {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08) !important;
+}
+
+/* SweetAlert & Confirmation Modal Text Rules */
+.swal2-popup.swal2-light-popup,
+.swal2-popup.swal2-light-popup .swal2-title,
+.swal2-popup.swal2-light-popup .swal2-html-container,
+.swal2-light-title,
+.swal2-light-text {
+  color: #0f172a !important;
+  background-color: #ffffff !important;
 }
 
 /* Buttons */
@@ -361,7 +492,7 @@ select option {
 /* Grid Layouts */
 .dashboard-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 30px;
 }
@@ -406,6 +537,17 @@ select option {
 }
 
 /* Animations */
+@keyframes toastSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 @keyframes pulse-glow {
 
   0%,
@@ -1735,19 +1877,17 @@ div[style*="cursor:pointer"],
   overflow: hidden;
 }
 
-/* Left Sidebar */
+/* Left Sidebar (Photo 2 EduMark Design) */
 .admin-sidebar {
-  width: 260px;
-  min-width: 260px;
+  width: 270px;
+  min-width: 270px;
   height: 100vh;
-  background: var(--panel-bg);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-right: 1px solid var(--panel-border);
+  background: #002855; /* Solid Deep Navy Blue as seen in Photo 2 */
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 24px 16px;
+  padding: 20px 16px;
   position: relative;
   z-index: 100;
   flex-shrink: 0;
@@ -1759,21 +1899,21 @@ div[style*="cursor:pointer"],
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 8px 8px 24px 8px;
-  border-bottom: 1px solid var(--border-extra-light);
-  margin-bottom: 16px;
+  padding: 4px 8px 18px 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 14px;
 }
 
-/* Photo 3 Logo Style: Orange rounded square with Dark Blue Graduation Cap icon */
+/* Photo 2 Logo Style: Yellow Icon Square + White Title + Subtitle */
 .admin-logo-box {
   width: 44px;
   height: 44px;
   border-radius: 12px;
-  background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  background: #ffb703; /* Solid vibrant yellow gold */
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.4);
+  box-shadow: 0 4px 14px rgba(255, 183, 3, 0.35);
   flex-shrink: 0;
 }
 
@@ -1784,16 +1924,18 @@ div[style*="cursor:pointer"],
 
 .admin-brand-title {
   font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 1.05rem;
-  color: var(--text-primary);
+  font-weight: 800;
+  font-size: 1.15rem;
+  color: #ffffff;
   line-height: 1.2;
+  letter-spacing: -0.01em;
 }
 
 .admin-brand-subtitle {
   font-size: 0.72rem;
-  color: var(--text-secondary);
+  color: #94a3b8;
   font-weight: 500;
+  margin-top: 2px;
 }
 
 /* Sidebar Navigation Items */
@@ -1803,21 +1945,22 @@ div[style*="cursor:pointer"],
   gap: 6px;
   flex: 1;
   overflow-y: auto;
-  margin-top: 6px;
+  margin-top: 4px;
+  padding-right: 2px;
 }
 
 .admin-nav-item {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 12px 16px;
+  padding: 12px 18px;
   border-radius: 12px;
   background: transparent;
   border: none;
-  color: var(--text-secondary);
+  color: #cbd5e1;
   font-family: var(--font-sans);
-  font-size: 0.92rem;
-  font-weight: 500;
+  font-size: 0.93rem;
+  font-weight: 600;
   cursor: pointer;
   position: relative;
   transition: all 0.2s ease;
@@ -1826,119 +1969,139 @@ div[style*="cursor:pointer"],
 }
 
 .admin-nav-item:hover {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
 }
 
+/* Active Nav Item - Filled Bright Yellow Capsule (Photo 2) */
 .admin-nav-item.active {
-  background: rgba(245, 158, 11, 0.12);
-  color: var(--primary);
-  font-weight: 700;
+  background: #ffb703 !important;
+  color: #0f172a !important;
+  font-weight: 700 !important;
+  box-shadow: 0 4px 14px rgba(255, 183, 3, 0.25);
+}
+
+.admin-nav-item.active svg {
+  color: #0f172a !important;
+  stroke: #0f172a !important;
 }
 
 .admin-nav-indicator {
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 4px;
-  border-radius: 0 4px 4px 0;
-  background: transparent;
-  transition: background 0.2s ease;
+  display: none;
 }
 
-.admin-nav-item.active .admin-nav-indicator {
-  background: var(--primary);
-  box-shadow: 0 0 10px var(--primary-glow);
-}
-
-/* Sidebar Footer */
+/* Sidebar Footer (Photo 2) */
 .admin-sidebar-footer {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-top: 16px;
-  border-top: 1px solid var(--border-extra-light);
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.admin-theme-switch-row {
+.admin-role-dropdown-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--border-extra-light);
-  cursor: pointer;
-  transition: all 0.2s ease;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cbd5e1;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
-.admin-theme-switch-row:hover {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.admin-theme-left {
+.admin-user-profile-card {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
 }
 
-.admin-theme-label {
-  font-size: 0.85rem;
-  color: var(--text-secondary);
-  font-weight: 500;
-}
-
-.admin-toggle-switch {
-  width: 40px;
-  height: 22px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.15);
-  position: relative;
-  transition: background 0.25s ease;
-  cursor: pointer;
-}
-
-.admin-toggle-switch.checked {
-  background: var(--primary);
-}
-
-.admin-toggle-thumb {
-  width: 16px;
-  height: 16px;
+.admin-user-avatar {
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
-  background: #ffffff;
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  transition: transform 0.25s ease;
+  background: #ffb703;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #0f172a;
 }
 
-.admin-toggle-switch.checked .admin-toggle-thumb {
-  transform: translateX(18px);
+.admin-user-details {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.admin-user-profile-name {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-user-profile-email {
+  font-size: 0.72rem;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .admin-logout-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  padding: 11px 16px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid var(--border-light);
-  color: var(--text-primary);
-  font-size: 0.9rem;
-  font-weight: 600;
+  padding: 10px 16px;
+  border-radius: 10px;
+  background: rgba(239, 68, 68, 0.18);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #f87171;
+  font-size: 0.88rem;
+  font-weight: 700;
   cursor: pointer;
   transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.15);
 }
 
 .admin-logout-btn:hover {
-  background: rgba(239, 68, 68, 0.15);
-  border-color: rgba(239, 68, 68, 0.3);
-  color: #f87171;
+  background: #dc2626;
+  border-color: #dc2626;
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(220, 38, 38, 0.4);
+}
+
+.admin-nav-logout-btn:hover {
+  background: rgba(239, 68, 68, 0.25) !important;
+  border-color: rgba(239, 68, 68, 0.5) !important;
+  color: #ffffff !important;
+}
+
+.admin-top-header-logout-btn:hover {
+  background: #dc2626 !important;
+  border-color: #dc2626 !important;
+  color: #ffffff !important;
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.4) !important;
+}
+
+.admin-copyright-text {
+  font-size: 0.7rem;
+  color: #64748b;
+  text-align: center;
+  margin-top: 2px;
 }
 
 /* Main Content Workspace */
@@ -1948,11 +2111,70 @@ div[style*="cursor:pointer"],
   display: flex;
   flex-direction: column;
   min-width: 0;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   box-sizing: border-box;
+  padding: 24px 32px;
+  gap: 20px;
 }
 
-/* Top Header Bar - Integrated Top Header Bar (No Scrollbar Cut-Through) */
+/* Photo 2 Header Banner Card */
+.admin-top-header-banner {
+  background: linear-gradient(135deg, #002d62 0%, #001f3f 100%);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  padding: 28px 36px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  box-sizing: border-box;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+/* Sirf Dashboard tab par header ki height badhane ke liye */
+.admin-top-header-banner.dashboard-header-tall {
+  padding: 42px 36px;
+  min-height: 135px;
+}
+
+.admin-banner-content {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.admin-header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.admin-banner-title {
+  font-family: var(--font-display);
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: -0.02em;
+  margin: 0;
+  line-height: 1.1;
+}
+
+.admin-banner-subtitle {
+  font-size: 1.05rem;
+  color: #cbd5e1;
+  margin: 0;
+  font-weight: 500;
+}
+
+.admin-banner-username {
+  color: #ffb703;
+  font-weight: 700;
+}
+
+/* Legacy Header compatibility fallback */
 .admin-top-header {
   display: flex;
   align-items: center;
@@ -1960,7 +2182,6 @@ div[style*="cursor:pointer"],
   padding: 18px 36px;
   background: var(--panel-bg);
   backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
   border-bottom: 1px solid var(--panel-border);
   width: 100%;
   height: 72px;
@@ -2021,13 +2242,12 @@ div[style*="cursor:pointer"],
   color: var(--text-secondary);
 }
 
-.admin-main-content {
+.admin-main-content,
+.admin-content-workspace {
   flex: 1;
-  overflow-y: auto;
-  padding: 28px 36px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 14px;
   width: 100%;
   box-sizing: border-box;
 }
@@ -2128,4 +2348,865 @@ div[style*="cursor:pointer"],
 .spin-icon {
   animation: spin 0.8s linear infinite;
 }
+
+/* ======================================================
+   CONTENT LIGHT MODE - Sirf main content area ke liye
+   (Sidebar aur Header dark rahenge)
+   ====================================================== */
+.admin-main-wrapper.content-light {
+  background: #f0f4f8;
+}
+
+/* Content area light background */
+.admin-main-wrapper.content-light .admin-main-content,
+.admin-main-wrapper.content-light .admin-content-workspace {
+  background: transparent;
+}
+
+/* Light CSS variables override sirf content area ke liye */
+.admin-main-wrapper.content-light {
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --stat-text: #0f172a;
+  --panel-bg: rgba(255, 255, 255, 0.92);
+  --panel-border: rgba(2, 132, 199, 0.15);
+  --border-light: rgba(0, 0, 0, 0.1);
+  --border-extra-light: rgba(0, 0, 0, 0.05);
+  --table-hover: rgba(2, 132, 199, 0.04);
+  --primary: #d97706;
+  --primary-glow: rgba(217, 119, 6, 0.2);
+  --primary-hover: #b45309;
+  --secondary: #0284c7;
+  --secondary-glow: rgba(2, 132, 199, 0.2);
+  --accent: #0369a1;
+  --accent-glow: rgba(3, 105, 161, 0.2);
+}
+
+/* Glass panels inside content area - light white cards */
+.admin-main-wrapper.content-light .glass-panel {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border: 1px solid rgba(2, 132, 199, 0.12) !important;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+}
+
+.admin-main-wrapper.content-light .glass-panel:hover {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.10) !important;
+  border-color: rgba(217, 119, 6, 0.3) !important;
+}
+
+/* Inputs inside content area - light style */
+.admin-main-wrapper.content-light .glass-input,
+.admin-main-wrapper.content-light input[type="text"],
+.admin-main-wrapper.content-light input[type="number"],
+.admin-main-wrapper.content-light input[type="email"],
+.admin-main-wrapper.content-light input[type="password"],
+.admin-main-wrapper.content-light input[type="date"],
+.admin-main-wrapper.content-light input[type="time"],
+.admin-main-wrapper.content-light select.glass-input,
+.admin-main-wrapper.content-light select,
+.admin-main-wrapper.content-light textarea {
+  background: #ffffff !important;
+  border: 1.5px solid #cbd5e1 !important;
+  color: #0f172a !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.05) !important;
+}
+
+.admin-main-wrapper.content-light .glass-input:hover,
+.admin-main-wrapper.content-light input:hover,
+.admin-main-wrapper.content-light select:hover {
+  border-color: #0284c7 !important;
+}
+
+.admin-main-wrapper.content-light .glass-input:focus,
+.admin-main-wrapper.content-light input:focus,
+.admin-main-wrapper.content-light select:focus {
+  background: #ffffff !important;
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.25) !important;
+  color: #0f172a !important;
+}
+
+.admin-main-wrapper.content-light .glass-input::placeholder,
+.admin-main-wrapper.content-light input::placeholder,
+.admin-main-wrapper.content-light textarea::placeholder {
+  color: #94a3b8 !important;
+  opacity: 1 !important;
+}
+
+/* Labels inside content area */
+.admin-main-wrapper.content-light label {
+  color: #1e293b !important;
+}
+
+/* Select dropdown options inside content area */
+.admin-main-wrapper.content-light select {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+.admin-main-wrapper.content-light select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+/* Table inside content area - light style */
+.admin-main-wrapper.content-light .custom-table-container {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border-radius: 14px !important;
+  border: 1px solid rgba(0, 0, 0, 0.08) !important;
+}
+
+.admin-main-wrapper.content-light .custom-table thead tr {
+  background: rgba(241, 245, 249, 0.95) !important;
+}
+
+.admin-main-wrapper.content-light .custom-table th {
+  color: #475569 !important;
+  border-bottom: 1.5px solid rgba(0, 0, 0, 0.08) !important;
+}
+
+.admin-main-wrapper.content-light .custom-table td {
+  color: #1e293b !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05) !important;
+}
+
+.admin-main-wrapper.content-light .custom-table tbody tr:hover {
+  background: rgba(241, 245, 249, 0.8) !important;
+}
+
+/* Tab panel inside content area */
+.admin-main-wrapper.content-light .tab-panel,
+.admin-main-wrapper.content-light [class*="tabPanel"] {
+  background: rgba(255, 255, 255, 0.85) !important;
+}
+
+/* Modal inside content area */
+.admin-main-wrapper.content-light .modal-overlay {
+  background: rgba(0, 0, 0, 0.35) !important;
+}
+
+/* Stat cards inside content light mode */
+.admin-main-wrapper.content-light .stat-card-v2 {
+  background: rgba(255, 255, 255, 0.92) !important;
+  border-color: rgba(2, 132, 199, 0.12) !important;
+}
+
+/* Text colors inside content light mode */
+.admin-main-wrapper.content-light h1:not(.admin-banner-title),
+.admin-main-wrapper.content-light h2:not(.admin-banner-title),
+.admin-main-wrapper.content-light h3:not(.admin-banner-title),
+.admin-main-wrapper.content-light h4 {
+  color: #0f172a !important;
+}
+
+.admin-main-wrapper.content-light p,
+.admin-main-wrapper.content-light span:not([style*="color"]),
+.admin-main-wrapper.content-light div:not([style*="color"]) {
+  color: #334155;
+}
+
+.admin-main-wrapper.content-light strong[style*="color: #ffffff"],
+.admin-main-wrapper.content-light strong[style*="color: #fff"],
+.admin-main-wrapper.content-light span[style*="color: #ffffff"],
+.admin-main-wrapper.content-light span[style*="color: #fff"],
+.admin-main-wrapper.content-light p[style*="color: #ffffff"],
+.admin-main-wrapper.content-light p[style*="color: #fff"],
+.admin-main-wrapper.content-light h2[style*="color: #ffffff"],
+.admin-main-wrapper.content-light h3[style*="color: #ffffff"],
+.admin-main-wrapper.content-light h4[style*="color: #ffffff"] {
+  color: #0f172a !important;
+}
+
+.admin-main-wrapper.content-light span[style*="color: #94a3b8"],
+.admin-main-wrapper.content-light span[style*="color: #cbd5e1"],
+.admin-main-wrapper.content-light div[style*="color: #94a3b8"],
+.admin-main-wrapper.content-light p[style*="color: #cbd5e1"] {
+  color: #475569 !important;
+}
+
+.admin-main-wrapper.content-light div[style*="background: rgba(255, 255, 255"],
+.admin-main-wrapper.content-light div[style*="background:rgba(255, 255, 255"],
+.admin-main-wrapper.content-light div[style*="background: rgba(255,255,255"],
+.admin-main-wrapper.content-light div[style*="background:rgba(255,255,255"] {
+  background: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Secondary button in content light mode */
+.admin-main-wrapper.content-light .btn-secondary {
+  background: rgba(241, 245, 249, 0.95) !important;
+  color: #334155 !important;
+  border: 1.5px solid #cbd5e1 !important;
+}
+
+.admin-main-wrapper.content-light .btn-secondary:hover {
+  background: rgba(226, 232, 240, 0.95) !important;
+  border-color: #0284c7 !important;
+}
+
+/* Sidebar - dark maintain karo (override karo content-light ka effect) */
+.admin-main-wrapper.content-light + .admin-sidebar,
+.admin-sidebar {
+  background: #002855 !important;
+  color: #ffffff;
+}
+
+/* Header banner - dark maintain karo */
+.admin-main-wrapper.content-light .admin-top-header-banner {
+  background: linear-gradient(135deg, #002d62 0%, #001f3f 100%) !important;
+  border-color: rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Header banner ke andar ka text white rahega */
+.admin-main-wrapper.content-light .admin-top-header-banner *,
+.admin-main-wrapper.content-light .admin-top-header-banner h1,
+.admin-main-wrapper.content-light .admin-top-header-banner h2,
+.admin-main-wrapper.content-light .admin-top-header-banner h3,
+.admin-main-wrapper.content-light .admin-top-header-banner p,
+.admin-main-wrapper.content-light .admin-top-header-banner span,
+.admin-main-wrapper.content-light .admin-top-header-banner div,
+.admin-main-wrapper.content-light .admin-top-header-banner button,
+.admin-main-wrapper.content-light .admin-banner-title,
+.admin-main-wrapper.content-light .admin-banner-subtitle {
+  color: #ffffff !important;
+}
+
+/* Username (amber/gold color) maintain karo */
+.admin-main-wrapper.content-light .admin-banner-username,
+.admin-main-wrapper.content-light .admin-top-header-banner strong {
+  color: #ffb703 !important;
+}
+
+/* Custom Confirm / Alert Modal styling - Clean White Theme */
+.custom-confirm-modal {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  border: 1.5px solid #fca5a5 !important;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.25) !important;
+}
+
+.custom-confirm-modal h3 {
+  color: #0f172a !important;
+}
+
+.custom-confirm-modal p {
+  color: #334155 !important;
+}
+
+.custom-confirm-modal p strong {
+  color: #0f172a !important;
+}
+
+.custom-confirm-modal .btn-cancel-modal {
+  background: #f1f5f9 !important;
+  color: #334155 !important;
+  border: 1.5px solid #cbd5e1 !important;
+}
+
+.custom-confirm-modal .btn-cancel-modal:hover {
+  background: #e2e8f0 !important;
+  color: #0f172a !important;
+}
+
+/* ==========================================================================
+   STUDENT DASHBOARD - PROFESSIONAL STICKY HEADER & SIDEBAR NAVIGATION
+   ========================================================================== */
+
+.student-portal-wrapper {
+  min-height: 100vh;
+  background: var(--bg-dark, #0b1329);
+  color: var(--text-primary, #f8fafc);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Sticky Top Header */
+.student-sticky-header {
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 100 !important;
+  background: rgba(11, 19, 41, 0.92) !important;
+  backdrop-filter: blur(16px) !important;
+  -webkit-backdrop-filter: blur(16px) !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+  padding: 14px 24px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35) !important;
+}
+
+/* Main Container with Sidebar + Content */
+.student-layout-container {
+  display: flex;
+  flex: 1;
+  max-width: 1440px;
+  width: 100%;
+  margin: 0 auto;
+  gap: 24px;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+/* Sticky Sidebar Desktop */
+.student-sticky-sidebar {
+  width: 270px;
+  flex-shrink: 0;
+  position: sticky !important;
+  top: 84px !important;
+  height: calc(100vh - 110px) !important;
+  overflow-y: auto !important;
+  scrollbar-width: thin;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  background: rgba(15, 23, 42, 0.65) !important;
+  backdrop-filter: blur(12px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: 18px !important;
+  padding: 16px 12px !important;
+  box-sizing: border-box;
+}
+
+.student-sticky-sidebar::-webkit-scrollbar {
+  width: 4px;
+}
+.student-sticky-sidebar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+
+/* Navigation List & Items */
+.student-nav-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.student-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  color: #94a3b8;
+  font-weight: 500;
+  font-size: 0.92rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: transparent;
+  border: 1px solid transparent;
+  user-select: none;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  position: relative;
+}
+
+.student-nav-item:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.08);
+  transform: translateX(2px);
+}
+
+.student-nav-item.active {
+  color: #ffffff !important;
+  background: linear-gradient(135deg, rgba(245, 158, 11, 0.22) 0%, rgba(217, 119, 6, 0.28) 100%) !important;
+  border: 1px solid rgba(245, 158, 11, 0.45) !important;
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.15) !important;
+  font-weight: 600;
+}
+
+.student-nav-item.active svg {
+  color: #f59e0b !important;
+}
+
+.student-nav-badge {
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+/* Main Content Area */
+.student-main-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+
+
+/* ==========================================================================
+   GLOBAL MOBILE RESPONSIVENESS & TOUCH ADAPTABILITY (ALL PANELS & SCREENS)
+   ========================================================================== */
+
+/* 1. Mobile Sidebar Drawer Overlay (Admin, Faculty & Student Panels) */
+@media (max-width: 992px) {
+  .admin-sidebar,
+  .faculty-sidebar {
+    position: fixed !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    z-index: 9999 !important;
+    width: 280px !important;
+    max-width: 82vw !important;
+    height: 100vh !important;
+    height: 100dvh !important;
+    background: #002855 !important;
+    transform: translateX(-100%) !important;
+    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    box-shadow: 10px 0 40px rgba(0, 0, 0, 0.6) !important;
+    border-radius: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    padding: 20px 16px !important;
+    box-sizing: border-box !important;
+    overflow-y: auto !important;
+  }
+
+  .admin-sidebar.open,
+  .faculty-sidebar.open {
+    transform: translateX(0) !important;
+  }
+
+  .admin-sidebar-brand {
+    display: flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+    padding: 4px 8px 14px 8px !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1) !important;
+    margin-bottom: 12px !important;
+    flex-shrink: 0 !important;
+  }
+
+  .admin-logo-box {
+    width: 42px !important;
+    height: 42px !important;
+    border-radius: 12px !important;
+    background: #ffb703 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-shrink: 0 !important;
+  }
+
+  .admin-brand-title {
+    font-size: 1.15rem !important;
+    color: #ffffff !important;
+    font-weight: 800 !important;
+  }
+
+  .admin-brand-subtitle {
+    font-size: 0.72rem !important;
+    color: #94a3b8 !important;
+  }
+
+  .admin-sidebar-nav {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 8px !important;
+    flex: 1 !important;
+    overflow-y: auto !important;
+    margin-top: 6px !important;
+    padding-right: 2px !important;
+  }
+
+  .admin-nav-item {
+    display: flex !important;
+    flex-direction: row !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 14px !important;
+    padding: 12px 16px !important;
+    border-radius: 12px !important;
+    color: #cbd5e1 !important;
+    font-size: 0.92rem !important;
+    font-weight: 600 !important;
+    background: transparent !important;
+    border: none !important;
+    width: 100% !important;
+    text-align: left !important;
+    box-sizing: border-box !important;
+    cursor: pointer !important;
+  }
+
+  .admin-nav-item:hover {
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: #ffffff !important;
+  }
+
+  .admin-nav-item.active {
+    background: #ffb703 !important;
+    color: #0f172a !important;
+    font-weight: 700 !important;
+    box-shadow: 0 4px 14px rgba(255, 183, 3, 0.3) !important;
+  }
+
+  .admin-nav-item.active svg {
+    color: #0f172a !important;
+    stroke: #0f172a !important;
+  }
+
+  .admin-sidebar-footer {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    padding-top: 14px !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
+    flex-shrink: 0 !important;
+    margin-top: auto !important;
+  }
+
+  .admin-user-profile-card {
+    display: flex !important;
+    align-items: center !important;
+    gap: 12px !important;
+    padding: 10px 12px !important;
+    background: rgba(255, 255, 255, 0.06) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 14px !important;
+  }
+
+  .admin-logout-btn {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    width: 100% !important;
+    padding: 10px 16px !important;
+    border-radius: 10px !important;
+    background: rgba(239, 68, 68, 0.18) !important;
+    border: 1px solid rgba(239, 68, 68, 0.35) !important;
+    color: #f87171 !important;
+    font-size: 0.88rem !important;
+    font-weight: 700 !important;
+    cursor: pointer !important;
+  }
+
+  .admin-mobile-toggle-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: rgba(255, 255, 255, 0.12) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: #ffffff !important;
+    border-radius: 10px !important;
+    padding: 8px 10px !important;
+    cursor: pointer !important;
+    margin-right: 6px !important;
+  }
+
+  .admin-main-wrapper {
+    margin-left: 0 !important;
+    width: 100% !important;
+    max-width: 100vw !important;
+    padding: 16px 16px !important;
+    gap: 16px !important;
+    height: auto !important;
+    min-height: 100vh !important;
+  }
+
+  .admin-top-header-banner {
+    padding: 20px 20px !important;
+    border-radius: 16px !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 14px !important;
+  }
+
+  .admin-banner-title {
+    font-size: 1.65rem !important;
+  }
+
+  .admin-banner-subtitle {
+    font-size: 0.92rem !important;
+  }
+}
+
+/* 2. Mobile Screens (Smartphones <= 768px) */
+@media (max-width: 768px) {
+  /* Containers & Padding */
+  body, html, #root {
+    overflow-x: hidden !important;
+  }
+
+  .admin-main-wrapper {
+    padding: 12px 12px !important;
+    gap: 14px !important;
+  }
+
+  .glass-panel {
+    padding: 16px !important;
+    border-radius: 14px !important;
+  }
+
+  /* Form Inputs on Mobile (16px prevents iOS zoom) */
+  .glass-input,
+  input[type="text"],
+  input[type="number"],
+  input[type="email"],
+  input[type="password"],
+  input[type="date"],
+  input[type="time"],
+  select {
+    font-size: 16px !important;
+    padding: 10px 12px !important;
+    border-radius: 10px !important;
+  }
+
+  /* Stat Card Grids */
+  .stat-card-v2 {
+    padding: 14px 16px !important;
+    min-height: 100px !important;
+  }
+
+  .stat-card-value {
+    font-size: 1.6rem !important;
+  }
+
+  /* Horizontal Scrolling Tables */
+  .custom-table-container,
+  div[style*="overflowX: auto"],
+  div[style*="overflow-x: auto"] {
+    width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    margin-top: 8px !important;
+  }
+
+  .custom-table {
+    min-width: 600px !important;
+  }
+
+  .custom-table th,
+  .custom-table td {
+    padding: 8px 10px !important;
+    font-size: 0.8rem !important;
+    white-space: nowrap !important;
+  }
+
+  /* Action Buttons & Badges */
+  .btn {
+    padding: 10px 14px !important;
+    font-size: 0.85rem !important;
+    justify-content: center !important;
+  }
+
+  /* Modals & Dialogs on Mobile */
+  div[style*="position: fixed"],
+  div[style*="position:fixed"],
+  .swal2-popup,
+  .custom-confirm-modal {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    box-sizing: border-box !important;
+    padding: 16px !important;
+    border-radius: 16px !important;
+    margin: 10px auto !important;
+    max-height: 90vh !important;
+    overflow-y: auto !important;
+  }
+
+  /* Login Card Responsiveness */
+  .login-card-v2,
+  div[style*="maxWidth: 440px"],
+  div[style*="max-width: 440px"],
+  div[style*="width: 440px"] {
+    width: 94vw !important;
+    max-width: 94vw !important;
+    padding: 24px 18px !important;
+  }
+}
+
+/* 3. Small Smartphones (<= 480px) */
+@media (max-width: 480px) {
+  .admin-banner-title {
+    font-size: 1.4rem !important;
+  }
+
+  .admin-banner-subtitle {
+    font-size: 0.84rem !important;
+  }
+
+  .stat-card-title {
+    font-size: 0.8rem !important;
+  }
+
+  .stat-card-value {
+    font-size: 1.4rem !important;
+  }
+}
+
+/* ==========================================================================
+   MOBILE CURVED DOCK BOTTOM NAVIGATION (PAYTM / FAB SCANNER SCOOP STYLE)
+   ========================================================================== */
+.student-mobile-curved-dock,
+.student-profile-mobile-logout-btn,
+.student-mobile-header-download-btns {
+  display: none !important;
+}
+
+.student-report-desktop-download-card {
+  display: block !important;
+}
+
+@media (max-width: 768px) {
+  .student-mobile-header-download-btns {
+    display: flex !important;
+  }
+  .student-report-desktop-download-card {
+    display: none !important;
+  }
+
+  /* Hide top 3-line hamburger menu toggle button in Student Panel */
+  .admin-banner-content .admin-mobile-toggle-btn {
+    display: none !important;
+  }
+
+  /* Curved Dock Bar Container at Bottom */
+  .student-mobile-curved-dock {
+    display: flex !important;
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    height: 64px !important;
+    background: transparent !important;
+    filter: drop-shadow(0 -6px 20px rgba(0, 0, 0, 0.12)) !important;
+    z-index: 99999 !important;
+  }
+
+  /* SVG Notch Background */
+  .student-dock-svg-bg {
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    height: 64px !important;
+    z-index: 1 !important;
+    pointer-events: none !important;
+  }
+
+  .student-dock-content {
+    position: relative !important;
+    z-index: 2 !important;
+    display: flex !important;
+    width: 100% !important;
+    height: 100% !important;
+    justify-content: space-around !important;
+    align-items: flex-end !important;
+    padding: 0 4px 6px 4px !important;
+    box-sizing: border-box !important;
+  }
+
+  .student-dock-item {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    background: transparent !important;
+    border: none !important;
+    color: #64748b !important;
+    gap: 3px !important;
+    font-size: 0.72rem !important;
+    font-weight: 600 !important;
+    cursor: pointer !important;
+    flex: 1 !important;
+    padding: 4px 0 !important;
+    transition: all 0.2s ease !important;
+  }
+
+  .student-dock-item svg {
+    color: #64748b !important;
+    transition: all 0.2s ease !important;
+  }
+
+  .student-dock-item.active {
+    color: #d97706 !important;
+    font-weight: 700 !important;
+  }
+
+  .student-dock-item.active svg {
+    color: #d97706 !important;
+    transform: translateY(-2px);
+  }
+
+  /* Center Elevated Floating Action Button (FAB) */
+  .student-fab-container {
+    position: relative !important;
+    width: 72px !important;
+    height: 52px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-shrink: 0 !important;
+    margin: 0 6px !important;
+  }
+
+  .student-fab-btn {
+    position: absolute !important;
+    top: -22px !important;
+    width: 58px !important;
+    height: 58px !important;
+    border-radius: 50% !important;
+    background: linear-gradient(135deg, #ffb703, #f59e0b) !important;
+    color: #0f172a !important;
+    border: 4px solid #ffffff !important;
+    box-shadow: 0 8px 24px rgba(245, 158, 11, 0.45) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  }
+
+  .student-fab-btn svg {
+    color: #0f172a !important;
+    stroke: #0f172a !important;
+  }
+
+  .student-fab-btn.active,
+  .student-fab-btn:active {
+    transform: scale(1.08) translateY(-2px) !important;
+    box-shadow: 0 10px 28px rgba(245, 158, 11, 0.65) !important;
+    background: linear-gradient(135deg, #fbbf24, #d97706) !important;
+  }
+
+  /* Sign Out Button inside My Profile (Mobile Only) */
+  .student-profile-mobile-logout-btn {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 10px !important;
+    width: 100% !important;
+    padding: 14px 20px !important;
+    border-radius: 14px !important;
+    font-size: 0.95rem !important;
+    font-weight: 700 !important;
+    background: linear-gradient(135deg, #ef4444, #dc2626) !important;
+    color: #ffffff !important;
+    border: none !important;
+    box-shadow: 0 4px 16px rgba(239, 68, 68, 0.35) !important;
+    cursor: pointer !important;
+    margin-top: 10px !important;
+    transition: all 0.2s ease !important;
+  }
+
+  /* Add bottom padding to main content on mobile so sticky bottom bar doesn't cover content */
+  .admin-main-wrapper {
+    padding-bottom: 88px !important;
+  }
+}
+
 

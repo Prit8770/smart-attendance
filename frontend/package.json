@@ -17,6 +17,7 @@
     "qrcode": "^1.5.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "sweetalert2": "^11.26.25",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
