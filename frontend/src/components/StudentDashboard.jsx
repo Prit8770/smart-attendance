@@ -1516,30 +1516,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             </p>
           </div>
 
-          {/* Mobile-Only Header Green Excel Download Button centered vertically across both header lines */}
-          {activeTab === 'report' && (
-            <button
-              type="button"
-              className="student-mobile-header-download-btns"
-              onClick={handleExportStudentReportExcel}
-              title="Export Excel (.xlsx)"
-              style={{
-                background: 'linear-gradient(135deg, #10b981, #059669)',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '12px',
-                width: '42px',
-                height: '42px',
-                alignItems: 'center',
-                justifyContent: 'center',
-                cursor: 'pointer',
-                boxShadow: '0 4px 14px rgba(16, 185, 129, 0.45)',
-                flexShrink: 0
-              }}
-            >
-              <Download size={22} strokeWidth={2.2} />
-            </button>
-          )}
+
         </header>
 
         {/* Scrollable Main Content Space */}
@@ -1657,64 +1634,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           {/* TAB 3.5: ATTENDANCE REPORT & EXPORT */}
           {activeTab === 'report' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              {/* Desktop-Only Top Download Card */}
-              <div className="student-report-desktop-download-card glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                  <div>
-                    <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.25rem', fontWeight: 700, margin: 0, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <Download size={22} color="#f59e0b" />
-                      Attendance Performance & Official Report
-                    </h2>
-                    <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '4px 0 0 0' }}>
-                      Generate and download your verified semester attendance statement.
-                    </p>
-                  </div>
 
-                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-                    <button
-                      onClick={handleExportStudentReportPDF}
-                      className="btn btn-primary"
-                      style={{
-                        padding: '9px 18px',
-                        fontSize: '0.85rem',
-                        fontWeight: '700',
-                        background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: '10px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)'
-                      }}
-                    >
-                      <Download size={16} /> Download PDF Report
-                    </button>
-
-                    <button
-                      onClick={handleExportStudentReportExcel}
-                      className="btn btn-primary"
-                      style={{
-                        padding: '9px 18px',
-                        fontSize: '0.85rem',
-                        fontWeight: '700',
-                        background: 'linear-gradient(135deg, #10b981, #059669)',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: '10px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        cursor: 'pointer',
-                        boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)'
-                      }}
-                    >
-                      <Download size={16} /> Export Excel (.xlsx)
-                    </button>
-                  </div>
-                </div>
-              </div>
 
               {renderWeeklyAnalysisCard()}
               {renderSubjectBreakdownCard()}
