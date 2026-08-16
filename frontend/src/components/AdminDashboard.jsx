@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Users, KeyRound, QrCode, MapPin, BarChart3, Download, Upload, TrendingUp, Plus, Search,
   Trash2, Edit, Check, CheckCircle, XCircle, Clock, ShieldAlert, LogOut, RefreshCw,
@@ -329,6 +329,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const [appliedDefaulterSem, setAppliedDefaulterSem] = useState('ALL');
   const [appliedDefaulterDiv, setAppliedDefaulterDiv] = useState('ALL');
   const [appliedDefaulterStatus, setAppliedDefaulterStatus] = useState('ALL');
+  const [defaulterPage, setDefaulterPage] = useState(1);
 
   // Reports Filter & Output State
   const [reportType, setReportType] = useState('summary'); // 'summary' | 'subject_wise'
@@ -357,6 +358,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     setAppliedDefaulterSem(defaulterSemFilter);
     setAppliedDefaulterDiv(defaulterDivFilter);
     setAppliedDefaulterStatus(defaulterStatusFilter);
+    setDefaulterPage(1);
     const semText = defaulterSemFilter === 'ALL' ? 'All Semesters' : `Semester ${defaulterSemFilter}`;
     const divText = defaulterDivFilter === 'ALL' ? 'All Divisions' : `Div ${defaulterDivFilter}`;
     const statusText = defaulterStatusFilter === 'ALL'
@@ -380,8 +382,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     return subs;
   })();
 
-  // Calculate attendance & defaulter status for all students
-  const defaulterStudentList = (() => {
+  // Calculate attendance & defaulter status for all students (Memoized to eliminate mobile lag)
+  const defaulterStudentList = useMemo(() => {
     if (!students || !Array.isArray(students) || students.length === 0) return [];
 
     // Combine all system attendance logs from state
@@ -430,6 +432,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       }
     });
 
+    const activeRules = (blacklistRules || []).filter(r => !r.status || r.status === 'Active');
+
     return students.map((std) => {
       const semStr = String(std.semester || std.sem || '1').trim();
       const divCode = String(std.division || std.div || 'A').trim().toUpperCase();
@@ -452,7 +456,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         percentage = Math.min(100, Math.round((realAttended / totalConducted) * 100));
 
         // Dynamically find threshold from configured blacklist rules
-        const activeRules = (blacklistRules || []).filter(r => !r.status || r.status === 'Active');
         const matchedRule = [...activeRules].reverse().find(r => {
           const matchSem = !r.semester || r.semester === 'All Semesters' || String(r.semester).replace(/\D/g, '') === String(std.semester || '').replace(/\D/g, '');
           const matchProg = !r.program || r.program === 'All Programs' || String(r.program).toLowerCase() === String(std.course || '').toLowerCase();
@@ -497,7 +500,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         subjectName: matchedSub ? (matchedSub.subjectName || matchedSub.name || '-') : '-'
       };
     });
-  })();
+  }, [students, liveLogs, dateLogs, reportData, qrSessionHistory, blacklistRules, allFacultySubjects]);
 
   const summaryReportData = (defaulterStudentList || []).map(std => {
     const semStr = std.semester ? `Sem ${std.semester}` : 'Sem 1';
@@ -1199,31 +1202,35 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     };
   });
 
-  const semDivFilteredList = defaulterStudentList.filter(std => {
-    if (appliedDefaulterSem !== 'ALL') {
-      const stdSem = String(std.semester || std.sem || '1').replace(/\D/g, '').trim();
-      if (stdSem !== String(appliedDefaulterSem).trim()) return false;
-    }
-    if (appliedDefaulterDiv !== 'ALL') {
-      const stdDiv = String(std.division || std.div || '').trim().toUpperCase();
-      if (stdDiv !== appliedDefaulterDiv.toUpperCase()) return false;
-    }
-    return true;
-  });
+  const semDivFilteredList = useMemo(() => {
+    return (defaulterStudentList || []).filter(std => {
+      if (appliedDefaulterSem !== 'ALL') {
+        const stdSem = String(std.semester || std.sem || '1').replace(/\D/g, '').trim();
+        if (stdSem !== String(appliedDefaulterSem).trim()) return false;
+      }
+      if (appliedDefaulterDiv !== 'ALL') {
+        const stdDiv = String(std.division || std.div || '').trim().toUpperCase();
+        if (stdDiv !== appliedDefaulterDiv.toUpperCase()) return false;
+      }
+      return true;
+    });
+  }, [defaulterStudentList, appliedDefaulterSem, appliedDefaulterDiv]);
 
   const totalDefaultersCount = semDivFilteredList.filter(s => s.statusKey === 'CRITICAL').length;
   const warningsIssuedCount = semDivFilteredList.filter(s => s.statusKey === 'WARNING').length;
 
-  const filteredDefaulterList = semDivFilteredList.filter(std => {
-    if (appliedDefaulterStatus === 'CRITICAL') {
-      return std.statusKey === 'CRITICAL';
-    }
-    if (appliedDefaulterStatus === 'WARNING') {
-      return std.statusKey === 'WARNING';
-    }
-    // 'ALL' -> Exclude Safe level students completely from defaulters list
-    return std.statusKey !== 'SAFE';
-  });
+  const filteredDefaulterList = useMemo(() => {
+    return semDivFilteredList.filter(std => {
+      if (appliedDefaulterStatus === 'CRITICAL') {
+        return std.statusKey === 'CRITICAL';
+      }
+      if (appliedDefaulterStatus === 'WARNING') {
+        return std.statusKey === 'WARNING';
+      }
+      // 'ALL' -> Exclude Safe level students completely from defaulters list
+      return std.statusKey !== 'SAFE';
+    });
+  }, [semDivFilteredList, appliedDefaulterStatus]);
 
   const handleOpenAddSubjectModal = () => {
     setNewSubName('');
@@ -4311,6 +4318,24 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
   return (
     <div className="admin-dashboard-root">
+      {/* Mobile Floating Bottom-Right Hamburger Menu Button */}
+      <button
+        type="button"
+        className="admin-floating-mobile-toggle"
+        onClick={() => setMobileSidebarOpen(!mobileSidebarOpen)}
+        title={mobileSidebarOpen ? "Close Menu" : "Open Menu"}
+      >
+        {mobileSidebarOpen ? <X size={26} strokeWidth={2.5} /> : <Menu size={26} strokeWidth={2.5} />}
+      </button>
+
+      {/* Mobile Backdrop Overlay when sidebar is open */}
+      {mobileSidebarOpen && (
+        <div
+          className="admin-mobile-backdrop"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
+
       <div className="admin-layout">
         <aside className={`admin-sidebar ${mobileSidebarOpen ? 'open' : ''}`}>
           <div className="admin-sidebar-brand">
@@ -5986,14 +6011,14 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       />
                     </div>
 
-                    <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                      <input
-                        type="file"
-                        accept=".csv,.xlsx"
-                        ref={subjectFileInputRef}
-                        onChange={handleSubjectImportFile}
-                        style={{ display: 'none' }}
-                      />
+                    <input
+                      type="file"
+                      accept=".csv,.xlsx"
+                      ref={subjectFileInputRef}
+                      onChange={handleSubjectImportFile}
+                      style={{ display: 'none' }}
+                    />
+                    <div className="admin-action-btn-group">
                       <button
                         onClick={handleDownloadSubjectSampleTemplate}
                         style={{
@@ -6012,7 +6037,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         }}
                         title="Download sample Excel file format for subject import"
                       >
-                        <FileSpreadsheet size={16} />
+                        <FileSpreadsheet size={16} color="#c084fc" />
                         <span>Sample Format</span>
                       </button>
 
@@ -6021,7 +6046,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         style={{
                           padding: '10px 16px',
                           fontSize: '0.88rem',
-                          fontWeight: '600',
+                          fontWeight: '700',
                           borderRadius: '12px',
                           border: 'none',
                           background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
@@ -6035,8 +6060,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         }}
                         title="Import subject records batch from CSV or Excel"
                       >
-                        <Upload size={16} />
-                        <span>Bulk Upload</span>
+                        <Upload size={16} color="#ffffff" />
+                        <span style={{ color: '#ffffff' }}>Bulk Upload</span>
                       </button>
 
                       <button
@@ -6044,7 +6069,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         style={{
                           padding: '10px 16px',
                           fontSize: '0.88rem',
-                          fontWeight: '600',
+                          fontWeight: '700',
                           borderRadius: '12px',
                           border: 'none',
                           background: 'linear-gradient(135deg, #10b981, #059669)',
@@ -6058,8 +6083,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         }}
                         title="Export subject records to Excel file"
                       >
-                        <Download size={16} />
-                        <span>Export</span>
+                        <Download size={16} color="#ffffff" />
+                        <span style={{ color: '#ffffff' }}>Export</span>
                       </button>
 
                       <button
@@ -6069,14 +6094,14 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           display: 'flex', alignItems: 'center', gap: '8px',
                           padding: '10px 18px', borderRadius: '12px', fontSize: '0.88rem', fontWeight: '700',
                           background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                          color: '#0f172a',
+                          color: '#ffffff',
                           boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
                           border: 'none',
                           cursor: 'pointer'
                         }}
                       >
-                        <Plus size={18} color="#0f172a" />
-                        Add Subject
+                        <Plus size={18} color="#ffffff" />
+                        <span style={{ color: '#ffffff' }}>Add Subject</span>
                       </button>
                     </div>
                   </div>
@@ -6223,13 +6248,17 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
               <div style={{
                 position: 'fixed',
                 top: 0, left: 0, right: 0, bottom: 0,
-                background: 'rgba(15, 23, 42, 0.65)',
-                backdropFilter: 'blur(8px)',
+                width: '100vw', width: '100dvw',
+                height: '100vh', height: '100dvh',
+                background: 'rgba(15, 23, 42, 0.75)',
+                backdropFilter: 'blur(12px)',
+                WebkitBackdropFilter: 'blur(12px)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                zIndex: 99999,
-                padding: '20px'
+                zIndex: 999999,
+                padding: '16px',
+                boxSizing: 'border-box'
               }}>
                 <div style={{
                   background: '#ffffff',
@@ -7246,14 +7275,14 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       style={{ paddingLeft: '40px' }}
                     />
                   </div>
-                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <input
-                      type="file"
-                      accept=".csv,.xlsx"
-                      ref={fileInputRef}
-                      onChange={handleImportFile}
-                      style={{ display: 'none' }}
-                    />
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx"
+                    ref={fileInputRef}
+                    onChange={handleImportFile}
+                    style={{ display: 'none' }}
+                  />
+                  <div className="admin-action-btn-group">
                     <button
                       onClick={handleDownloadStudentSampleTemplate}
                       style={{
@@ -7272,7 +7301,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       }}
                       title="Download sample Excel file format for student import"
                     >
-                      <FileSpreadsheet size={16} />
+                      <FileSpreadsheet size={16} color="#c084fc" />
                       <span>Sample Format</span>
                     </button>
 
@@ -7281,7 +7310,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       style={{
                         padding: '8px 16px',
                         fontSize: '0.85rem',
-                        fontWeight: '600',
+                        fontWeight: '700',
                         borderRadius: '8px',
                         border: 'none',
                         background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
@@ -7295,8 +7324,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       }}
                       title="Import student records batch from CSV/Excel"
                     >
-                      <Upload size={16} />
-                      <span>Bulk Upload</span>
+                      <Upload size={16} color="#ffffff" />
+                      <span style={{ color: '#ffffff' }}>Bulk Upload</span>
                     </button>
 
                     <button
@@ -7304,7 +7333,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       style={{
                         padding: '8px 16px',
                         fontSize: '0.85rem',
-                        fontWeight: '600',
+                        fontWeight: '700',
                         borderRadius: '8px',
                         border: 'none',
                         background: 'linear-gradient(135deg, #10b981, #059669)',
@@ -7318,12 +7347,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       }}
                       title="Export all student records to Excel file"
                     >
-                      <Download size={16} />
-                      <span>Export Data</span>
-                    </button>
-
-                    <button className="btn btn-primary" onClick={openAddModal}>
-                      <Plus size={16} /> Add Student
+                      <Download size={16} color="#ffffff" />
+                      <span style={{ color: '#ffffff' }}>Export Data</span>
                     </button>
 
                     <button
@@ -7345,8 +7370,12 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       }}
                       title="Promote all students to next semester (Sem 1..7 -> +1, Sem 8 -> Graduate & Remove)"
                     >
-                      <TrendingUp size={16} />
-                      <span>Promote</span>
+                      <TrendingUp size={16} color="#ffffff" />
+                      <span style={{ color: '#ffffff' }}>Promote</span>
+                    </button>
+
+                    <button className="btn btn-primary full-width-mobile" onClick={openAddModal} style={{ color: '#ffffff' }}>
+                      <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Student</span>
                     </button>
                     {selectedStudentIds.length > 0 && (
                       <button
@@ -7411,26 +7440,11 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     )}
                   </div>
 
-                  {/* Select All Toggle Button */}
-                  {filteredStudents.length > 0 && (
-                    <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-                      <button
-                        className="btn btn-secondary"
-                        onClick={toggleSelectAllStudents}
-                        style={{ fontSize: '0.82rem', padding: '6px 14px', gap: '8px' }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={filteredStudents.length > 0 && filteredStudents.every(s => selectedStudentIds.includes(s.id))}
-                          onChange={() => { }}
-                          style={{ cursor: 'pointer' }}
-                        />
-                        {filteredStudents.length > 0 && filteredStudents.every(s => selectedStudentIds.includes(s.id)) ? 'Deselect All' : 'Select All Students'}
-                      </button>
-                      <span style={{ fontSize: '0.82rem', color: '#c084fc', fontWeight: '600' }}>
-                        ({selectedStudentIds.length} Selected)
-                      </span>
-                    </div>
+                  {/* Selected count indicator */}
+                  {selectedStudentIds.length > 0 && (
+                    <span style={{ fontSize: '0.82rem', color: '#c084fc', fontWeight: '600' }}>
+                      ({selectedStudentIds.length} Selected)
+                    </span>
                   )}
                 </div>
 
@@ -7577,14 +7591,14 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       style={{ paddingLeft: '40px' }}
                     />
                   </div>
-                  <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
-                    <input
-                      type="file"
-                      accept=".csv,.xlsx"
-                      ref={facultyFileInputRef}
-                      onChange={handleFacultyImportFile}
-                      style={{ display: 'none' }}
-                    />
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx"
+                    ref={facultyFileInputRef}
+                    onChange={handleFacultyImportFile}
+                    style={{ display: 'none' }}
+                  />
+                  <div className="admin-action-btn-group">
                     <button
                       onClick={handleDownloadFacultySampleTemplate}
                       style={{
@@ -7603,7 +7617,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       }}
                       title="Download sample Excel file format for faculty import"
                     >
-                      <FileSpreadsheet size={16} />
+                      <FileSpreadsheet size={16} color="#c084fc" />
                       <span>Sample Format</span>
                     </button>
 
@@ -7612,7 +7626,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       style={{
                         padding: '8px 16px',
                         fontSize: '0.85rem',
-                        fontWeight: '600',
+                        fontWeight: '700',
                         borderRadius: '8px',
                         border: 'none',
                         background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
@@ -7626,8 +7640,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       }}
                       title="Import faculty batch from CSV or Excel"
                     >
-                      <Upload size={16} />
-                      <span>Bulk Upload</span>
+                      <Upload size={16} color="#ffffff" />
+                      <span style={{ color: '#ffffff' }}>Bulk Upload</span>
                     </button>
 
                     <button
@@ -7635,7 +7649,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       style={{
                         padding: '8px 16px',
                         fontSize: '0.85rem',
-                        fontWeight: '600',
+                        fontWeight: '700',
                         borderRadius: '8px',
                         border: 'none',
                         background: 'linear-gradient(135deg, #10b981, #059669)',
@@ -7649,12 +7663,12 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       }}
                       title="Export faculty records to Excel file"
                     >
-                      <Download size={16} />
-                      <span>Export</span>
+                      <Download size={16} color="#ffffff" />
+                      <span style={{ color: '#ffffff' }}>Export</span>
                     </button>
 
-                    <button className="btn btn-primary" onClick={openAddFacultyModal}>
-                      <Plus size={16} /> Add Faculty
+                    <button className="btn btn-primary" onClick={openAddFacultyModal} style={{ color: '#ffffff' }}>
+                      <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Faculty</span>
                     </button>
                   </div>
                 </div>
@@ -7742,7 +7756,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                 <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: 1.8 }}>
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
-                      <h3 style={{ ...styles.cardTitle, margin: 0 }}>Today's QR Sessions History</h3>
+                      <h3 style={{ ...styles.cardTitle, margin: 0 }}>Today's Session History</h3>
                       <button
                         onClick={handleClearQrSessions}
                         style={{
@@ -7753,7 +7767,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         }}
                         title="Clear old history and restart session count from #1"
                       >
-                        <Trash2 size={14} /> Clear History & Reset Count
+                        <Trash2 size={14} /> Clear History
                       </button>
                     </div>
 
@@ -8237,7 +8251,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                             onClick={() => {
                               Swal.fire({
                                 title: 'Send Bulk SMS Notices?',
-                                text: `Are you sure you want to send SMS attendance alerts to all ${filteredDefaulterList.length} student(s) in this list?`,
+                                text: `Are you sure you want to send SMS attendance alert notices to all ${filteredDefaulterList.length} student(s) in this list?`,
                                 icon: 'warning',
                                 showCancelButton: true,
                                 confirmButtonColor: '#e11d48',
@@ -8245,8 +8259,36 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                                 confirmButtonText: `📱 Send SMS to All (${filteredDefaulterList.length})`
                               }).then((result) => {
                                 if (result.isConfirmed) {
-                                  showToast(`📱 Bulk SMS sent successfully to all ${filteredDefaulterList.length} students!`, 'success');
-                                  Swal.fire('SMS Sent Successfully!', `Attendance alert SMS notices have been dispatched to all ${filteredDefaulterList.length} students.`, 'success');
+                                  try {
+                                    const existing = JSON.parse(localStorage.getItem('attendance_system_notices') || '[]');
+                                    const newNotices = filteredDefaulterList.map((s, idx) => {
+                                      const pct = parseFloat(s.percentage) || 0;
+                                      const ruleAction = pct < 60
+                                        ? 'Critical Defaulter Status. Please contact your HOD / Class Coordinator immediately along with your parent/guardian.'
+                                        : 'Attendance Warning Status. Please report to your Subject Faculty to make up for missed lectures.';
+                                      const msg = `Dear ${s.name}, your attendance is currently ${s.percentage}%, which is below the mandatory 75% requirement. ${ruleAction}`;
+
+                                      return {
+                                        id: 'notice_' + Date.now() + '_' + idx + '_' + Math.floor(Math.random() * 1000),
+                                        studentEnrollment: s.enrollment_no || s.email || s.id,
+                                        studentName: s.name,
+                                        title: s.statusKey === 'CRITICAL' ? '⚠️ Attendance Defaulter Critical Notice' : '⚠️ Low Attendance Warning Notice',
+                                        category: s.statusKey === 'CRITICAL' ? 'DEFAULTER NOTICE' : 'ATTENDANCE WARNING',
+                                        tagColor: s.statusKey === 'CRITICAL' ? '#ef4444' : '#f59e0b',
+                                        date: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
+                                        body: msg,
+                                        timestamp: Date.now()
+                                      };
+                                    });
+
+                                    localStorage.setItem('attendance_system_notices', JSON.stringify([...newNotices, ...existing]));
+                                    window.dispatchEvent(new Event('notices_updated'));
+                                  } catch (e) {
+                                    console.error('Error saving notices:', e);
+                                  }
+
+                                  showToast(`📱 Bulk SMS notices sent to all ${filteredDefaulterList.length} students!`, 'success');
+                                  Swal.fire('SMS Notices Dispatched!', `Attendance warning notices have been sent to all ${filteredDefaulterList.length} students and posted to their notice boards.`, 'success');
                                 }
                               });
                             }}
@@ -8311,89 +8353,177 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       )}
                     </div>
 
-                    <div className="custom-table-container" style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
-                      {filteredDefaulterList.length === 0 ? (
-                        <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b' }}>
-                          <CheckCircle size={44} color="#10b981" style={{ marginBottom: '10px', opacity: 0.8 }} />
-                          <h5 style={{ fontSize: '1rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>No Defaulters Found!</h5>
-                          <p style={{ fontSize: '0.82rem', margin: 0 }}>No student records match the selected subject and status criteria.</p>
+                    {(() => {
+                      const DEFAULTER_PAGE_SIZE = 25;
+                      const totalDefaulterCount = filteredDefaulterList.length;
+                      const totalDefaulterPages = Math.ceil(totalDefaulterCount / DEFAULTER_PAGE_SIZE) || 1;
+                      const currentDefaulterPage = Math.min(defaulterPage, totalDefaulterPages);
+                      const startDefIndex = (currentDefaulterPage - 1) * DEFAULTER_PAGE_SIZE;
+                      const paginatedDefaulterList = filteredDefaulterList.slice(startDefIndex, startDefIndex + DEFAULTER_PAGE_SIZE);
+
+                      return (
+                        <div className="custom-table-container" style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
+                          {totalDefaulterCount === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b' }}>
+                              <CheckCircle size={44} color="#10b981" style={{ marginBottom: '10px', opacity: 0.8 }} />
+                              <h5 style={{ fontSize: '1rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>No Defaulters Found!</h5>
+                              <p style={{ fontSize: '0.82rem', margin: 0 }}>No student records match the selected subject and status criteria.</p>
+                            </div>
+                          ) : (
+                            <>
+                              <table className="custom-table">
+                                <thead>
+                                  <tr>
+                                    <th style={{ width: '80px', textAlign: 'center' }}>Roll No</th>
+                                    <th>Student Name</th>
+                                    <th>Sem & Div</th>
+                                    <th style={{ textAlign: 'center' }}>Lectures Attended</th>
+                                    <th style={{ textAlign: 'center' }}>Attendance %</th>
+                                    <th style={{ textAlign: 'center' }}>Status</th>
+                                    <th style={{ textAlign: 'center' }}>Action</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {paginatedDefaulterList.map((s, i) => (
+                                    <tr key={s.id || (startDefIndex + i)}>
+                                      <td style={{ textAlign: 'center', fontWeight: '700', color: '#09355c' }}>
+                                        {s.roll_no || s.rollNo || (startDefIndex + i + 1)}
+                                      </td>
+                                      <td style={{ fontWeight: '600', color: '#0f172a' }}>{s.name}</td>
+                                      <td>Sem {s.semester || '1'} {s.division ? `(Div ${s.division})` : ''}</td>
+                                      <td style={{ textAlign: 'center', fontWeight: '600' }}>{s.attendedLectures} / {s.totalLectures}</td>
+                                      <td style={{ textAlign: 'center' }}>
+                                        <span style={{
+                                          padding: '4px 10px',
+                                          borderRadius: '12px',
+                                          fontSize: '0.82rem',
+                                          fontWeight: '800',
+                                          background: s.percentage < 75 ? '#fef2f2' : '#fffbeb',
+                                          color: s.percentage < 75 ? '#dc2626' : '#d97706',
+                                          border: `1px solid ${s.percentage < 75 ? '#fca5a5' : '#fcd34d'}`
+                                        }}>
+                                          {s.percentage}%
+                                        </span>
+                                      </td>
+                                      <td style={{ textAlign: 'center' }}>
+                                        <span style={{
+                                          padding: '4px 14px',
+                                          borderRadius: '20px',
+                                          fontSize: '0.78rem',
+                                          fontWeight: '700',
+                                          background: s.statusKey === 'CRITICAL' ? '#dc2626' : '#f59e0b',
+                                          color: '#ffffff',
+                                          boxShadow: `0 2px 8px ${s.statusKey === 'CRITICAL' ? 'rgba(220, 38, 38, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`
+                                        }}>
+                                          {s.statusKey === 'CRITICAL' ? 'Defaulter' : 'Warning'}
+                                        </span>
+                                      </td>
+                                      <td style={{ textAlign: 'center' }}>
+                                        <button
+                                          onClick={() => {
+                                            const matchedRule = blacklistRules.find(r => (parseFloat(s.percentage) || 0) < r.minPercentage);
+                                            const ruleAction = matchedRule ? matchedRule.action : 'Dear Student, your attendance is below requirement. Please contact HOD immediately.';
+                                            const smsMessage = `Dear ${s.name}, your attendance is currently ${s.percentage}%, which is below the mandatory 75% requirement. Action Required: ${ruleAction}`;
+
+                                            try {
+                                              const existing = JSON.parse(localStorage.getItem('attendance_system_notices') || '[]');
+                                              const newNotice = {
+                                                id: 'notice_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+                                                studentEnrollment: s.enrollment_no || s.email || s.id,
+                                                studentName: s.name,
+                                                title: s.statusKey === 'CRITICAL' ? '⚠️ Attendance Defaulter Critical Notice' : '⚠️ Low Attendance Warning Notice',
+                                                category: s.statusKey === 'CRITICAL' ? 'DEFAULTER NOTICE' : 'ATTENDANCE WARNING',
+                                                tagColor: s.statusKey === 'CRITICAL' ? '#ef4444' : '#f59e0b',
+                                                date: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
+                                                body: smsMessage,
+                                                timestamp: Date.now()
+                                              };
+
+                                              localStorage.setItem('attendance_system_notices', JSON.stringify([newNotice, ...existing]));
+                                              window.dispatchEvent(new Event('notices_updated'));
+                                            } catch (e) {
+                                              console.error('Error saving notice:', e);
+                                            }
+
+                                            showToast(`📱 SMS Notice sent to ${s.name}`, 'success');
+                                            Swal.fire({
+                                              title: 'Notice Dispatched!',
+                                              text: `Attendance warning notice has been sent to ${s.name}. It is now live on their student notice board.`,
+                                              icon: 'success',
+                                              confirmButtonColor: '#d97706'
+                                            });
+                                          }}
+                                          style={{
+                                            padding: '5px 12px',
+                                            fontSize: '0.78rem',
+                                            fontWeight: '600',
+                                            borderRadius: '6px',
+                                            border: '1px solid #cbd5e1',
+                                            background: '#ffffff',
+                                            color: '#334155',
+                                            cursor: 'pointer'
+                                          }}
+                                          title="Send Custom SMS Notice to Student"
+                                        >
+                                          Send SMS Notice
+                                        </button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+
+                              {totalDefaulterPages > 1 && (
+                                <div style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'space-between',
+                                  padding: '12px 16px',
+                                  background: '#f8fafc',
+                                  borderTop: '1px solid #e2e8f0',
+                                  flexWrap: 'wrap',
+                                  gap: '10px'
+                                }}>
+                                  <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: '600' }}>
+                                    Showing {startDefIndex + 1}–{Math.min(startDefIndex + DEFAULTER_PAGE_SIZE, totalDefaulterCount)} of {totalDefaulterCount} defaulter(s)
+                                  </span>
+
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <button
+                                      disabled={currentDefaulterPage <= 1}
+                                      onClick={() => setDefaulterPage(p => Math.max(1, p - 1))}
+                                      style={{
+                                        padding: '6px 14px', borderRadius: '8px', fontSize: '0.82rem', fontWeight: '700',
+                                        border: '1px solid #cbd5e1', background: currentDefaulterPage <= 1 ? '#f1f5f9' : '#ffffff',
+                                        color: currentDefaulterPage <= 1 ? '#94a3b8' : '#0f172a', cursor: currentDefaulterPage <= 1 ? 'default' : 'pointer'
+                                      }}
+                                    >
+                                      Previous
+                                    </button>
+
+                                    <span style={{ fontSize: '0.82rem', fontWeight: '700', color: '#0f172a', padding: '0 4px' }}>
+                                      Page {currentDefaulterPage} of {totalDefaulterPages}
+                                    </span>
+
+                                    <button
+                                      disabled={currentDefaulterPage >= totalDefaulterPages}
+                                      onClick={() => setDefaulterPage(p => Math.min(totalDefaulterPages, p + 1))}
+                                      style={{
+                                        padding: '6px 14px', borderRadius: '8px', fontSize: '0.82rem', fontWeight: '700',
+                                        border: '1px solid #cbd5e1', background: currentDefaulterPage >= totalDefaulterPages ? '#f1f5f9' : '#ffffff',
+                                        color: currentDefaulterPage >= totalDefaulterPages ? '#94a3b8' : '#0f172a', cursor: currentDefaulterPage >= totalDefaulterPages ? 'default' : 'pointer'
+                                      }}
+                                    >
+                                      Next
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </>
+                          )}
                         </div>
-                      ) : (
-                        <table className="custom-table">
-                          <thead>
-                            <tr>
-                              <th style={{ width: '80px', textAlign: 'center' }}>Roll No</th>
-                              <th>Student Name</th>
-                              <th>Sem & Div</th>
-                              <th style={{ textAlign: 'center' }}>Lectures Attended</th>
-                              <th style={{ textAlign: 'center' }}>Attendance %</th>
-                              <th style={{ textAlign: 'center' }}>Status</th>
-                              <th style={{ textAlign: 'center' }}>Action</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {filteredDefaulterList.map((s, i) => (
-                              <tr key={s.id || i}>
-                                <td style={{ textAlign: 'center', fontWeight: '700', color: '#09355c' }}>
-                                  {s.roll_no || s.rollNo || (i + 1)}
-                                </td>
-                                <td style={{ fontWeight: '600', color: '#0f172a' }}>{s.name}</td>
-                                <td>Sem {s.semester || '1'} {s.division ? `(Div ${s.division})` : ''}</td>
-                                <td style={{ textAlign: 'center', fontWeight: '600' }}>{s.attendedLectures} / {s.totalLectures}</td>
-                                <td style={{ textAlign: 'center' }}>
-                                  <span style={{
-                                    padding: '4px 10px',
-                                    borderRadius: '12px',
-                                    fontSize: '0.82rem',
-                                    fontWeight: '800',
-                                    background: s.percentage < 75 ? '#fef2f2' : '#fffbeb',
-                                    color: s.percentage < 75 ? '#dc2626' : '#d97706',
-                                    border: `1px solid ${s.percentage < 75 ? '#fca5a5' : '#fcd34d'}`
-                                  }}>
-                                    {s.percentage}%
-                                  </span>
-                                </td>
-                                <td style={{ textAlign: 'center' }}>
-                                  <span style={{
-                                    padding: '4px 14px',
-                                    borderRadius: '20px',
-                                    fontSize: '0.78rem',
-                                    fontWeight: '700',
-                                    background: s.statusKey === 'CRITICAL' ? '#dc2626' : '#f59e0b',
-                                    color: '#ffffff',
-                                    boxShadow: `0 2px 8px ${s.statusKey === 'CRITICAL' ? 'rgba(220, 38, 38, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`
-                                  }}>
-                                    {s.statusKey === 'CRITICAL' ? 'Defaulter' : 'Warning'}
-                                  </span>
-                                </td>
-                                <td style={{ textAlign: 'center' }}>
-                                  <button
-                                    onClick={() => {
-                                      const matchedRule = blacklistRules.find(r => (parseFloat(s.percentage) || 0) < r.minPercentage);
-                                      const smsMessage = matchedRule ? matchedRule.action : 'Dear Student, your attendance is below requirement. Please contact HOD.';
-                                      showToast(`📱 SMS sent to ${s.name}: "${smsMessage}"`, 'success');
-                                    }}
-                                    style={{
-                                      padding: '5px 12px',
-                                      fontSize: '0.78rem',
-                                      fontWeight: '600',
-                                      borderRadius: '6px',
-                                      border: '1px solid #cbd5e1',
-                                      background: '#ffffff',
-                                      color: '#334155',
-                                      cursor: 'pointer'
-                                    }}
-                                    title="Send Custom SMS Notice to Student"
-                                  >
-                                    Send SMS Notice
-                                  </button>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      )}
-                    </div>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -8701,8 +8831,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   </div>
                 </div>
 
-                {/* Summary Cards Grid at Bottom (3-3 per row) */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+                {/* Summary Cards Grid at Bottom (2-by-2 per row on mobile) */}
+                <div className="admin-reports-stat-grid">
                   {/* 1. Total Student */}
                   <div className="glass-panel stat-card-v2" style={{ border: '1px solid var(--panel-border)', justifyContent: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
@@ -9380,18 +9510,18 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
           {deleteConfirmState.isOpen && (
             <div style={{
               position: 'fixed',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              zIndex: 99999,
-              background: 'rgba(0, 0, 0, 0.75)',
-              backdropFilter: 'blur(8px)',
-              WebkitBackdropFilter: 'blur(8px)',
+              top: 0, left: 0, right: 0, bottom: 0,
+              width: '100vw', width: '100dvw',
+              height: '100vh', height: '100dvh',
+              zIndex: 999999,
+              background: 'rgba(15, 23, 42, 0.75)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              padding: '20px'
+              padding: '16px',
+              boxSizing: 'border-box'
             }}>
               <div className="custom-confirm-modal" style={{
                 width: '440px',
@@ -9703,13 +9833,17 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             <div style={{
               position: 'fixed',
               top: 0, left: 0, right: 0, bottom: 0,
-              background: 'rgba(15, 23, 42, 0.65)',
-              backdropFilter: 'blur(8px)',
+              width: '100vw', width: '100dvw',
+              height: '100vh', height: '100dvh',
+              background: 'rgba(15, 23, 42, 0.75)',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              zIndex: 99999,
-              padding: '20px'
+              zIndex: 999999,
+              padding: '16px',
+              boxSizing: 'border-box'
             }}>
               <div style={{
                 background: '#ffffff',
@@ -9717,6 +9851,9 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                 borderRadius: '20px',
                 width: '100%',
                 maxWidth: '460px',
+                maxHeight: '90vh',
+                display: 'flex',
+                flexDirection: 'column',
                 boxShadow: '0 25px 60px rgba(0, 0, 0, 0.2), 0 0 20px rgba(225, 29, 72, 0.15)',
                 overflow: 'hidden',
                 animation: 'modalSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1)'
@@ -9728,7 +9865,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
-                  background: '#fafafa'
+                  background: '#fafafa',
+                  flexShrink: 0
                 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <div style={{
@@ -9753,8 +9891,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                 </div>
 
                 {/* Modal Form */}
-                <form onSubmit={handleSaveRule}>
-                  <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <form onSubmit={handleSaveRule} style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+                  <div style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', flex: 1, maxHeight: '65vh' }}>
 
                     {/* Rule Name */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -9907,7 +10045,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   {/* Modal Footer */}
                   <div style={{
                     padding: '16px 24px', background: '#f8fafc', borderTop: '1px solid #f1f5f9',
-                    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '12px'
+                    display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '12px',
+                    flexShrink: 0
                   }}>
                     <button
                       type="button"
@@ -10261,13 +10400,19 @@ const styles = {
     left: 0,
     right: 0,
     bottom: 0,
-    background: 'rgba(0,0,0,0.7)',
-    backdropFilter: 'blur(6px)',
+    width: '100vw',
+    width: '100dvw',
+    height: '100vh',
+    height: '100dvh',
+    background: 'rgba(15, 23, 42, 0.75)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 999,
-    padding: '16px'
+    zIndex: 999999,
+    padding: '16px',
+    boxSizing: 'border-box'
   },
   modalContent: {
     width: '100%',

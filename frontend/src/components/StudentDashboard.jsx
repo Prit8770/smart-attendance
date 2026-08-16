@@ -107,6 +107,48 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   const removeToast = (id) => {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
+
+  // Dynamic Notices state (loaded from admin defaulters sent notices)
+  const [studentNotices, setStudentNotices] = useState([]);
+
+  const loadStudentNotices = () => {
+    try {
+      const allNotices = JSON.parse(localStorage.getItem('attendance_system_notices') || '[]');
+      const filtered = allNotices.filter(n => {
+        if (!n) return false;
+        if (n.studentEnrollment === 'ALL') return true;
+        if (!user) return false;
+
+        const uId = String(user.id || '').toLowerCase();
+        const uEnroll = String(user.enrollment_no || '').toLowerCase();
+        const uEmail = String(user.email || '').toLowerCase();
+        const uName = String(user.name || '').toLowerCase();
+
+        const target = String(n.studentEnrollment || '').toLowerCase();
+        const targetName = String(n.studentName || '').toLowerCase();
+
+        return (
+          (uEnroll && target === uEnroll) ||
+          (uEmail && target === uEmail) ||
+          (uId && target === uId) ||
+          (uName && targetName === uName)
+        );
+      });
+      setStudentNotices(filtered);
+    } catch (err) {
+      setStudentNotices([]);
+    }
+  };
+
+  useEffect(() => {
+    loadStudentNotices();
+    window.addEventListener('storage', loadStudentNotices);
+    window.addEventListener('notices_updated', loadStudentNotices);
+    return () => {
+      window.removeEventListener('storage', loadStudentNotices);
+      window.removeEventListener('notices_updated', loadStudentNotices);
+    };
+  }, [user]);
   const [attendanceData, setAttendanceData] = useState(null);
   const [trendLoading, setTrendLoading] = useState(true);
   const [subjectBreakdown, setSubjectBreakdown] = useState([]);
@@ -1926,28 +1968,62 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                     <Bell size={22} color="#ffb703" />
                     Notice Board & Campus Announcements
                   </h2>
-                  <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Updated Today</span>
+                  <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                    {studentNotices.length > 0 ? `${studentNotices.length} Notice(s)` : 'Live Feed'}
+                  </span>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                  {[
-                    { id: 1, title: 'Sem 2 Mid-Term Practical Exam Schedule Released', category: 'EXAM CELL', tagColor: '#38bdf8', date: 'August 10, 2026', body: 'Mid-term practical examinations for BCA Semester 2 will commence from August 25. Detailed batch slots are published on the department notice board.' },
-                    { id: 2, title: 'Compulsory 75% Attendance Metric Enforcement', category: 'ATTENDANCE POLICY', tagColor: '#ffb703', date: 'August 08, 2026', body: 'As per University guidelines, students falling below 75% overall attendance will not be issued end-semester exam hall tickets. Please monitor your live attendance status.' },
-                    { id: 3, title: 'Annual Inter-College Hackathon & Web Development Competition', category: 'STUDENT EVENT', tagColor: '#34d399', date: 'August 05, 2026', body: 'Registrations are open for the annual EduMark Tech Hackathon 2026. Interested students can register through the student council portal.' },
-                    { id: 4, title: 'College Holiday Notice - Independence Day', category: 'HOLIDAY', tagColor: '#a855f7', date: 'August 01, 2026', body: 'The college will remain closed on August 15 on account of Independence Day. Regular lectures will resume on August 16.' }
-                  ].map((notice) => (
-                    <div key={notice.id} style={{ background: 'rgba(255, 255, 255, 0.03)', border: '1px solid rgba(255, 255, 255, 0.07)', borderRadius: '14px', padding: '18px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                        <span style={{ fontSize: '0.72rem', fontWeight: '700', color: notice.tagColor, background: `${notice.tagColor}22`, padding: '2px 8px', borderRadius: '6px', border: `1px solid ${notice.tagColor}44` }}>
-                          {notice.category}
-                        </span>
-                        <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>{notice.date}</span>
-                      </div>
-                      <h4 style={{ fontSize: '1rem', fontWeight: '600', color: '#ffffff', margin: 0 }}>{notice.title}</h4>
-                      <p style={{ fontSize: '0.86rem', color: '#cbd5e1', margin: 0, lineHeight: '1.5' }}>{notice.body}</p>
-                    </div>
-                  ))}
-                </div>
+                {studentNotices.length === 0 ? (
+                  <div style={{ padding: '40px 20px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px', background: 'rgba(255, 255, 255, 0.02)', borderRadius: '14px', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+                    <Bell size={48} color="#94a3b8" style={{ opacity: 0.3 }} />
+                    <h3 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#ffffff', margin: 0 }}>
+                      No Notices Received Yet
+                    </h3>
+                    <p style={{ fontSize: '0.85rem', color: '#94a3b8', margin: 0, maxWidth: '420px', lineHeight: '1.4' }}>
+                      You have not received any attendance warning or defaulter notices from the administration yet.
+                    </p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                    {studentNotices.map((notice) => {
+                      const isCritical = notice.tagColor === '#ef4444' || notice.category === 'DEFAULTER NOTICE';
+                      return (
+                        <div key={notice.id} style={{
+                          background: '#ffffff',
+                          border: `1.5px solid ${isCritical ? '#fca5a5' : '#fde68a'}`,
+                          borderRadius: '14px',
+                          padding: '18px 20px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '10px',
+                          boxShadow: '0 4px 14px rgba(0, 0, 0, 0.04)'
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                            <span style={{
+                              fontSize: '0.74rem',
+                              fontWeight: '800',
+                              color: isCritical ? '#dc2626' : '#d97706',
+                              background: isCritical ? '#fee2e2' : '#fef3c7',
+                              padding: '3px 10px',
+                              borderRadius: '6px',
+                              border: `1px solid ${isCritical ? '#fca5a5' : '#fcd34d'}`
+                            }}>
+                              {notice.category || 'ATTENDANCE WARNING'}
+                            </span>
+                            <span style={{ fontSize: '0.8rem', color: '#475569', fontWeight: '600' }}>{notice.date}</span>
+                          </div>
+                          <h4 style={{ fontSize: '1.02rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <ShieldAlert size={18} color={isCritical ? '#dc2626' : '#d97706'} />
+                            {notice.title}
+                          </h4>
+                          <p style={{ fontSize: '0.92rem', color: '#0f172a', fontWeight: '600', margin: 0, lineHeight: '1.55' }}>
+                            {notice.body}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2046,8 +2122,8 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                     transition: 'all 0.2s ease'
                   }}
                 >
-                  <LogOut size={20} />
-                  <span>Sign Out of Account</span>
+                  <LogOut size={20} color="#ffffff" />
+                  <span style={{ color: '#ffffff' }}>Sign Out of Account</span>
                 </button>
               </div>
             </div>
