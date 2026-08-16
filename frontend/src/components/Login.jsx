@@ -151,7 +151,7 @@ export default function Login({ onLoginSuccess, onBack }) {
               <Mail size={18} style={styles.inputIcon} />
               <input
                 type="text"
-                className="glass-input"
+                className="glass-input login-input-with-icon"
                 placeholder="Enter Your Email ID (Gmail)"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
@@ -159,7 +159,7 @@ export default function Login({ onLoginSuccess, onBack }) {
                 autoComplete="username email"
                 name="username"
                 id="username"
-                style={{ paddingLeft: '44px' }}
+                style={{ paddingLeft: '46px' }}
               />
             </div>
           </div>
@@ -172,7 +172,7 @@ export default function Login({ onLoginSuccess, onBack }) {
               <KeyRound size={18} style={styles.inputIcon} />
               <input
                 type={showPassword ? 'text' : 'password'}
-                className="glass-input"
+                className="glass-input login-input-with-icon"
                 placeholder="Enter your password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -180,7 +180,7 @@ export default function Login({ onLoginSuccess, onBack }) {
                 autoComplete="current-password"
                 name="password"
                 id="password"
-                style={{ paddingLeft: '44px', paddingRight: '44px', width: '100%' }}
+                style={{ paddingLeft: '46px', paddingRight: '44px', width: '100%' }}
               />
               <button
                 type="button"
@@ -190,12 +190,13 @@ export default function Login({ onLoginSuccess, onBack }) {
                   right: '12px',
                   background: 'transparent',
                   border: 'none',
-                  color: 'var(--text-muted)',
+                  color: '#94a3b8',
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  padding: '4px'
+                  padding: '4px',
+                  zIndex: 2
                 }}
                 title={showPassword ? "Hide Password" : "Show Password"}
               >
@@ -384,8 +385,10 @@ const styles = {
   },
   inputIcon: {
     position: 'absolute',
-    left: '16px',
-    color: 'var(--text-muted)'
+    left: '14px',
+    color: '#94a3b8',
+    pointerEvents: 'none',
+    zIndex: 2
   },
   errorAlert: {
     background: 'rgba(239, 68, 68, 0.1)',

@@ -2961,8 +2961,14 @@ div[style*="cursor:pointer"],
   input[type="time"],
   select {
     font-size: 16px !important;
-    padding: 10px 12px !important;
+    padding-top: 10px !important;
+    padding-bottom: 10px !important;
     border-radius: 10px !important;
+  }
+
+  .login-input-with-icon,
+  input.login-input-with-icon {
+    padding-left: 46px !important;
   }
 
   /* Stat Card Grids */
