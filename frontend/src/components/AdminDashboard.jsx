@@ -9967,6 +9967,41 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     </div>
                   </div>
 
+                  {/* CARD 4: ACCOUNT ACTIONS / SIGN OUT (MOBILE ONLY) */}
+                  <div className="glass-panel mobile-only-signout-card" style={{ padding: '24px 30px', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', gridColumn: '1 / -1', background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '16px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                      <div style={{ background: 'rgba(239, 68, 68, 0.15)', padding: '12px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <LogOut size={24} color="#ef4444" />
+                      </div>
+                      <div>
+                        <h3 style={{ ...styles.cardTitle, margin: 0, color: 'var(--text-primary)' }}>Sign Out of Account</h3>
+                        <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0, marginTop: '4px' }}>Safely end your current session</p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="btn btn-danger"
+                      onClick={onLogout}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
+                        color: '#ffffff',
+                        border: 'none',
+                        padding: '10px 22px',
+                        borderRadius: '10px',
+                        fontWeight: '700',
+                        boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <LogOut size={18} color="#ffffff" />
+                      <span style={{ color: '#ffffff' }}>Sign Out</span>
+                    </button>
+                  </div>
+
                 </div>
               </div>
             )}
@@ -10047,9 +10082,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         }}
                         onBlur={() => {
                           setEnrollmentTouched(true);
-                          if (!/^\d{10}$/.test(studentForm.enrollment_no || '')) {
-                            showToast('Please enter valid 10-digit enrollment number', 'warning', 3000);
-                          }
                         }}
                         required
                         pattern="^\d{10}$"
@@ -10095,11 +10127,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         }}
                         onBlur={() => {
                           setNameTouched(true);
-                          if (!studentForm.name || !studentForm.name.trim()) {
-                            showToast('Please enter Student Full Name', 'warning', 3000);
-                          } else if (!/^[A-Za-z\s.'-]+$/.test(studentForm.name.trim())) {
-                            showToast('Student Name should contain letters only', 'warning', 3000);
-                          }
                         }}
                         required
                         tabIndex={3}
@@ -10195,9 +10222,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         }}
                         onBlur={() => {
                           setMobileTouched(true);
-                          if (!/^\d{10}$/.test(studentForm.mobile || '')) {
-                            showToast('Please enter valid 10-digit mobile number', 'warning', 3000);
-                          }
                         }}
                         required
                         pattern="^\d{10}$"
@@ -10392,9 +10416,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         tabIndex={2}
                         onBlur={(e) => {
                           const val = e.target.value.trim();
-                          if (!val) {
-                            showToast('Email ID is required for faculty members', 'warning', 3000);
-                          } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
+                          if (val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
                             showToast('Please enter a valid email address (e.g. faculty@college.com)', 'warning', 3000);
                           }
                         }}

@@ -2147,6 +2147,10 @@ div[style*="cursor:pointer"],
   box-shadow: 0 2px 8px rgba(239, 68, 68, 0.15);
 }
 
+.mobile-only-signout-card {
+  display: none !important;
+}
+
 .admin-logout-btn:hover {
   background: #dc2626;
   border-color: #dc2626;
@@ -2949,19 +2953,11 @@ div[style*="cursor:pointer"],
   }
 
   .admin-logout-btn {
+    display: none !important;
+  }
+
+  .mobile-only-signout-card {
     display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-    gap: 8px !important;
-    width: 100% !important;
-    padding: 10px 16px !important;
-    border-radius: 10px !important;
-    background: rgba(239, 68, 68, 0.18) !important;
-    border: 1px solid rgba(239, 68, 68, 0.35) !important;
-    color: #f87171 !important;
-    font-size: 0.88rem !important;
-    font-weight: 700 !important;
-    cursor: pointer !important;
   }
 
   .admin-mobile-toggle-btn {

@@ -4499,6 +4499,41 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
                   </label>
                 </div>
               </div>
+
+              {/* CARD 3: ACCOUNT ACTIONS / SIGN OUT (MOBILE ONLY) */}
+              <div className="glass-panel mobile-only-signout-card" style={{ ...styles.cardPadding, padding: isMobile ? '12px 16px' : '24px 30px', marginTop: '24px', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '16px', background: 'rgba(239, 68, 68, 0.05)', border: '1px solid rgba(239, 68, 68, 0.2)', borderRadius: '16px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                  <div style={{ background: 'rgba(239, 68, 68, 0.15)', padding: '12px', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <LogOut size={24} color="#ef4444" />
+                  </div>
+                  <div>
+                    <h3 style={{ ...styles.cardTitle, margin: 0, color: 'var(--text-primary)' }}>Sign Out of Account</h3>
+                    <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0, marginTop: '4px' }}>Safely end your faculty session</p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={onLogout}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
+                    color: '#ffffff',
+                    border: 'none',
+                    padding: '10px 22px',
+                    borderRadius: '10px',
+                    fontWeight: '700',
+                    boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
+                    cursor: 'pointer'
+                  }}
+                >
+                  <LogOut size={18} color="#ffffff" />
+                  <span style={{ color: '#ffffff' }}>Sign Out</span>
+                </button>
+              </div>
             </div>
           )}
 
