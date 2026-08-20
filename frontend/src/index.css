@@ -3402,6 +3402,11 @@ div[style*="cursor:pointer"],
     bottom: 24px !important;
   }
 
+  .student-floating-mobile-actions-toggle.floating-delete-btn {
+    background: linear-gradient(135deg, #ef4444, #b91c1c) !important;
+    box-shadow: 0 8px 24px rgba(239, 68, 68, 0.6), 0 4px 14px rgba(0, 0, 0, 0.25) !important;
+  }
+
   .student-floating-mobile-actions-toggle:active {
     transform: scale(0.92) !important;
   }

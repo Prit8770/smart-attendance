@@ -129,7 +129,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     setShowStudentMobileActions(false);
     setShowFacultyMobileActions(false);
     setShowSubjectMobileActions(false);
-  }, [activeTab]);
+  }, [activeTab, mobileSidebarOpen]);
 
   useEffect(() => {
     setStuPage(1);
@@ -4632,27 +4632,64 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         </button>
       )}
 
-      {/* Mobile Floating Bottom-Right Student Actions Toggle Button (Positioned right ABOVE the hamburger button when in Students tab, or at bottom 24px when hamburger is OFF) */}
-      {activeTab === 'students' && !isAnyAdminModalOpen && (
-        <button
-          type="button"
-          className={`student-floating-mobile-actions-toggle ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
-          onClick={() => setShowStudentMobileActions(!showStudentMobileActions)}
-          title={showStudentMobileActions ? "Close Student Actions" : "Open Student Actions"}
-          style={{
-            bottom: showFloatingMobileMenu ? '92px' : '24px'
-          }}
-        >
-          {showStudentMobileActions ? (
-            <ChevronRight size={26} strokeWidth={2.5} />
-          ) : (
-            <ChevronLeft size={26} strokeWidth={2.5} />
-          )}
-        </button>
+      {/* Mobile Floating Bottom-Right Student Actions Toggle Button (Replaced by Delete button when items are selected) */}
+      {activeTab === 'students' && !isAnyAdminModalOpen && !mobileSidebarOpen && (
+        selectedStudentIds.length > 0 ? (
+          <button
+            type="button"
+            className={`student-floating-mobile-actions-toggle floating-delete-btn ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+            onClick={() => handleBulkDeleteStudents(selectedStudentIds)}
+            title={`Delete Selected (${selectedStudentIds.length})`}
+            style={{
+              bottom: showFloatingMobileMenu ? '92px' : '24px',
+              background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
+              borderColor: '#ffffff',
+              boxShadow: '0 8px 24px rgba(239, 68, 68, 0.55), 0 4px 14px rgba(0, 0, 0, 0.25)',
+              position: 'relative'
+            }}
+          >
+            <Trash2 size={24} strokeWidth={2.5} color="#ffffff" />
+            <span
+              style={{
+                position: 'absolute',
+                top: '-5px',
+                right: '-5px',
+                background: '#ffffff',
+                color: '#ef4444',
+                fontSize: '0.75rem',
+                fontWeight: '800',
+                borderRadius: '10px',
+                padding: '2px 6px',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+                minWidth: '20px',
+                textAlign: 'center',
+                lineHeight: '1.2'
+              }}
+            >
+              {selectedStudentIds.length}
+            </span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={`student-floating-mobile-actions-toggle ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+            onClick={() => setShowStudentMobileActions(!showStudentMobileActions)}
+            title={showStudentMobileActions ? "Close Student Actions" : "Open Student Actions"}
+            style={{
+              bottom: showFloatingMobileMenu ? '92px' : '24px'
+            }}
+          >
+            {showStudentMobileActions ? (
+              <ChevronRight size={26} strokeWidth={2.5} />
+            ) : (
+              <ChevronLeft size={26} strokeWidth={2.5} />
+            )}
+          </button>
+        )
       )}
 
       {/* Mobile Backdrop Overlay for Student Actions */}
-      {activeTab === 'students' && !isAnyAdminModalOpen && showStudentMobileActions && (
+      {activeTab === 'students' && !isAnyAdminModalOpen && !mobileSidebarOpen && showStudentMobileActions && (
         <div
           className="student-mobile-actions-backdrop"
           onClick={() => setShowStudentMobileActions(false)}
@@ -4660,7 +4697,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       )}
 
       {/* Mobile Floating Action Buttons Container (Positioned dynamically based on hamburger setting) */}
-      {activeTab === 'students' && !isAnyAdminModalOpen && showStudentMobileActions && (
+      {activeTab === 'students' && !isAnyAdminModalOpen && !mobileSidebarOpen && showStudentMobileActions && (
         <div
           className={`admin-action-btn-group mobile-actions-open ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
           style={{
@@ -4765,26 +4802,63 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       )}
 
       {/* Mobile Floating Bottom-Right Faculty Actions Toggle Button */}
-      {activeTab === 'faculty' && !isAnyAdminModalOpen && (
-        <button
-          type="button"
-          className={`student-floating-mobile-actions-toggle ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
-          onClick={() => setShowFacultyMobileActions(!showFacultyMobileActions)}
-          title={showFacultyMobileActions ? "Close Faculty Actions" : "Open Faculty Actions"}
-          style={{
-            bottom: showFloatingMobileMenu ? '92px' : '24px'
-          }}
-        >
-          {showFacultyMobileActions ? (
-            <ChevronRight size={26} strokeWidth={2.5} />
-          ) : (
-            <ChevronLeft size={26} strokeWidth={2.5} />
-          )}
-        </button>
+      {activeTab === 'faculty' && !isAnyAdminModalOpen && !mobileSidebarOpen && (
+        selectedFacultyIds.length > 0 ? (
+          <button
+            type="button"
+            className={`student-floating-mobile-actions-toggle floating-delete-btn ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+            onClick={() => handleBulkDeleteFaculty(selectedFacultyIds)}
+            title={`Delete Selected (${selectedFacultyIds.length})`}
+            style={{
+              bottom: showFloatingMobileMenu ? '92px' : '24px',
+              background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
+              borderColor: '#ffffff',
+              boxShadow: '0 8px 24px rgba(239, 68, 68, 0.55), 0 4px 14px rgba(0, 0, 0, 0.25)',
+              position: 'relative'
+            }}
+          >
+            <Trash2 size={24} strokeWidth={2.5} color="#ffffff" />
+            <span
+              style={{
+                position: 'absolute',
+                top: '-5px',
+                right: '-5px',
+                background: '#ffffff',
+                color: '#ef4444',
+                fontSize: '0.75rem',
+                fontWeight: '800',
+                borderRadius: '10px',
+                padding: '2px 6px',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+                minWidth: '20px',
+                textAlign: 'center',
+                lineHeight: '1.2'
+              }}
+            >
+              {selectedFacultyIds.length}
+            </span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={`student-floating-mobile-actions-toggle ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+            onClick={() => setShowFacultyMobileActions(!showFacultyMobileActions)}
+            title={showFacultyMobileActions ? "Close Faculty Actions" : "Open Faculty Actions"}
+            style={{
+              bottom: showFloatingMobileMenu ? '92px' : '24px'
+            }}
+          >
+            {showFacultyMobileActions ? (
+              <ChevronRight size={26} strokeWidth={2.5} />
+            ) : (
+              <ChevronLeft size={26} strokeWidth={2.5} />
+            )}
+          </button>
+        )
       )}
 
       {/* Mobile Backdrop Overlay for Faculty Actions */}
-      {activeTab === 'faculty' && !isAnyAdminModalOpen && showFacultyMobileActions && (
+      {activeTab === 'faculty' && !isAnyAdminModalOpen && !mobileSidebarOpen && showFacultyMobileActions && (
         <div
           className="student-mobile-actions-backdrop"
           onClick={() => setShowFacultyMobileActions(false)}
@@ -4792,7 +4866,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       )}
 
       {/* Mobile Floating Action Buttons Container for Faculty */}
-      {activeTab === 'faculty' && !isAnyAdminModalOpen && showFacultyMobileActions && (
+      {activeTab === 'faculty' && !isAnyAdminModalOpen && !mobileSidebarOpen && showFacultyMobileActions && (
         <div
           className={`admin-action-btn-group mobile-actions-open ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
           style={{
@@ -4874,26 +4948,63 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       )}
 
       {/* Mobile Floating Bottom-Right Subject Actions Toggle Button */}
-      {activeTab === 'subjects' && !isAnyAdminModalOpen && (
-        <button
-          type="button"
-          className={`student-floating-mobile-actions-toggle ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
-          onClick={() => setShowSubjectMobileActions(!showSubjectMobileActions)}
-          title={showSubjectMobileActions ? "Close Subject Actions" : "Open Subject Actions"}
-          style={{
-            bottom: showFloatingMobileMenu ? '92px' : '24px'
-          }}
-        >
-          {showSubjectMobileActions ? (
-            <ChevronRight size={26} strokeWidth={2.5} />
-          ) : (
-            <ChevronLeft size={26} strokeWidth={2.5} />
-          )}
-        </button>
+      {activeTab === 'subjects' && !isAnyAdminModalOpen && !mobileSidebarOpen && (
+        selectedSubjectIds.length > 0 ? (
+          <button
+            type="button"
+            className={`student-floating-mobile-actions-toggle floating-delete-btn ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+            onClick={() => handleBulkDeleteSubjects(selectedSubjectIds)}
+            title={`Delete Selected (${selectedSubjectIds.length})`}
+            style={{
+              bottom: showFloatingMobileMenu ? '92px' : '24px',
+              background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
+              borderColor: '#ffffff',
+              boxShadow: '0 8px 24px rgba(239, 68, 68, 0.55), 0 4px 14px rgba(0, 0, 0, 0.25)',
+              position: 'relative'
+            }}
+          >
+            <Trash2 size={24} strokeWidth={2.5} color="#ffffff" />
+            <span
+              style={{
+                position: 'absolute',
+                top: '-5px',
+                right: '-5px',
+                background: '#ffffff',
+                color: '#ef4444',
+                fontSize: '0.75rem',
+                fontWeight: '800',
+                borderRadius: '10px',
+                padding: '2px 6px',
+                boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
+                minWidth: '20px',
+                textAlign: 'center',
+                lineHeight: '1.2'
+              }}
+            >
+              {selectedSubjectIds.length}
+            </span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={`student-floating-mobile-actions-toggle ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+            onClick={() => setShowSubjectMobileActions(!showSubjectMobileActions)}
+            title={showSubjectMobileActions ? "Close Subject Actions" : "Open Subject Actions"}
+            style={{
+              bottom: showFloatingMobileMenu ? '92px' : '24px'
+            }}
+          >
+            {showSubjectMobileActions ? (
+              <ChevronRight size={26} strokeWidth={2.5} />
+            ) : (
+              <ChevronLeft size={26} strokeWidth={2.5} />
+            )}
+          </button>
+        )
       )}
 
       {/* Mobile Backdrop Overlay for Subject Actions */}
-      {activeTab === 'subjects' && !isAnyAdminModalOpen && showSubjectMobileActions && (
+      {activeTab === 'subjects' && !isAnyAdminModalOpen && !mobileSidebarOpen && showSubjectMobileActions && (
         <div
           className="student-mobile-actions-backdrop"
           onClick={() => setShowSubjectMobileActions(false)}
@@ -4901,7 +5012,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       )}
 
       {/* Mobile Floating Action Buttons Container for Subject */}
-      {activeTab === 'subjects' && !isAnyAdminModalOpen && showSubjectMobileActions && (
+      {activeTab === 'subjects' && !isAnyAdminModalOpen && !mobileSidebarOpen && showSubjectMobileActions && (
         <div
           className={`admin-action-btn-group mobile-actions-open ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
           style={{
@@ -5308,7 +5419,51 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       </p>
                     </div>
 
-                    {/* Action 2: View Defaulters */}
+                    {/* Action 2: Leave Requests */}
+                    <div
+                      onClick={() => { setActiveTab('leaves'); setMobileSidebarOpen(false); }}
+                      style={{
+                        background: '#ffffff',
+                        border: '1.5px solid #e2e8f0',
+                        borderRadius: '16px',
+                        padding: '32px 28px',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s cubic-bezier(0.4, 0, 0.2, 1)',
+                        boxShadow: '0 2px 8px rgba(0, 0, 0, 0.02)'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.transform = 'translateY(-3px)';
+                        e.currentTarget.style.borderColor = '#cbd5e1';
+                        e.currentTarget.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.06)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.transform = 'none';
+                        e.currentTarget.style.borderColor = '#e2e8f0';
+                        e.currentTarget.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.02)';
+                      }}
+                    >
+                      <div style={{
+                        width: '52px',
+                        height: '52px',
+                        borderRadius: '14px',
+                        background: '#d97706',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginBottom: '18px',
+                        boxShadow: '0 4px 12px rgba(217, 119, 6, 0.25)'
+                      }}>
+                        <Calendar size={24} color="#ffffff" style={{ strokeWidth: 2.2 }} />
+                      </div>
+                      <h4 style={{ fontSize: '1.15rem', fontWeight: '700', color: '#0f172a', margin: '0 0 8px 0' }}>
+                        Leave Requests
+                      </h4>
+                      <p style={{ fontSize: '0.95rem', color: '#64748b', margin: 0, lineHeight: 1.5 }}>
+                        Review & approve student leave requests
+                      </p>
+                    </div>
+
+                    {/* Action 3: View Defaulters */}
                     <div
                       onClick={() => { setActiveTab('defaulters'); setMobileSidebarOpen(false); }}
                       style={{
@@ -6674,27 +6829,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         style={{ paddingLeft: '40px' }}
                       />
                     </div>
-                    {selectedSubjectIds.length > 0 && (
-                      <button
-                        className="btn btn-danger mobile-only-delete-btn"
-                        onClick={() => handleBulkDeleteSubjects(selectedSubjectIds)}
-                        style={{
-                          gap: '8px',
-                          background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
-                          color: '#ffffff',
-                          border: 'none',
-                          padding: '8px 16px',
-                          borderRadius: '10px',
-                          fontWeight: '700',
-                          boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
-                          alignItems: 'center',
-                          cursor: 'pointer',
-                          whiteSpace: 'nowrap'
-                        }}
-                      >
-                        <Trash2 size={16} color="#ffffff" /> Delete Selected ({selectedSubjectIds.length})
-                      </button>
-                    )}
                   </div>
 
                   <input
@@ -6789,27 +6923,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <Plus size={18} color="#ffffff" />
                       <span style={{ color: '#ffffff' }}>Add Subject</span>
                     </button>
-                    {selectedSubjectIds.length > 0 && (
-                      <button
-                        className="btn btn-danger"
-                        onClick={() => handleBulkDeleteSubjects(selectedSubjectIds)}
-                        style={{
-                          gap: '8px',
-                          background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
-                          color: '#ffffff',
-                          border: 'none',
-                          padding: '8px 18px',
-                          borderRadius: '10px',
-                          fontWeight: '700',
-                          boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <Trash2 size={16} color="#ffffff" /> Delete Selected ({selectedSubjectIds.length})
-                      </button>
-                    )}
                   </div>
-                  </div>
+                </div>
 
                   {/* Subject List / Table */}
                   {allFacultySubjects.length === 0 ? (
@@ -8040,27 +8155,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         style={{ paddingLeft: '40px' }}
                       />
                     </div>
-                    {selectedStudentIds.length > 0 && (
-                      <button
-                        className="btn btn-danger mobile-only-delete-btn"
-                        onClick={() => handleBulkDeleteStudents(selectedStudentIds)}
-                        style={{
-                          gap: '8px',
-                          background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
-                          color: '#ffffff',
-                          border: 'none',
-                          padding: '8px 16px',
-                          borderRadius: '10px',
-                          fontWeight: '700',
-                          boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
-                          alignItems: 'center',
-                          cursor: 'pointer',
-                          whiteSpace: 'nowrap'
-                        }}
-                      >
-                        <Trash2 size={16} color="#ffffff" /> Delete Selected ({selectedStudentIds.length})
-                      </button>
-                    )}
                   </div>
 
                   <input
@@ -8167,26 +8261,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Student</span>
                       </button>
                     </div>
-                    {selectedStudentIds.length > 0 && (
-                      <button
-                        className="btn btn-danger"
-                        onClick={() => handleBulkDeleteStudents(selectedStudentIds)}
-                        style={{
-                          gap: '8px',
-                          background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
-                          color: '#ffffff',
-                          border: 'none',
-                          padding: '8px 18px',
-                          borderRadius: '10px',
-                          fontWeight: '700',
-                          boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
-                          cursor: 'pointer',
-                          alignSelf: 'flex-end'
-                        }}
-                      >
-                        <Trash2 size={16} color="#ffffff" /> Delete Selected ({selectedStudentIds.length})
-                      </button>
-                    )}
                   </div>
                 </div>
 
@@ -8334,27 +8408,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         style={{ paddingLeft: '40px' }}
                       />
                     </div>
-                    {selectedFacultyIds.length > 0 && (
-                      <button
-                        className="btn btn-danger mobile-only-delete-btn"
-                        onClick={() => handleBulkDeleteFaculty(selectedFacultyIds)}
-                        style={{
-                          gap: '8px',
-                          background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
-                          color: '#ffffff',
-                          border: 'none',
-                          padding: '8px 16px',
-                          borderRadius: '10px',
-                          fontWeight: '700',
-                          boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
-                          alignItems: 'center',
-                          cursor: 'pointer',
-                          whiteSpace: 'nowrap'
-                        }}
-                      >
-                        <Trash2 size={16} color="#ffffff" /> Delete Selected ({selectedFacultyIds.length})
-                      </button>
-                    )}
                   </div>
                   <input
                     type="file"
@@ -8435,25 +8488,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     <button className="btn btn-primary" onClick={() => { setShowFacultyMobileActions(false); openAddFacultyModal(); }} style={{ color: '#ffffff' }}>
                       <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Faculty</span>
                     </button>
-                    {selectedFacultyIds.length > 0 && (
-                      <button
-                        className="btn btn-danger"
-                        onClick={() => handleBulkDeleteFaculty(selectedFacultyIds)}
-                        style={{
-                          gap: '8px',
-                          background: 'linear-gradient(135deg, #ef4444, #b91c1c)',
-                          color: '#ffffff',
-                          border: 'none',
-                          padding: '8px 18px',
-                          borderRadius: '10px',
-                          fontWeight: '700',
-                          boxShadow: '0 4px 14px rgba(239, 68, 68, 0.35)',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <Trash2 size={16} color="#ffffff" /> Delete Selected ({selectedFacultyIds.length})
-                      </button>
-                    )}
                   </div>
                 </div>
 
