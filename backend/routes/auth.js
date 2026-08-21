@@ -35,8 +35,18 @@ router.post('/login', async (req, res) => {
   try {
     const cleanId = rawId.toLowerCase();
 
+    // Query admin, faculty, and student tables concurrently in parallel for maximum speed
+    const [adminRes, facultyRes, studentRes] = await Promise.all([
+      supabase.from('admin').select('*').eq('email', cleanId).maybeSingle(),
+      supabase.from('faculty').select('*').or(`email.eq.${cleanId},username.eq.${rawId}`).maybeSingle(),
+      supabase.from('students').select('*').or(`email.eq.${cleanId},username.eq.${rawId},enrollment_no.eq.${rawId}`).maybeSingle()
+    ]);
+
+    const admin = adminRes?.data;
+    const faculty = facultyRes?.data;
+    const student = studentRes?.data;
+
     // 1. Check Admin Table
-    const { data: admin } = await supabase.from('admin').select('*').eq('email', cleanId).maybeSingle();
     if (admin) {
       const isMatch = bcrypt.compareSync(password, admin.password);
       if (isMatch) {
@@ -54,21 +64,6 @@ router.post('/login', async (req, res) => {
     }
 
     // 2. Check Faculty Table
-    let { data: faculty, error: facErr } = await supabase
-      .from('faculty')
-      .select('*')
-      .or(`email.eq.${cleanId},username.eq.${rawId},employee_no.eq.${rawId}`)
-      .maybeSingle();
-
-    if (facErr && (facErr.code === '42703' || facErr.message?.includes('employee_no'))) {
-      const retry = await supabase
-        .from('faculty')
-        .select('*')
-        .or(`email.eq.${cleanId},username.eq.${rawId}`)
-        .maybeSingle();
-      faculty = retry.data;
-    }
-
     if (faculty) {
       const isMatch = bcrypt.compareSync(password, faculty.password);
       if (isMatch) {
@@ -86,16 +81,8 @@ router.post('/login', async (req, res) => {
       }
     }
 
-    // 3. Check Student Table (Prioritize Gmail ID)
-    const { data: student } = await supabase
-      .from('students')
-      .select('*')
-      .or(`email.eq.${cleanId},username.eq.${rawId},enrollment_no.eq.${rawId}`)
-      .maybeSingle();
-
+    // 3. Check Student Table
     if (student) {
-
-
       const isMatch = bcrypt.compareSync(password, student.password);
       if (isMatch) {
         if (student.locked_until) {

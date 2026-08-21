@@ -63,20 +63,14 @@ export default function Login({ onLoginSuccess, onBack }) {
     let data = null;
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 4000);
-
       try {
         response = await fetch('/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           cache: 'no-store',
-          signal: controller.signal,
           body: JSON.stringify(payload)
         });
-        clearTimeout(timeoutId);
       } catch (netErr) {
-        clearTimeout(timeoutId);
         const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
           ? `http://${window.location.hostname}:5000`
           : 'http://127.0.0.1:5000';
@@ -144,12 +138,11 @@ export default function Login({ onLoginSuccess, onBack }) {
   };
 
   const cleanId = identifier.trim().toLowerCase();
-  const lockedUserId = (localStorage.getItem('student_lockout_user_id') || '').toLowerCase().trim();
-  const isStudentLocked = cooldownTime > 0 && (!cleanId || !lockedUserId || cleanId === lockedUserId);
+  const isStudentLocked = cooldownTime > 0;
 
   const getDisplayError = () => {
     if (!error) return null;
-    if (cooldownTime > 0 && isStudentLocked && (error.includes('locked') || error.includes('wait') || error.includes('tab change'))) {
+    if (cooldownTime > 0 && (error.includes('locked') || error.includes('wait') || error.includes('tab change'))) {
       return null;
     }
     return error;
