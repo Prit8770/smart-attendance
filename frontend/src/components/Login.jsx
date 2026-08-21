@@ -97,6 +97,7 @@ export default function Login({ onLoginSuccess, onBack }) {
 
       if (response && response.ok && data && data.user && data.token) {
         localStorage.removeItem('student_lockout_until');
+        localStorage.removeItem('student_lockout_user_id');
         localStorage.setItem('attendance_token', data.token);
         localStorage.setItem('attendance_user', JSON.stringify(data.user));
         onLoginSuccess(data.user, data.token);
@@ -105,6 +106,7 @@ export default function Login({ onLoginSuccess, onBack }) {
 
       if (data && data.lockedUntil) {
         localStorage.setItem('student_lockout_until', String(data.lockedUntil));
+        if (cleanId) localStorage.setItem('student_lockout_user_id', cleanId.toLowerCase());
         const remSec = data.remainingSeconds || Math.ceil((data.lockedUntil - Date.now()) / 1000);
         setCooldownTime(remSec);
       }
@@ -142,13 +144,13 @@ export default function Login({ onLoginSuccess, onBack }) {
   };
 
   const cleanId = identifier.trim().toLowerCase();
-  const isAdminOrFaculty = cleanId.includes('admin') || cleanId.includes('faculty') || cleanId.startsWith('emp_');
-  const isLockedForInput = cooldownTime > 0 && !isAdminOrFaculty;
+  const lockedUserId = (localStorage.getItem('student_lockout_user_id') || '').toLowerCase().trim();
+  const isStudentLocked = cooldownTime > 0 && (!cleanId || !lockedUserId || cleanId === lockedUserId);
 
   const getDisplayError = () => {
     if (!error) return null;
-    if (cooldownTime > 0 && isLockedForInput && (error.includes('locked') || error.includes('wait') || error.includes('tab change'))) {
-      return `Account is locked due to tab change or app exit. Please wait ${formatCooldown(cooldownTime)} before signing in again.`;
+    if (cooldownTime > 0 && isStudentLocked && (error.includes('locked') || error.includes('wait') || error.includes('tab change'))) {
+      return null;
     }
     return error;
   };
@@ -183,7 +185,7 @@ export default function Login({ onLoginSuccess, onBack }) {
           <p style={{ color: '#93c5fd', fontSize: '0.9rem', margin: 0 }}>Sign in to access your academic dashboard</p>
         </div>
 
-        {isLockedForInput && (
+        {isStudentLocked && (
           <div style={styles.lockoutBanner}>
             <ShieldAlert size={26} color="#f59e0b" style={{ flexShrink: 0 }} />
             <div>
@@ -264,7 +266,7 @@ export default function Login({ onLoginSuccess, onBack }) {
 
           <button
             type="submit"
-            disabled={loading || isLockedForInput}
+            disabled={loading}
             style={{
               width: '100%',
               padding: '14px 24px',
@@ -274,18 +276,18 @@ export default function Login({ onLoginSuccess, onBack }) {
               border: 'none',
               background: 'linear-gradient(135deg, #f59e0b, #d97706)',
               color: '#ffffff',
-              cursor: loading || isLockedForInput ? 'not-allowed' : 'pointer',
+              cursor: loading ? 'not-allowed' : 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '8px',
               boxShadow: '0 6px 20px rgba(245, 158, 11, 0.4)',
               transition: 'all 0.15s ease',
-              opacity: isLockedForInput ? 0.6 : 1,
+              opacity: loading ? 0.7 : 1,
               marginTop: '10px'
             }}
           >
-            {loading ? 'Signing in...' : isLockedForInput ? `Login Blocked (${formatCooldown(cooldownTime)})` : (
+            {loading ? 'Signing in...' : (
               <>
                 <span>Sign In</span>
                 <ArrowRight size={18} />
