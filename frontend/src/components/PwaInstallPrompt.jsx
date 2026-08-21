@@ -77,7 +77,7 @@ export default function PwaInstallPrompt() {
       <div className="glass-panel" style={styles.bannerCard}>
         <div style={styles.leftGroup}>
           <div style={styles.appIconWrapper}>
-            <Smartphone size={24} color="#f59e0b" />
+            <img src="/logo.png" alt="EduMark Icon" style={{ width: '30px', height: '30px', borderRadius: '8px', objectFit: 'cover' }} />
           </div>
           <div>
             <h4 style={styles.title}>Install Smart Attendance App</h4>

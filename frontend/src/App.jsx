@@ -83,7 +83,6 @@ export default function App() {
   };
 
   const handleLogout = async () => {
-    localStorage.removeItem('student_device_lock_until');
     localStorage.removeItem('attendance_token');
     localStorage.removeItem('attendance_user');
     setUser(null);

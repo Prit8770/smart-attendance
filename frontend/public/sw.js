@@ -1,4 +1,4 @@
-const CACHE_NAME = 'smart-attendance-v2';
+const CACHE_NAME = 'smart-attendance-v3';
 const STATIC_ASSETS = [
   '/',
   '/index.html',

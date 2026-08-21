@@ -98,6 +98,21 @@ router.post('/login', async (req, res) => {
 
       const isMatch = bcrypt.compareSync(password, student.password);
       if (isMatch) {
+        if (student.locked_until) {
+          const lockedUntilTime = parseInt(student.locked_until, 10);
+          if (!isNaN(lockedUntilTime) && Date.now() < lockedUntilTime) {
+            const remainingSec = Math.ceil((lockedUntilTime - Date.now()) / 1000);
+            const mins = Math.floor(remainingSec / 60);
+            const secs = remainingSec % 60;
+            const timeStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+            return res.status(403).json({
+              error: `Account is locked due to tab change or app exit. Please wait ${timeStr} before signing in again.`,
+              lockedUntil: lockedUntilTime,
+              remainingSeconds: remainingSec
+            });
+          }
+        }
+
         const stuUser = {
           id: student.id,
           name: student.name,
@@ -552,7 +567,39 @@ router.post('/student/lock', authenticateJWT, async (req, res) => {
   }
 });
 
+router.post('/student/lockout', async (req, res) => {
+  const { studentId, identifier, durationMs } = req.body || {};
+  let targetId = studentId;
+
+  if (!targetId && req.headers.authorization) {
+    try {
+      const tokenStr = req.headers.authorization.split(' ')[1];
+      const decoded = jwt.verify(tokenStr, JWT_SECRET);
+      if (decoded && decoded.role === 'student') {
+        targetId = decoded.id;
+      }
+    } catch (e) {}
+  }
+
+  const duration = (typeof durationMs === 'number' && durationMs > 0) ? durationMs : (3 * 60 * 1000);
+  const lockUntil = Date.now() + duration;
+
+  try {
+    if (targetId) {
+      await supabase.from('students').update({ locked_until: lockUntil.toString() }).eq('id', targetId);
+    } else if (identifier) {
+      const cleanId = String(identifier).trim().toLowerCase();
+      await supabase.from('students').update({ locked_until: lockUntil.toString() }).or(`email.eq.${cleanId},username.eq.${cleanId},enrollment_no.eq.${cleanId}`);
+    }
+    return res.json({ success: true, lockedUntil: lockUntil });
+  } catch (err) {
+    console.error('Lockout update error:', err);
+    return res.status(500).json({ error: 'Failed to apply lockout' });
+  }
+});
+
 module.exports = {
   router,
   authenticateJWT
 };
+

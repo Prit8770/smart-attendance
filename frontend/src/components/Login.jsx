@@ -16,8 +16,34 @@ export default function Login({ onLoginSuccess, onBack }) {
 
 
 
+  const formatCooldown = (seconds) => {
+    if (seconds <= 0) return '00:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
   useEffect(() => {
-    localStorage.removeItem('student_device_lock_until');
+    const checkLock = () => {
+      const lockUntil = localStorage.getItem('student_lockout_until');
+      if (lockUntil) {
+        const lockMs = parseInt(lockUntil, 10);
+        const now = Date.now();
+        if (now < lockMs) {
+          setCooldownTime(Math.ceil((lockMs - now) / 1000));
+        } else {
+          setCooldownTime(0);
+          localStorage.removeItem('student_lockout_until');
+          setError(prev => (prev && (prev.includes('locked') || prev.includes('wait')) ? '' : prev));
+        }
+      } else {
+        setCooldownTime(0);
+      }
+    };
+
+    checkLock();
+    const interval = setInterval(checkLock, 1000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleSubmit = async (e) => {
@@ -70,10 +96,17 @@ export default function Login({ onLoginSuccess, onBack }) {
       }
 
       if (response && response.ok && data && data.user && data.token) {
+        localStorage.removeItem('student_lockout_until');
         localStorage.setItem('attendance_token', data.token);
         localStorage.setItem('attendance_user', JSON.stringify(data.user));
         onLoginSuccess(data.user, data.token);
         return;
+      }
+
+      if (data && data.lockedUntil) {
+        localStorage.setItem('student_lockout_until', String(data.lockedUntil));
+        const remSec = data.remainingSeconds || Math.ceil((data.lockedUntil - Date.now()) / 1000);
+        setCooldownTime(remSec);
       }
 
       if (data && data.error) {
@@ -108,6 +141,18 @@ export default function Login({ onLoginSuccess, onBack }) {
     }
   };
 
+  const cleanId = identifier.trim().toLowerCase();
+  const isAdminOrFaculty = cleanId.includes('admin') || cleanId.includes('faculty') || cleanId.startsWith('emp_');
+  const isLockedForInput = cooldownTime > 0 && !isAdminOrFaculty;
+
+  const getDisplayError = () => {
+    if (!error) return null;
+    if (cooldownTime > 0 && isLockedForInput && (error.includes('locked') || error.includes('wait') || error.includes('tab change'))) {
+      return `Account is locked due to tab change or app exit. Please wait ${formatCooldown(cooldownTime)} before signing in again.`;
+    }
+    return error;
+  };
+
   return (
     <div style={styles.container}>
       {/* Decorative Blurs */}
@@ -138,10 +183,22 @@ export default function Login({ onLoginSuccess, onBack }) {
           <p style={{ color: '#93c5fd', fontSize: '0.9rem', margin: 0 }}>Sign in to access your academic dashboard</p>
         </div>
 
+        {isLockedForInput && (
+          <div style={styles.lockoutBanner}>
+            <ShieldAlert size={26} color="#f59e0b" style={{ flexShrink: 0 }} />
+            <div>
+              <div style={{ fontWeight: '700', fontSize: '0.95rem', color: '#fbbf24' }}>
+                Student Account Temporarily Locked
+              </div>
+              <div style={{ fontSize: '0.85rem', color: '#e2e8f0', marginTop: '3px', lineHeight: '1.4' }}>
+                Tab changed or app exited. Student login blocked for <span style={{ fontWeight: '800', color: '#f59e0b', fontSize: '1rem' }}>{formatCooldown(cooldownTime)}</span>.
+              </div>
+            </div>
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} style={styles.form} autoComplete="on">
-          {error && <div style={styles.errorAlert}>{error}</div>}
-
-
+          {getDisplayError() && <div style={styles.errorAlert}>{getDisplayError()}</div>}
 
           <div style={styles.inputGroup}>
             <label style={{ ...styles.label, fontSize: '0.9rem', fontWeight: '600', color: '#e2e8f0', marginBottom: '8px', display: 'block' }}>
@@ -207,7 +264,7 @@ export default function Login({ onLoginSuccess, onBack }) {
 
           <button
             type="submit"
-            disabled={loading || cooldownTime > 0}
+            disabled={loading || isLockedForInput}
             style={{
               width: '100%',
               padding: '14px 24px',
@@ -217,18 +274,18 @@ export default function Login({ onLoginSuccess, onBack }) {
               border: 'none',
               background: 'linear-gradient(135deg, #f59e0b, #d97706)',
               color: '#ffffff',
-              cursor: loading || cooldownTime > 0 ? 'not-allowed' : 'pointer',
+              cursor: loading || isLockedForInput ? 'not-allowed' : 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '8px',
               boxShadow: '0 6px 20px rgba(245, 158, 11, 0.4)',
               transition: 'all 0.15s ease',
-              opacity: cooldownTime > 0 ? 0.6 : 1,
+              opacity: isLockedForInput ? 0.6 : 1,
               marginTop: '10px'
             }}
           >
-            {loading ? 'Signing in...' : cooldownTime > 0 ? `Login Blocked (${formatCooldown(cooldownTime)})` : (
+            {loading ? 'Signing in...' : isLockedForInput ? `Login Blocked (${formatCooldown(cooldownTime)})` : (
               <>
                 <span>Sign In</span>
                 <ArrowRight size={18} />
@@ -399,5 +456,16 @@ const styles = {
     fontSize: '0.9rem',
     textAlign: 'center',
     fontWeight: '500'
+  },
+  lockoutBanner: {
+    background: 'rgba(245, 158, 11, 0.12)',
+    border: '1px solid rgba(245, 158, 11, 0.3)',
+    borderRadius: '16px',
+    padding: '14px 16px',
+    marginBottom: '20px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    boxShadow: '0 4px 15px rgba(245, 158, 11, 0.15)'
   }
 };

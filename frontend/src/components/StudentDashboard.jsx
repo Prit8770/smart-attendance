@@ -19,10 +19,55 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     document.body.classList.remove('light-theme');
   }, []);
 
+  const triggerStudentLockout = (reason = 'tab_switch') => {
+    const lockUntil = Date.now() + 3 * 60 * 1000;
+    localStorage.setItem('student_lockout_until', lockUntil.toString());
+    if (user) {
+      const idVal = user.email || user.username || user.enrollment_no || user.id || '';
+      if (idVal) localStorage.setItem('student_lockout_user_id', String(idVal));
+    }
+
+    try {
+      const payload = JSON.stringify({
+        studentId: user?.id,
+        identifier: user?.email || user?.username || user?.enrollment_no,
+        durationMs: 3 * 60 * 1000
+      });
+      if (navigator.sendBeacon) {
+        const blob = new Blob([payload], { type: 'application/json' });
+        navigator.sendBeacon('/api/auth/student/lockout', blob);
+      } else {
+        fetch('/api/auth/student/lockout', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+          },
+          body: payload
+        }).catch(() => {});
+      }
+    } catch (e) {}
+
+    if (onLogout) onLogout();
+  };
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        triggerStudentLockout('tab_switch');
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [user, token]);
+
   const handleLogoutConfirm = () => {
     Swal.fire({
       title: 'Sign Out?',
-      text: 'Are you sure you want to sign out of your account?',
+      text: 'Signing out will lock your student account for 3 minutes before you can sign in again.',
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#ef4444',
@@ -33,7 +78,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
       color: '#0f172a'
     }).then((result) => {
       if (result.isConfirmed) {
-        onLogout();
+        triggerStudentLockout('logout');
       }
     });
   };
@@ -1558,7 +1603,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             </div>
           </div>
 
-          <button className="admin-logout-btn" onClick={onLogout}>
+          <button className="admin-logout-btn" onClick={handleLogoutConfirm}>
             <LogOut size={16} />
             <span>Sign Out</span>
           </button>
@@ -2114,7 +2159,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ color: '#1e293b', fontWeight: '600' }}>Student Email</span>
-                        <strong style={{ color: '#0f172a', background: '#ffffff', padding: '4px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontWeight: '700' }}>{(user.enrollment_no || 'student').toLowerCase()}@student.edu</strong>
+                        <strong style={{ color: '#0f172a', background: '#ffffff', padding: '4px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontWeight: '700' }}>{user.email || user.username || `${(user.enrollment_no || 'student').toLowerCase()}@student.edu`}</strong>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ color: '#1e293b', fontWeight: '600' }}>Campus Location</span>
