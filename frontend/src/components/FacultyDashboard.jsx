@@ -3,7 +3,7 @@ import {
   Users, KeyRound, QrCode, BarChart3, Download, Search, CheckCircle,
   XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Sun, Moon, Menu, X, Folder, Calendar,
   ClipboardList, UserCheck, UserX, Smartphone, HandIcon, GraduationCap, User, Settings, MapPin, Plus, Trash2, Edit,
-  LayoutGrid, ChevronDown, FileText, Check, TrendingUp, RotateCcw
+  LayoutGrid, ChevronDown, FileText, Check, TrendingUp, RotateCcw, ArrowLeft
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -2160,7 +2160,25 @@ export default function FacultyDashboard({ user, token, onLogout, theme, toggleT
 
   return (
     <div className="admin-dashboard-root">
-      {/* Mobile Floating Bottom-Right Hamburger Menu Button */}
+      {/* Floating Return to Dashboard Arrow Button (Rendered on mobile for any tab other than dashboard) */}
+      {activeTab !== 'dashboard' && (
+        <button
+          type="button"
+          className="admin-floating-return-dashboard"
+          style={{
+            bottom: showFloatingMobileMenu ? '90px' : '24px'
+          }}
+          onClick={() => {
+            setActiveTab('dashboard');
+            setMobileMenuOpen(false);
+          }}
+          title="Return to Dashboard"
+        >
+          <ArrowLeft size={26} strokeWidth={2.5} />
+        </button>
+      )}
+
+      {/* Mobile Floating Bottom-Right Hamburger Menu Toggle Button */}
       {showFloatingMobileMenu && (
         <button
           type="button"

@@ -3,7 +3,7 @@ import {
   Users, KeyRound, QrCode, MapPin, BarChart3, Download, Upload, TrendingUp, Plus, Search,
   Trash2, Edit, Check, CheckCircle, XCircle, Clock, ShieldAlert, LogOut, RefreshCw,
   Sun, Moon, GraduationCap, User, Settings, Folder, Calendar, Menu, RotateCcw, X,
-  LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileText, ClipboardList, AlertTriangle, UserPlus, BookOpen, FileSpreadsheet, Send, MessageSquare
+  LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileText, ClipboardList, AlertTriangle, UserPlus, BookOpen, FileSpreadsheet, Send, MessageSquare, ArrowLeft
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -4620,6 +4620,24 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
   return (
     <div className="admin-dashboard-root">
+      {/* Floating Return to Dashboard Arrow Button (Rendered on mobile for any tab other than dashboard, students, faculty, subjects) */}
+      {activeTab !== 'dashboard' && !['students', 'faculty', 'subjects'].includes(activeTab) && !isAnyAdminModalOpen && (
+        <button
+          type="button"
+          className="admin-floating-return-dashboard"
+          style={{
+            bottom: showFloatingMobileMenu ? '90px' : '24px'
+          }}
+          onClick={() => {
+            setActiveTab('dashboard');
+            setMobileSidebarOpen(false);
+          }}
+          title="Return to Dashboard"
+        >
+          <ArrowLeft size={26} strokeWidth={2.5} />
+        </button>
+      )}
+
       {/* Mobile Floating Bottom-Right Hamburger Menu Button */}
       {showFloatingMobileMenu && !isAnyAdminModalOpen && (
         <button
