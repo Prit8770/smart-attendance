@@ -85,18 +85,84 @@ router.post('/login', async (req, res) => {
     if (student) {
       const isMatch = bcrypt.compareSync(password, student.password);
       if (isMatch) {
+        const deviceId = req.body?.deviceId || req.body?.device_id;
+        
+        // 3a. Check direct student lock
+        let maxLockTime = 0;
         if (student.locked_until) {
-          const lockedUntilTime = parseInt(student.locked_until, 10);
-          if (!isNaN(lockedUntilTime) && Date.now() < lockedUntilTime) {
-            const remainingSec = Math.ceil((lockedUntilTime - Date.now()) / 1000);
-            const mins = Math.floor(remainingSec / 60);
-            const secs = remainingSec % 60;
-            const timeStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
-            return res.status(403).json({
-              error: `Account is locked due to tab change or app exit. Please wait ${timeStr} before signing in again.`,
-              lockedUntil: lockedUntilTime,
-              remainingSeconds: remainingSec
-            });
+          const sLock = parseInt(student.locked_until, 10);
+          if (!isNaN(sLock) && Date.now() < sLock) {
+            maxLockTime = Math.max(maxLockTime, sLock);
+          }
+        }
+
+        // 3b. Check device-level lock for all student accounts sharing this device_id
+        if (deviceId) {
+          const { data: devLocked } = await supabase
+            .from('students')
+            .select('locked_until')
+            .eq('device_id', deviceId)
+            .not('locked_until', 'is', null);
+
+          if (devLocked && devLocked.length > 0) {
+            for (const s of devLocked) {
+              if (s.locked_until) {
+                const lMs = parseInt(s.locked_until, 10);
+                if (!isNaN(lMs) && Date.now() < lMs) {
+                  maxLockTime = Math.max(maxLockTime, lMs);
+                }
+              }
+            }
+          }
+        }
+
+        if (maxLockTime > Date.now()) {
+          const remainingSec = Math.ceil((maxLockTime - Date.now()) / 1000);
+          const mins = Math.floor(remainingSec / 60);
+          const secs = remainingSec % 60;
+          const timeStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+          return res.status(403).json({
+            error: `Device / Account is locked due to security policy. Please wait ${timeStr} before signing in with any student account on this device.`,
+            lockedUntil: maxLockTime,
+            remainingSeconds: remainingSec
+          });
+        }
+
+        // Single-Device Lock Enforcement:
+        // 1. If student account is already bound to a specific device_id and request comes from a DIFFERENT device -> BLOCK LOGIN!
+        if (student.device_id && deviceId && student.device_id !== deviceId) {
+          return res.status(403).json({
+            error: `This student account is bound to another registered device. You can only log in from your registered device. Please contact Admin to reset your Device ID.`
+          });
+        }
+
+        // 2. Exclusive Device Registration Check:
+        // If this physical device (deviceId) is already registered to ANOTHER student in DB -> BLOCK LOGIN!
+        if (deviceId) {
+          try {
+            const { data: existingDeviceOwner } = await supabase
+              .from('students')
+              .select('id, name, enrollment_no')
+              .eq('device_id', deviceId)
+              .neq('id', student.id)
+              .maybeSingle();
+
+            if (existingDeviceOwner) {
+              return res.status(403).json({
+                error: `This device is already registered to another student account (${existingDeviceOwner.name} - ${existingDeviceOwner.enrollment_no}). Only 1 student account per device is allowed. Please contact Admin to reset device binding.`
+              });
+            }
+          } catch (dCheckErr) {
+            console.warn('Device owner check warning:', dCheckErr.message);
+          }
+        }
+
+        // First-Time Login (or after Admin reset): Bind device_id to logged in student
+        if (deviceId && !student.device_id) {
+          try {
+            await supabase.from('students').update({ device_id: deviceId }).eq('id', student.id);
+          } catch (dErr) {
+            console.warn('Supabase students table missing device_id column:', dErr.message);
           }
         }
 
@@ -104,12 +170,14 @@ router.post('/login', async (req, res) => {
           id: student.id,
           name: student.name,
           username: student.username,
+          email: student.email,
           enrollment_no: student.enrollment_no,
           roll_no: student.roll_no,
           division: student.division,
           course: student.course,
           semester: student.semester,
           mobile: student.mobile,
+          device_id: deviceId || student.device_id,
           role: 'student'
         };
         const token = jwt.sign({ ...stuUser }, JWT_SECRET, { expiresIn: '24h' });
@@ -185,15 +253,89 @@ router.post('/student/login', async (req, res) => {
 
 
 
-    const isMatch = bcrypt.compareSync(password, student.password);
-    if (!isMatch) {
-      return res.status(401).json({ error: 'Invalid username or password' });
+    const deviceId = req.body?.deviceId || req.body?.device_id;
+    let maxLockTime = 0;
+    if (student.locked_until) {
+      const sLock = parseInt(student.locked_until, 10);
+      if (!isNaN(sLock) && Date.now() < sLock) {
+        maxLockTime = Math.max(maxLockTime, sLock);
+      }
+    }
+
+    if (deviceId) {
+      const { data: devLocked } = await supabase
+        .from('students')
+        .select('locked_until')
+        .eq('device_id', deviceId)
+        .not('locked_until', 'is', null);
+
+      if (devLocked && devLocked.length > 0) {
+        for (const s of devLocked) {
+          if (s.locked_until) {
+            const lMs = parseInt(s.locked_until, 10);
+            if (!isNaN(lMs) && Date.now() < lMs) {
+              maxLockTime = Math.max(maxLockTime, lMs);
+            }
+          }
+        }
+      }
+    }
+
+    if (maxLockTime > Date.now()) {
+      const remainingSec = Math.ceil((maxLockTime - Date.now()) / 1000);
+      const mins = Math.floor(remainingSec / 60);
+      const secs = remainingSec % 60;
+      const timeStr = `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+      return res.status(403).json({
+        error: `Device / Account is locked due to security policy. Please wait ${timeStr} before signing in with any student account on this device.`,
+        lockedUntil: maxLockTime,
+        remainingSeconds: remainingSec
+      });
+    }
+
+    // Single-Device Lock Enforcement:
+    // 1. If student account is already bound to a specific device_id and request comes from a DIFFERENT device -> BLOCK LOGIN!
+    if (student.device_id && deviceId && student.device_id !== deviceId) {
+      return res.status(403).json({
+        error: `This student account is bound to another registered device. You can only log in from your registered device. Please contact Admin to reset your Device ID.`
+      });
+    }
+
+    // 2. Exclusive Device Registration Check:
+    // If this physical device (deviceId) is already registered to ANOTHER student in DB -> BLOCK LOGIN!
+    if (deviceId) {
+      try {
+        const { data: existingDeviceOwner } = await supabase
+          .from('students')
+          .select('id, name, enrollment_no')
+          .eq('device_id', deviceId)
+          .neq('id', student.id)
+          .maybeSingle();
+
+        if (existingDeviceOwner) {
+          return res.status(403).json({
+            error: `This device is already registered to another student account (${existingDeviceOwner.name} - ${existingDeviceOwner.enrollment_no}). Only 1 student account per device is allowed. Please contact Admin to reset device binding.`
+          });
+        }
+      } catch (dCheckErr) {
+        console.warn('Device owner check warning:', dCheckErr.message);
+      }
+    }
+
+    // First-Time Login (or after Admin reset): Bind device_id to logged in student
+    if (deviceId && !student.device_id) {
+      try {
+        await supabase.from('students').update({ device_id: deviceId }).eq('id', student.id);
+      } catch (dErr) {
+        console.warn('Supabase students table missing device_id column:', dErr.message);
+      }
     }
 
     const token = jwt.sign(
       {
         id: student.id,
         username: student.username,
+        email: student.email,
         name: student.name,
         enrollment_no: student.enrollment_no,
         course: student.course,
@@ -212,12 +354,14 @@ router.post('/student/login', async (req, res) => {
         id: student.id,
         name: student.name,
         username: student.username,
+        email: student.email,
         enrollment_no: student.enrollment_no,
         roll_no: student.roll_no,
         division: student.division,
         course: student.course,
         semester: student.semester,
         mobile: student.mobile,
+        device_id: deviceId || student.device_id,
         role: 'student'
       }
     });
@@ -513,6 +657,8 @@ router.get('/me', authenticateJWT, async (req, res) => {
           user: {
             id: student.id,
             name: student.name,
+            username: student.username,
+            email: student.email,
             enrollment_no: student.enrollment_no,
             roll_no: student.roll_no,
             course: student.course,
@@ -555,7 +701,7 @@ router.post('/student/lock', authenticateJWT, async (req, res) => {
 });
 
 router.post('/student/lockout', async (req, res) => {
-  const { studentId, identifier, durationMs } = req.body || {};
+  const { studentId, identifier, deviceId, durationMs } = req.body || {};
   let targetId = studentId;
 
   if (!targetId && req.headers.authorization) {
@@ -578,6 +724,11 @@ router.post('/student/lockout', async (req, res) => {
       const cleanId = String(identifier).trim().toLowerCase();
       await supabase.from('students').update({ locked_until: lockUntil.toString() }).or(`email.eq.${cleanId},username.eq.${cleanId},enrollment_no.eq.${cleanId}`);
     }
+
+    if (deviceId) {
+      await supabase.from('students').update({ locked_until: lockUntil.toString() }).eq('device_id', deviceId);
+    }
+
     return res.json({ success: true, lockedUntil: lockUntil });
   } catch (err) {
     console.error('Lockout update error:', err);

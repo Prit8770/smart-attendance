@@ -22,6 +22,11 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   const triggerStudentLockout = (reason = 'tab_switch') => {
     const lockUntil = Date.now() + 3 * 60 * 1000;
     localStorage.setItem('student_lockout_until', lockUntil.toString());
+    let devId = localStorage.getItem('attendance_device_id');
+    if (!devId) {
+      devId = 'dev_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now();
+      localStorage.setItem('attendance_device_id', devId);
+    }
     if (user) {
       const idVal = user.email || user.username || user.enrollment_no || user.id || '';
       if (idVal) localStorage.setItem('student_lockout_user_id', String(idVal));
@@ -31,6 +36,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
       const payload = JSON.stringify({
         studentId: user?.id,
         identifier: user?.email || user?.username || user?.enrollment_no,
+        deviceId: devId,
         durationMs: 3 * 60 * 1000
       });
       if (navigator.sendBeacon) {
@@ -911,7 +917,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <Calendar size={22} color="#f59e0b" />
+              <Calendar size={22} color="#fbbf24" />
               <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>
                 Weekly Attendance Analysis
               </h2>
@@ -987,7 +993,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
         {/* Day by Day Pill Breakdown */}
         <div>
           <h4 style={{ fontSize: '0.9rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Clock size={15} color="#f59e0b" />
+            <Clock size={15} color="#fbbf24" />
             Day-Wise Session Breakdown (Mon - Sun)
           </h4>
 
@@ -1044,7 +1050,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   const renderSubjectBreakdownCard = () => (
     <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
       <h3 style={{ fontSize: '1.05rem', fontWeight: '600', color: 'var(--text-primary)', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <BookOpen size={18} color="#f59e0b" />
+        <BookOpen size={18} color="#fbbf24" />
         Subject-Wise Attendance Breakdown (Sem {user.semester})
       </h3>
 
@@ -1105,7 +1111,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
               cy="45"
             />
             <circle
-              stroke="#ffb703"
+              stroke="#fbbf24"
               fill="transparent"
               strokeWidth={stroke}
               strokeDasharray={circumference + ' ' + circumference}
@@ -1180,8 +1186,8 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           <svg viewBox={`0 0 ${width} ${height}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
             <defs>
               <linearGradient id="barGradGood" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#f59e0b" stopOpacity="0.9" />
-                <stop offset="100%" stopColor="#d97706" stopOpacity="0.75" />
+                <stop offset="0%" stopColor="#fbbf24" stopOpacity="0.9" />
+                <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.75" />
               </linearGradient>
               <linearGradient id="barGradLow" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#ef4444" stopOpacity="0.9" />
@@ -1241,7 +1247,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   const renderScannerAndGpsBlock = () => (
     <div className="glass-panel" style={{ padding: '24px', width: '100%', boxSizing: 'border-box' }}>
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.15rem', fontWeight: 600, color: 'var(--text-primary)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-        <QrCode size={20} color="#ffb703" />
+        <QrCode size={20} color="#fbbf24" />
         Submit Live QR Attendance
       </h2>
       
@@ -1507,7 +1513,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   };
 
   return (
-    <div className="admin-layout">
+    <div className="admin-layout student-dashboard-layout">
       {/* Mobile Overlay */}
       {mobileMenuOpen && (
         <div 
@@ -1611,9 +1617,9 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
       </aside>
 
       {/* Main Right Workspace Wrapper */}
-      <div className="admin-main-wrapper content-light">
+      <div className="admin-main-wrapper content-light student-main-wrapper">
         {/* Top Header Banner Card */}
-        <header className="admin-top-header-banner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <header className="admin-top-header-banner student-top-banner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div className="admin-banner-content">
             <div className="admin-header-title-row">
               <button 
@@ -1642,7 +1648,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
         </header>
 
         {/* Scrollable Main Content Space */}
-        <main className="admin-main-content">
+        <main className="admin-main-content student-main-content">
           
           {/* TAB 1: MARK ATTENDANCE */}
           {activeTab === 'mark-attendance' && (
@@ -1725,7 +1731,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                               <td>{row.time}</td>
                               <td>
                                 {row.qr_session_id ? (
-                                  <span className="status-badge success" style={{ background: 'rgba(255, 183, 3, 0.15)', color: '#ffb703', border: '1px solid rgba(255, 183, 3, 0.3)' }}>
+                                  <span className="status-badge success" style={{ background: 'rgba(251, 191, 36, 0.15)', color: '#fbbf24', border: '1px solid rgba(251, 191, 36, 0.3)' }}>
                                     Live QR #{row.qr_session_id}
                                   </span>
                                 ) : (
@@ -1821,7 +1827,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
                 <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <FileText size={22} color="#ffb703" />
+                  <FileText size={22} color="#fbbf24" />
                   Submit Absence / Leave Application
                 </h2>
 
@@ -1984,7 +1990,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
 
               <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 <h3 style={{ fontSize: '1.05rem', fontWeight: '600', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <History size={18} color="#ffb703" />
+                  <History size={18} color="#fbbf24" />
                   My Leave Applications Status
                 </h3>
 
@@ -2036,7 +2042,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
               <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <Bell size={22} color="#ffb703" />
+                    <Bell size={22} color="#fbbf24" />
                     Notice Board & Campus Announcements
                   </h2>
                   <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
@@ -2102,9 +2108,9 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           {/* TAB 7: MY PROFILE */}
           {activeTab === 'profile' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div style={{ padding: '28px', borderRadius: '18px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 10px 30px rgba(0, 0, 0, 0.05)', display: 'flex', flexDirection: 'column', gap: '24px' }}>
+              <div className="glass-panel student-profile-main-card" style={{ padding: '28px', borderRadius: '18px', background: '#ffffff', border: '1px solid #e2e8f0', boxShadow: '0 10px 30px rgba(0, 0, 0, 0.05)', display: 'flex', flexDirection: 'column', gap: '24px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flexWrap: 'wrap', borderBottom: '1px solid #e2e8f0', paddingBottom: '20px' }}>
-                  <div style={{ width: '84px', height: '84px', borderRadius: '50%', background: 'linear-gradient(135deg, #f59e0b, #d97706)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(245, 158, 11, 0.35)' }}>
+                  <div style={{ width: '84px', height: '84px', borderRadius: '50%', background: 'linear-gradient(135deg, #fbbf24, #f59e0b)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 16px rgba(251, 191, 36, 0.35)' }}>
                     <User size={44} color="#ffffff" strokeWidth={2.5} />
                   </div>
                   <div>
@@ -2159,7 +2165,13 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ color: '#1e293b', fontWeight: '600' }}>Student Email</span>
-                        <strong style={{ color: '#0f172a', background: '#ffffff', padding: '4px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontWeight: '700' }}>{user.email || user.username || `${(user.enrollment_no || 'student').toLowerCase()}@student.edu`}</strong>
+                        <strong style={{ color: '#0f172a', background: '#ffffff', padding: '4px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontWeight: '700' }}>
+                          {(user.email && user.email.includes('@')) 
+                            ? user.email 
+                            : (user.username && user.username.includes('@')) 
+                              ? user.username 
+                              : `${(user.enrollment_no || 'student').toLowerCase()}@student.edu`}
+                        </strong>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <span style={{ color: '#1e293b', fontWeight: '600' }}>Campus Location</span>
@@ -2205,7 +2217,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Settings size={22} color="#ffb703" />
+                  <Settings size={22} color="#fbbf24" />
                   Settings & Security Configuration
                 </h2>
 
@@ -2237,10 +2249,17 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
 
       {/* Mobile Curved Dock Bottom Navigation Bar (Paytm / Fintech FAB Scoop Notch Style) */}
       <div className="student-mobile-curved-dock">
-        {/* SVG Curved Scoop Notch Background */}
-        <svg className="student-dock-svg-bg" viewBox="0 0 375 64" preserveAspectRatio="none">
+        {/* SVG Curved Scoop Notch Background matching reference image */}
+        <svg className="student-dock-svg-bg" viewBox="0 0 375 68" preserveAspectRatio="none">
+          {/* Soft Scoop Shadow Groove */}
           <path 
-            d="M 0,14 L 132,14 C 148,14 154,46 187.5,46 C 221,46 227,14 243,14 L 375,14 L 375,64 L 0,64 Z" 
+            d="M 134,12 C 148,12 154,54 187.5,54 C 221,54 227,12 241,12 Z" 
+            fill="#cbd5e1" 
+            opacity="0.5"
+          />
+          {/* Main White Dock Body with Top Rounded Corners */}
+          <path 
+            d="M 16,12 L 134,12 C 148,12 154,50 187.5,50 C 221,50 227,12 241,12 L 359,12 C 368,12 375,19 375,28 L 375,68 L 0,68 L 0,28 C 0,19 7,12 16,12 Z" 
             fill="#ffffff" 
           />
         </svg>
@@ -2252,7 +2271,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             className={`student-dock-item ${activeTab === 'leave' ? 'active' : ''}`}
             onClick={() => setActiveTab('leave')}
           >
-            <FileText size={20} />
+            <FileText size={21} />
             <span>Leave</span>
           </button>
 
@@ -2262,7 +2281,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             className={`student-dock-item ${activeTab === 'notices' ? 'active' : ''}`}
             onClick={() => setActiveTab('notices')}
           >
-            <Bell size={20} />
+            <Bell size={21} />
             <span>Notice</span>
           </button>
 
@@ -2274,7 +2293,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
               onClick={() => setActiveTab('mark-attendance')}
               title="Mark Attendance"
             >
-              <QrCode size={26} strokeWidth={2.5} />
+              <QrCode size={25} color="#ffffff" strokeWidth={2.4} />
             </button>
           </div>
 

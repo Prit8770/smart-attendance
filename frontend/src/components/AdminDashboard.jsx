@@ -3453,6 +3453,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       course: student.course,
       semester: student.semester,
       mobile: student.mobile,
+      device_id: student.device_id || '',
       password: '',
       resetPassword: false
     });
@@ -3461,6 +3462,29 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     setNameTouched(false);
     setMobileTouched(false);
     setShowStudentModal(true);
+  };
+
+  // Reset Student Device ID Handler
+  const handleResetDeviceId = async (studentId, studentName) => {
+    try {
+      const response = await fetch(`/api/students/${studentId}/reset-device`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        showToast(data.message || 'Device ID reset successfully!', 'success', 3500);
+        setStudents(prev => prev.map(s => s.id === studentId ? { ...s, device_id: null, locked_until: null } : s));
+        setStudentForm(prev => ({ ...prev, device_id: '' }));
+      } else {
+        showToast(data.error || 'Failed to reset Device ID', 'warning', 3500);
+      }
+    } catch (err) {
+      showToast('Error resetting Device ID', 'error', 3000);
+    }
   };
 
   // Faculty CRUD Handlers
@@ -8319,6 +8343,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                                 <th>Semester</th>
                                 <th>Division</th>
                                 <th>Mobile</th>
+                                <th>Device Binding</th>
                                 <th>Actions</th>
                               </tr>
                             </thead>
@@ -8343,6 +8368,22 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                                     <td>Sem {student.semester}</td>
                                     <td style={{ fontWeight: 600 }}>{student.division || '-'}</td>
                                     <td>{student.mobile}</td>
+                                    <td>
+                                      {student.device_id ? (
+                                        <span 
+                                          title={`Bound Device ID: ${student.device_id}`}
+                                          style={{ background: '#e6f4ea', color: '#137333', border: '1px solid #ceead6', padding: '3px 8px', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '700', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                        >
+                                          🔒 Bound
+                                        </span>
+                                      ) : (
+                                        <span 
+                                          style={{ background: '#fff7ed', color: '#c2410c', border: '1px solid #ffedd5', padding: '3px 8px', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '700', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                        >
+                                          🔓 Unlocked
+                                        </span>
+                                      )}
+                                    </td>
                                     <td>
                                       <div style={styles.actionButtonContainer}>
                                         <button className="btn btn-secondary" onClick={() => openEditModal(student)} style={styles.actionBtn}>
@@ -10276,6 +10317,52 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                             }
                           }}
                         />
+                      </div>
+                    )}
+
+                    {modalMode === 'edit' && (
+                      <div style={styles.formGroup}>
+                        <label style={styles.formLabel}>
+                          Device Binding Status (Device ID)
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                          <input
+                            type="text"
+                            className="glass-input"
+                            value={studentForm.device_id ? `Bound (${studentForm.device_id})` : 'Not Bound (Unlocked - Ready for First Login)'}
+                            readOnly
+                            style={{
+                              flex: 1,
+                              background: studentForm.device_id ? 'rgba(230, 244, 234, 0.6)' : 'rgba(255, 247, 237, 0.6)',
+                              color: studentForm.device_id ? '#137333' : '#c2410c',
+                              fontWeight: '600'
+                            }}
+                          />
+                          {studentForm.device_id && (
+                            <button
+                              type="button"
+                              onClick={() => handleResetDeviceId(studentForm.id, studentForm.name)}
+                              style={{
+                                background: '#fee2e2',
+                                color: '#dc2626',
+                                border: '1px solid #fca5a5',
+                                fontWeight: '700',
+                                whiteSpace: 'nowrap',
+                                padding: '8px 14px',
+                                borderRadius: '8px',
+                                cursor: 'pointer',
+                                fontSize: '0.85rem'
+                              }}
+                            >
+                              🔓 Reset Device ID
+                            </button>
+                          )}
+                        </div>
+                        <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                          {studentForm.device_id
+                            ? 'Account is locked to this registered device. Click Reset Device ID to allow login from a new device.'
+                            : 'Account is unlocked. When the student logs in next time, their new device will be bound automatically.'}
+                        </span>
                       </div>
                     )}
 

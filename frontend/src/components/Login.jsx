@@ -51,12 +51,19 @@ export default function Login({ onLoginSuccess, onBack }) {
     setLoading(true);
     setError('');
 
+    let devId = localStorage.getItem('attendance_device_id');
+    if (!devId) {
+      devId = 'dev_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now();
+      localStorage.setItem('attendance_device_id', devId);
+    }
+
     const cleanId = identifier.trim();
     const payload = {
       identifier: cleanId,
       email: cleanId,
       username: cleanId,
-      password
+      password,
+      deviceId: devId
     };
 
     let response;
@@ -164,29 +171,29 @@ export default function Login({ onLoginSuccess, onBack }) {
           <div style={{
             width: '64px',
             height: '64px',
-            background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+            background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
             borderRadius: '16px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             margin: '0 auto 16px auto',
-            boxShadow: '0 6px 20px rgba(245, 158, 11, 0.4)'
+            boxShadow: '0 6px 20px rgba(251, 191, 36, 0.4)'
           }}>
             <GraduationCap size={32} color="#001b3d" />
           </div>
-          <h2 style={{ fontSize: '1.9rem', fontWeight: '800', margin: '4px 0 6px', color: '#ffffff' }}>Edu<span style={{ color: '#f59e0b' }}>Mark</span></h2>
+          <h2 style={{ fontSize: '1.9rem', fontWeight: '800', margin: '4px 0 6px', color: '#ffffff' }}>Edu<span style={{ color: '#fbbf24' }}>Mark</span></h2>
           <p style={{ color: '#93c5fd', fontSize: '0.9rem', margin: 0 }}>Sign in to access your academic dashboard</p>
         </div>
 
         {isStudentLocked && (
           <div style={styles.lockoutBanner}>
-            <ShieldAlert size={26} color="#f59e0b" style={{ flexShrink: 0 }} />
+            <ShieldAlert size={26} color="#fbbf24" style={{ flexShrink: 0 }} />
             <div>
               <div style={{ fontWeight: '700', fontSize: '0.95rem', color: '#fbbf24' }}>
                 Student Account Temporarily Locked
               </div>
               <div style={{ fontSize: '0.85rem', color: '#e2e8f0', marginTop: '3px', lineHeight: '1.4' }}>
-                Tab changed or app exited. Student login blocked for <span style={{ fontWeight: '800', color: '#f59e0b', fontSize: '1rem' }}>{formatCooldown(cooldownTime)}</span>.
+                Tab changed or app exited. Student login blocked for <span style={{ fontWeight: '800', color: '#fbbf24', fontSize: '1rem' }}>{formatCooldown(cooldownTime)}</span>. <span style={{ color: '#93c5fd', fontSize: '0.82rem', fontWeight: '500' }}>(Admin & Faculty can sign in anytime)</span>
               </div>
             </div>
           </div>
@@ -197,7 +204,7 @@ export default function Login({ onLoginSuccess, onBack }) {
 
           <div style={styles.inputGroup}>
             <label style={{ ...styles.label, fontSize: '0.9rem', fontWeight: '600', color: '#e2e8f0', marginBottom: '8px', display: 'block' }}>
-              Email ID (Gmail) <span style={{ color: '#f59e0b' }}>*</span>
+              Email ID (Gmail) <span style={{ color: '#fbbf24' }}>*</span>
             </label>
             <div style={styles.inputWrapper}>
               <Mail size={18} style={styles.inputIcon} />
@@ -218,7 +225,7 @@ export default function Login({ onLoginSuccess, onBack }) {
 
           <div style={styles.inputGroup}>
             <label style={{ ...styles.label, fontSize: '0.9rem', fontWeight: '600', color: '#e2e8f0', marginBottom: '8px', display: 'block' }}>
-              Password <span style={{ color: '#f59e0b' }}>*</span>
+              Password <span style={{ color: '#fbbf24' }}>*</span>
             </label>
             <div style={styles.inputWrapper}>
               <KeyRound size={18} style={styles.inputIcon} />
@@ -267,14 +274,14 @@ export default function Login({ onLoginSuccess, onBack }) {
               fontWeight: '700',
               borderRadius: '12px',
               border: 'none',
-              background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-              color: '#ffffff',
+              background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+              color: '#001b3d',
               cursor: loading ? 'not-allowed' : 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
               gap: '8px',
-              boxShadow: '0 6px 20px rgba(245, 158, 11, 0.4)',
+              boxShadow: '0 6px 20px rgba(251, 191, 36, 0.4)',
               transition: 'all 0.15s ease',
               opacity: loading ? 0.7 : 1,
               marginTop: '10px'
@@ -289,7 +296,7 @@ export default function Login({ onLoginSuccess, onBack }) {
           </button>
         </form>
         <p style={{ marginTop: '65px', textAlign: 'center', fontSize: '0.82rem', color: '#93c5fd', lineHeight: '1.4' }}>
-          EduMark © {new Date().getFullYear()} • <span style={{ color: '#f59e0b', fontWeight: '700' }}>This Module Built and Designed By Dabhi Prit And Jadav Dashrath</span>
+          EduMark © {new Date().getFullYear()} • <span style={{ color: '#fbbf24', fontWeight: '700' }}>This Module Built and Designed By Dabhi Prit And Jadav Dashrath</span>
         </p>
       </div>
     </div>
@@ -409,10 +416,10 @@ const styles = {
     transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
   },
   activeTab: {
-    background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+    background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
     color: '#001b3d',
     fontWeight: '700',
-    boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
+    boxShadow: '0 4px 14px rgba(251, 191, 36, 0.35)',
   },
   form: {
     display: 'flex',
@@ -453,14 +460,14 @@ const styles = {
     fontWeight: '500'
   },
   lockoutBanner: {
-    background: 'rgba(245, 158, 11, 0.12)',
-    border: '1px solid rgba(245, 158, 11, 0.3)',
+    background: 'rgba(251, 191, 36, 0.12)',
+    border: '1px solid rgba(251, 191, 36, 0.3)',
     borderRadius: '16px',
     padding: '14px 16px',
     marginBottom: '20px',
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
-    boxShadow: '0 4px 15px rgba(245, 158, 11, 0.15)'
+    boxShadow: '0 4px 15px rgba(251, 191, 36, 0.15)'
   }
 };

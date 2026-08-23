@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Download, X, Smartphone, Share } from 'lucide-react';
+import { Download, X, Smartphone, Share, GraduationCap } from 'lucide-react';
 
 export default function PwaInstallPrompt() {
   const [deferredPrompt, setDeferredPrompt] = useState(null);
@@ -77,7 +77,7 @@ export default function PwaInstallPrompt() {
       <div className="glass-panel" style={styles.bannerCard}>
         <div style={styles.leftGroup}>
           <div style={styles.appIconWrapper}>
-            <img src="/logo.png" alt="EduMark Icon" style={{ width: '30px', height: '30px', borderRadius: '8px', objectFit: 'cover' }} />
+            <GraduationCap size={24} color="#001b3d" strokeWidth={2.5} />
           </div>
           <div>
             <h4 style={styles.title}>Install Smart Attendance App</h4>
@@ -149,8 +149,8 @@ const styles = {
     width: '42px',
     height: '42px',
     borderRadius: '12px',
-    background: 'rgba(245, 158, 11, 0.15)',
-    border: '1px solid rgba(245, 158, 11, 0.35)',
+    background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
+    boxShadow: '0 4px 14px rgba(251, 191, 36, 0.4)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',

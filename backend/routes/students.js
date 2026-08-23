@@ -57,7 +57,7 @@ router.get('/', authenticateJWT, async (req, res) => {
 
     while (hasMore) {
       const { data: chunk, error } = await supabase.from('students')
-        .select('id, enrollment_no, roll_no, division, name, email, course, semester, mobile, username, plain_password')
+        .select('id, enrollment_no, roll_no, division, name, email, course, semester, mobile, username, plain_password, device_id, locked_until')
         .range(from, from + step - 1);
 
       if (error) throw error;
@@ -270,6 +270,7 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
         semester: updateObj.semester,
         mobile: updateObj.mobile,
         username: student.username,
+        device_id: updateObj.device_id !== undefined ? updateObj.device_id : student.device_id,
         plain_password: newPassword || student.plain_password,
         generatedPassword: newPassword // Will be null if not reset/modified
       }
@@ -282,6 +283,26 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
       });
     }
     res.status(500).json({ error: err.message || 'Failed to update student' });
+  }
+});
+
+// POST reset student device ID
+router.post('/:id/reset-device', authenticateJWT, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { data: student } = await supabase.from('students').select('id, name, enrollment_no').eq('id', id).maybeSingle();
+    if (!student) {
+      return res.status(404).json({ error: 'Student not found' });
+    }
+    const { error } = await supabase.from('students').update({ device_id: null, locked_until: null }).eq('id', id);
+    if (error) throw error;
+    res.json({
+      success: true,
+      message: `Device ID for ${student.name} (${student.enrollment_no}) reset successfully. Student can now log in from a new device.`
+    });
+  } catch (err) {
+    console.error('Error resetting device ID:', err);
+    res.status(500).json({ error: err.message || 'Failed to reset device ID' });
   }
 });
 

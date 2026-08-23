@@ -19,17 +19,17 @@ const LandingPage = ({ onGetStarted }) => {
       <header style={styles.header} className="animate-fade-in-up landing-top-header">
         <div className="landing-logo-container" style={styles.logoContainer}>
           <div style={{
-            background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+            background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
             borderRadius: '12px',
             padding: '8px 10px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 4px 14px rgba(245, 158, 11, 0.4)'
+            boxShadow: '0 4px 14px rgba(251, 191, 36, 0.4)'
           }}>
             <GraduationCap size={26} color="#001b3d" />
           </div>
-          <h1 style={styles.logoText}>Edu<span style={{color: '#f59e0b'}}>Mark</span></h1>
+          <h1 style={styles.logoText}>Edu<span style={{color: '#fbbf24'}}>Mark</span></h1>
         </div>
         <div className="landing-header-actions" style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="btn" style={styles.ghostBtn} onClick={() => {
@@ -50,13 +50,13 @@ const LandingPage = ({ onGetStarted }) => {
           {/* Left Text Content */}
           <div style={styles.heroTextContent} className="animate-fade-in-up delay-1">
             <div style={styles.badge} className="edumark-badge">
-              <Zap size={16} color="#f59e0b" className="spin-slow" />
+              <Zap size={16} color="#fbbf24" className="spin-slow" />
               <span>EduMark Academic Management Platform</span>
             </div>
             
             <h2 style={styles.heroTitle}>
               Transform Academic Management <br />
-              <span style={{ color: '#f59e0b' }}>with Intelligence & Security</span>
+              <span style={{ color: '#fbbf24' }}>with Intelligence & Security</span>
             </h2>
             
             <p style={styles.heroSubtitle}>
@@ -218,24 +218,24 @@ const LandingPage = ({ onGetStarted }) => {
       <footer style={styles.footer}>
         <div style={styles.logoContainer}>
           <div style={{
-            background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+            background: 'linear-gradient(135deg, #fbbf24, #f59e0b)',
             borderRadius: '10px',
             padding: '6px 8px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: '0 4px 12px rgba(245, 158, 11, 0.4)'
+            boxShadow: '0 4px 12px rgba(251, 191, 36, 0.4)'
           }}>
             <GraduationCap size={20} color="#001b3d" />
           </div>
           <span style={{ ...styles.logoText, fontSize: '1.4rem' }}>
-            Edu<span style={{ color: '#f59e0b' }}>Mark</span>
+            Edu<span style={{ color: '#fbbf24' }}>Mark</span>
           </span>
         </div>
         <p style={{ marginTop: '10px', fontSize: '0.9rem', color: '#93c5fd' }}>
           © {new Date().getFullYear()} EduMark Academic Management System.
         </p>
-        <p style={{ marginTop: '6px', fontSize: '0.88rem', fontWeight: '700', color: '#f59e0b', letterSpacing: '0.02em' }}>
+        <p style={{ marginTop: '6px', fontSize: '0.88rem', fontWeight: '700', color: '#fbbf24', letterSpacing: '0.02em' }}>
           This Module Built and Designed By Dabhi Prit And Jadav Dashrath
         </p>
       </footer>
