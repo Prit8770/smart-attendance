@@ -101,25 +101,9 @@ router.post('/login', async (req, res) => {
           }
         }
 
-        // 3b. Check device-level lock for all student accounts sharing this device_id
-        if (deviceId) {
-          const { data: devLocked } = await supabase
-            .from('students')
-            .select('locked_until')
-            .eq('device_id', deviceId)
-            .not('locked_until', 'is', null);
-
-          if (devLocked && devLocked.length > 0) {
-            for (const s of devLocked) {
-              if (s.locked_until) {
-                const lMs = parseInt(s.locked_until, 10);
-                if (!isNaN(lMs) && Date.now() < lMs) {
-                  maxLockTime = Math.max(maxLockTime, lMs);
-                }
-              }
-            }
-          }
-        }
+        // NOTE: Device-level lock removed intentionally.
+        // Only the specific student's own lock is checked (above).
+        // One device = one student binding is enforced via device_id column, not via lockout.
 
         if (maxLockTime > Date.now()) {
           const remainingSec = Math.ceil((maxLockTime - Date.now()) / 1000);
@@ -275,24 +259,8 @@ router.post('/student/login', async (req, res) => {
       }
     }
 
-    if (deviceId) {
-      const { data: devLocked } = await supabase
-        .from('students')
-        .select('locked_until')
-        .eq('device_id', deviceId)
-        .not('locked_until', 'is', null);
-
-      if (devLocked && devLocked.length > 0) {
-        for (const s of devLocked) {
-          if (s.locked_until) {
-            const lMs = parseInt(s.locked_until, 10);
-            if (!isNaN(lMs) && Date.now() < lMs) {
-              maxLockTime = Math.max(maxLockTime, lMs);
-            }
-          }
-        }
-      }
-    }
+    // NOTE: Device-level lock removed intentionally.
+    // Only the specific student's own lock is checked (above).
 
     if (maxLockTime > Date.now()) {
       const remainingSec = Math.ceil((maxLockTime - Date.now()) / 1000);
@@ -756,9 +724,9 @@ router.post('/student/lockout', async (req, res) => {
       await supabase.from('students').update({ locked_until: lockUntil.toString() }).or(`email.eq.${cleanId},username.eq.${cleanId},enrollment_no.eq.${cleanId}`);
     }
 
-    if (deviceId) {
-      await supabase.from('students').update({ locked_until: lockUntil.toString() }).eq('device_id', deviceId);
-    }
+    // NOTE: Device-wide lock intentionally removed.
+    // Locking by device_id was causing ALL students on that device to get locked,
+    // which broke the 1-device-1-student policy. Only the specific student is locked now.
 
     return res.json({ success: true, lockedUntil: lockUntil });
   } catch (err) {
