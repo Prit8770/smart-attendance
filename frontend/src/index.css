@@ -3821,4 +3821,10 @@ button.compact-date-btn {
     scrollbar-width: none !important;
     -ms-overflow-style: none !important;
   }
-}
+}
+
+/* Ensure SweetAlert modals always render in front of all edit/add modal popups */
+.swal2-container {
+  z-index: 99999999 !important;
+}
+
