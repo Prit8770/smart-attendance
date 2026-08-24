@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Users, KeyRound, QrCode, MapPin, BarChart3, Download, Upload, TrendingUp, Plus, Search,
-  Trash2, Edit, Check, CheckCircle, XCircle, Clock, ShieldAlert, LogOut, RefreshCw,
+  Trash2, Edit, Check, CheckCircle, XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Unlock,
   Sun, Moon, GraduationCap, User, Settings, Folder, Calendar, Menu, RotateCcw, X,
   LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileText, ClipboardList, AlertTriangle, UserPlus, BookOpen, FileSpreadsheet, Send, MessageSquare, ArrowLeft
 } from 'lucide-react';
@@ -3464,8 +3464,21 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     setShowStudentModal(true);
   };
 
-  // Reset Student Device ID Handler
+  // Reset Student Device ID Handler (Single Student with SweetAlert Confirmation)
   const handleResetDeviceId = async (studentId, studentName) => {
+    const result = await Swal.fire({
+      title: 'Reset Device ID?',
+      text: `Are you sure you want to reset device binding for ${studentName || 'this student'}? They will be able to log in from a new device.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#f59e0b',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Yes, Reset Device ID',
+      cancelButtonText: 'Cancel'
+    });
+
+    if (!result.isConfirmed) return;
+
     try {
       const response = await fetch(`/api/students/${studentId}/reset-device`, {
         method: 'POST',
@@ -3476,7 +3489,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       });
       const data = await response.json();
       if (response.ok && data.success) {
-        showToast(data.message || 'Device ID reset successfully!', 'success', 3500);
+        Swal.fire('Device Reset!', data.message || 'Device ID reset successfully!', 'success');
         setStudents(prev => prev.map(s => s.id === studentId ? { ...s, device_id: null, locked_until: null } : s));
         setStudentForm(prev => ({ ...prev, device_id: '' }));
       } else {
@@ -3484,6 +3497,64 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       }
     } catch (err) {
       showToast('Error resetting Device ID', 'error', 3000);
+    }
+  };
+
+  // Bulk Reset Student Device IDs Handler (With SweetAlert Confirmation)
+  const handleBulkResetDeviceId = async () => {
+    if (!selectedStudentIds || selectedStudentIds.length === 0) {
+      showToast('Please select at least one student to reset Device ID', 'warning');
+      return;
+    }
+
+    const count = selectedStudentIds.length;
+    const isAllSelected = count >= students.length;
+
+    const result = await Swal.fire({
+      title: isAllSelected ? 'Reset ALL Device IDs?' : `Reset Device IDs for ${count} Student(s)?`,
+      text: isAllSelected 
+        ? `Are you sure you want to reset device bindings for ALL ${count} students? All students will be able to register new devices on next login.`
+        : `Are you sure you want to reset device bindings for ${count} selected student(s)? They will be able to log in from new devices.`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#f59e0b',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Yes, Reset Device IDs',
+      cancelButtonText: 'Cancel'
+    });
+
+    if (!result.isConfirmed) return;
+
+    try {
+      const response = await fetch('/api/students/bulk-reset-device', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          studentIds: selectedStudentIds,
+          resetAll: isAllSelected
+        })
+      });
+      const data = await response.json();
+      if (response.ok && data.success) {
+        Swal.fire(
+          'Device IDs Reset!',
+          data.message || `Device IDs for ${count} student(s) reset successfully. They can now log in from new devices.`,
+          'success'
+        );
+        if (isAllSelected) {
+          setStudents(prev => prev.map(s => ({ ...s, device_id: null, locked_until: null })));
+        } else {
+          const resetSet = new Set(selectedStudentIds.map(String));
+          setStudents(prev => prev.map(s => resetSet.has(String(s.id)) ? { ...s, device_id: null, locked_until: null } : s));
+        }
+      } else {
+        showToast(data.error || 'Failed to reset Device IDs', 'warning', 3500);
+      }
+    } catch (err) {
+      showToast('Error resetting Device IDs', 'error', 3000);
     }
   };
 
@@ -8303,6 +8374,60 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Student</span>
                       </button>
                     </div>
+
+                    {selectedStudentIds.length > 0 && (
+                      <div className="desktop-only-bulk-delete-wrapper" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px', width: '100%', marginTop: '6px' }}>
+                        <button
+                          onClick={handleBulkResetDeviceId}
+                          style={{
+                            padding: '9px 18px',
+                            fontSize: '0.86rem',
+                            fontWeight: '700',
+                            borderRadius: '8px',
+                            border: '1px solid #fcd34d',
+                            background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                            color: '#ffffff',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
+                            transition: 'all 0.15s ease'
+                          }}
+                          title={`Reset Device ID for ${selectedStudentIds.length} selected student(s)`}
+                        >
+                          <Unlock size={16} color="#ffffff" />
+                          <span style={{ color: '#ffffff' }}>
+                            Reset Device ID ({selectedStudentIds.length})
+                          </span>
+                        </button>
+
+                        <button
+                          onClick={() => handleBulkDeleteStudents(selectedStudentIds)}
+                          style={{
+                            padding: '9px 20px',
+                            fontSize: '0.86rem',
+                            fontWeight: '700',
+                            borderRadius: '8px',
+                            border: 'none',
+                            background: 'linear-gradient(135deg, #ef4444, #dc2626)',
+                            color: '#ffffff',
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            boxShadow: '0 4px 14px rgba(239, 68, 68, 0.4)',
+                            transition: 'all 0.15s ease'
+                          }}
+                          title={`Delete ${selectedStudentIds.length} selected student(s)`}
+                        >
+                          <Trash2 size={16} color="#ffffff" />
+                          <span style={{ color: '#ffffff' }}>
+                            Delete Selected ({selectedStudentIds.length})
+                          </span>
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
 

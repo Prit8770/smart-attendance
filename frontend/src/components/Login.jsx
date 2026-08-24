@@ -46,16 +46,54 @@ export default function Login({ onLoginSuccess, onBack }) {
     return () => clearInterval(interval);
   }, []);
 
+  const getOrCreateDeviceId = () => {
+    let devId = localStorage.getItem('attendance_device_id');
+    if (!devId) {
+      const match = document.cookie.match(/(?:^|; )attendance_device_id=([^;]*)/);
+      if (match && match[1]) {
+        devId = decodeURIComponent(match[1]);
+      }
+    }
+    if (!devId) {
+      devId = 'dev_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now();
+    }
+    try {
+      localStorage.setItem('attendance_device_id', devId);
+      document.cookie = `attendance_device_id=${encodeURIComponent(devId)}; path=/; max-age=315360000; SameSite=Lax`;
+    } catch (e) {}
+    return devId;
+  };
+
+  const getDeviceFingerprint = () => {
+    try {
+      const screenDetails = `${window.screen.width}x${window.screen.height}x${window.screen.colorDepth}_${window.devicePixelRatio || 1}`;
+      const userAgent = navigator.userAgent || '';
+      const lang = navigator.language || '';
+      const platform = navigator.platform || '';
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+      const cores = navigator.hardwareConcurrency || '';
+      
+      const str = `${screenDetails}|${userAgent}|${lang}|${platform}|${timeZone}|${cores}`;
+      
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = (hash << 5) - hash + char;
+        hash |= 0;
+      }
+      return 'fp_' + Math.abs(hash).toString(36);
+    } catch (e) {
+      return '';
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
 
-    let devId = localStorage.getItem('attendance_device_id');
-    if (!devId) {
-      devId = 'dev_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now();
-      localStorage.setItem('attendance_device_id', devId);
-    }
+    const devId = getOrCreateDeviceId();
+    const devFp = getDeviceFingerprint();
 
     const cleanId = identifier.trim();
     const payload = {
@@ -63,7 +101,8 @@ export default function Login({ onLoginSuccess, onBack }) {
       email: cleanId,
       username: cleanId,
       password,
-      deviceId: devId
+      deviceId: devId,
+      deviceFingerprint: devFp
     };
 
     let response;

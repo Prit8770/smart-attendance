@@ -1442,6 +1442,10 @@ select option {
     font-size: 0.8rem !important;
     flex: 0 0 auto !important;
   }
+
+  .desktop-only-bulk-delete-wrapper {
+    display: none !important;
+  }
 }
 
 @media (max-width: 480px) {

@@ -306,6 +306,38 @@ router.post('/:id/reset-device', authenticateJWT, requireAdmin, async (req, res)
   }
 });
 
+// POST bulk reset student device IDs
+router.post('/bulk-reset-device', authenticateJWT, requireAdmin, async (req, res) => {
+  const { studentIds } = req.body;
+  if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+    return res.status(400).json({ error: 'Please select at least one student' });
+  }
+
+  try {
+    const { error } = await supabase
+      .from('students')
+      .update({ device_id: null, locked_until: null })
+      .in('id', studentIds);
+
+    if (error) {
+      if (error.code === 'PGRST204' || error.message?.includes('device_id')) {
+        return res.status(400).json({
+          error: "Supabase DB Error: 'device_id' column database table me nahi hai.\n\nKripya Supabase Dashboard -> SQL Editor me ye command run karein:\n\nALTER TABLE students ADD COLUMN IF NOT EXISTS device_id TEXT;"
+        });
+      }
+      throw error;
+    }
+
+    res.json({
+      success: true,
+      message: `Device IDs for ${studentIds.length} student(s) reset successfully. They can now log in from new devices.`
+    });
+  } catch (err) {
+    console.error('Error bulk resetting device IDs:', err);
+    res.status(500).json({ error: err.message || 'Failed to bulk reset device IDs' });
+  }
+});
+
 // POST import batch of students (High Performance Batch Upsert < 1s)
 router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
   const { students: importedList } = req.body;
@@ -591,4 +623,61 @@ router.post('/promote', authenticateJWT, requireAdmin, async (req, res) => {
   }
 });
 
+// Admin Bulk Reset Student Device Bindings (Must be defined BEFORE /:id/reset-device)
+router.post('/bulk-reset-device', authenticateJWT, requireAdmin, async (req, res) => {
+  const { studentIds, resetAll } = req.body;
+  
+  try {
+    if (resetAll || !studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+      const { error } = await supabase
+        .from('students')
+        .update({ device_id: null, locked_until: null })
+        .not('id', 'is', null);
+
+      if (error) throw error;
+      return res.json({ success: true, message: 'All student device bindings & lockouts reset successfully!' });
+    }
+
+    const chunkSize = 500;
+    for (let i = 0; i < studentIds.length; i += chunkSize) {
+      const chunk = studentIds.slice(i, i + chunkSize);
+      const { error } = await supabase
+        .from('students')
+        .update({ device_id: null, locked_until: null })
+        .in('id', chunk);
+
+      if (error) throw error;
+    }
+
+    res.json({ success: true, message: `Device binding & lockout reset successfully for ${studentIds.length} student(s)!` });
+  } catch (err) {
+    console.error('Bulk reset device binding error:', err);
+    res.status(500).json({ error: err.message || 'Failed to reset student device bindings.' });
+  }
+});
+
+// Admin Reset Student Device Binding (Single Student)
+const resetSingleDevice = async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { error } = await supabase
+      .from('students')
+      .update({ device_id: null, locked_until: null })
+      .eq('id', id);
+
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Device binding & lockout reset successfully!' });
+  } catch (err) {
+    console.error('Reset device binding error:', err);
+    res.status(500).json({ error: err.message || 'Failed to reset student device binding.' });
+  }
+};
+
+router.post('/:id/reset-device', authenticateJWT, requireAdmin, resetSingleDevice);
+router.put('/:id/reset-device', authenticateJWT, requireAdmin, resetSingleDevice);
+
 module.exports = router;
+
+
+
