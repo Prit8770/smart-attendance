@@ -489,15 +489,14 @@ const styles = {
     zIndex: 2
   },
   errorAlert: {
-    background: 'rgba(251, 191, 36, 0.12)',
-    border: '1px solid rgba(251, 191, 36, 0.35)',
-    color: '#fbbf24',
+    background: 'rgba(239, 68, 68, 0.1)',
+    border: '1px solid rgba(239, 68, 68, 0.2)',
+    color: '#ef4444',
     padding: '14px',
     borderRadius: '12px',
     fontSize: '0.9rem',
     textAlign: 'center',
-    fontWeight: '600',
-    lineHeight: '1.5'
+    fontWeight: '500'
   },
   lockoutBanner: {
     background: 'rgba(251, 191, 36, 0.12)',
