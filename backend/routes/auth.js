@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const { supabase } = require('../db');
 const fs = require('fs');
 const path = require('path');
+const { notifyChange } = require('../syncEmitter');
 
 const overrideFile = path.join(__dirname, '../admin_profile_override.json');
 const getAdminOverride = () => {
@@ -22,6 +23,59 @@ const setAdminOverride = (data) => {
 };
 
 const JWT_SECRET = process.env.JWT_SECRET || 'super_secret_college_attendance_key_123!';
+
+const facultyRolesFilePath = path.join(__dirname, '../data/faculty_roles.json');
+const facultySubjectsFilePath = path.join(__dirname, '../data/faculty_subjects.json');
+
+const loadFacultyRolesMap = () => {
+  try {
+    if (fs.existsSync(facultyRolesFilePath)) {
+      return JSON.parse(fs.readFileSync(facultyRolesFilePath, 'utf8'));
+    }
+  } catch (e) {}
+  return {};
+};
+
+const saveFacultyRolesMap = (map) => {
+  try {
+    const dir = path.dirname(facultyRolesFilePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(facultyRolesFilePath, JSON.stringify(map, null, 2), 'utf8');
+  } catch (e) {}
+};
+
+const loadFacultySubjectsMap = () => {
+  try {
+    if (fs.existsSync(facultySubjectsFilePath)) {
+      return JSON.parse(fs.readFileSync(facultySubjectsFilePath, 'utf8'));
+    }
+  } catch (e) {}
+  return {};
+};
+
+const saveFacultySubjectsMap = (map) => {
+  try {
+    const dir = path.dirname(facultySubjectsFilePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(facultySubjectsFilePath, JSON.stringify(map, null, 2), 'utf8');
+  } catch (e) {}
+};
+
+function getFacultyRoles(facultyId, facultyEmail, facultyUsername, employeeNo) {
+  try {
+    const map = loadFacultyRolesMap();
+    if (map) {
+      if (facultyId && map[facultyId]) return map[facultyId];
+      if (facultyId && map[String(facultyId)]) return map[String(facultyId)];
+      if (facultyEmail && map[facultyEmail.toLowerCase()]) return map[facultyEmail.toLowerCase()];
+      if (facultyUsername && map[facultyUsername.toLowerCase()]) return map[facultyUsername.toLowerCase()];
+      if (employeeNo && map[employeeNo]) return map[employeeNo];
+    }
+  } catch (e) {
+    console.error('Error reading faculty roles:', e);
+  }
+  return ['faculty'];
+}
 
 // Universal Unified Login Route (Auto-detect Admin, Faculty, or Student)
 router.post('/login', async (req, res) => {
@@ -51,12 +105,40 @@ router.post('/login', async (req, res) => {
       const isMatch = bcrypt.compareSync(password, admin.password);
       if (isMatch) {
         const override = getAdminOverride();
+        const adminEmail = (override && override.email ? override.email : admin.email) || 'admin@ljcca.edu';
+        let fileSubjects = [];
+        try {
+          const p = path.join(__dirname, '../data/faculty_subjects.json');
+          if (fs.existsSync(p)) {
+            const map = JSON.parse(fs.readFileSync(p, 'utf8'));
+            fileSubjects = map['admin_primary'] || map[adminEmail.toLowerCase()] || map[admin.id] || [];
+          }
+        } catch(e) {}
+
+        const { data: facMatch } = await supabase.from('faculty')
+          .select('id')
+          .or(`email.eq.${adminEmail.toLowerCase()},username.eq.${adminEmail.toLowerCase()}`)
+          .maybeSingle();
+        const facultyId = facMatch ? facMatch.id : admin.id;
+
+        const assignedAdminRoles = getFacultyRoles(facultyId || 'admin_primary', adminEmail, adminEmail, 'ADMIN-01');
+        const cleanAdminRoles = Array.from(new Set([...(assignedAdminRoles || ['admin', 'faculty']), 'admin']));
+        const hasFacultyAccess = cleanAdminRoles.includes('faculty');
+
         const finalAdmin = {
           id: admin.id,
+          faculty_id: facultyId,
           name: override && override.name ? override.name : admin.name,
-          email: override && override.email ? override.email : admin.email,
+          email: adminEmail,
           mobile: override && override.mobile !== undefined ? override.mobile : (admin.mobile || ''),
-          role: 'admin'
+          department: 'BCA',
+          subjects: fileSubjects,
+          role: 'admin',
+          roles: cleanAdminRoles,
+          hasAdminAccess: true,
+          hasFacultyAccess: hasFacultyAccess,
+          isPrimaryAdmin: true,
+          originalRole: 'admin'
         };
         const token = jwt.sign(finalAdmin, JWT_SECRET, { expiresIn: '24h' });
         return res.json({ token, user: finalAdmin });
@@ -67,6 +149,13 @@ router.post('/login', async (req, res) => {
     if (faculty) {
       const isMatch = bcrypt.compareSync(password, faculty.password);
       if (isMatch) {
+        const assignedRoles = getFacultyRoles(faculty.id, faculty.email, faculty.username, faculty.employee_no);
+        const hasAdminAccess = assignedRoles.includes('admin');
+        const hasFacultyAccess = assignedRoles.includes('faculty') || !hasAdminAccess;
+
+        // If faculty has admin access, primary role is 'admin' so they have admin rights
+        const effectiveRole = hasAdminAccess ? 'admin' : 'faculty';
+
         const facUser = {
           id: faculty.id,
           name: faculty.name,
@@ -74,17 +163,54 @@ router.post('/login', async (req, res) => {
           employee_no: faculty.employee_no,
           department: faculty.department,
           mobile: faculty.mobile,
-          role: 'faculty'
+          email: faculty.email,
+          role: effectiveRole,
+          roles: assignedRoles,
+          hasAdminAccess,
+          hasFacultyAccess,
+          isFacultyUser: true,
+          originalRole: hasAdminAccess ? 'admin' : 'faculty'
         };
         const token = jwt.sign({ ...facUser }, JWT_SECRET, { expiresIn: '24h' });
         return res.json({ token, user: facUser });
       }
     }
 
-    // 3. Check Student Table
     if (student) {
-      const isMatch = bcrypt.compareSync(password, student.password);
+      let isMatch = false;
+      const cleanInputPassword = String(password).trim();
+      const cleanStudentMobile = student.mobile ? String(student.mobile).trim() : '';
+      const cleanStudentPlain = student.plain_password ? String(student.plain_password).trim() : '';
+      const cleanStudentEnroll = student.enrollment_no ? String(student.enrollment_no).trim() : '';
+
+      if (student.password) {
+        try {
+          isMatch = bcrypt.compareSync(password, student.password);
+        } catch (e) {}
+      }
+
+      if (!isMatch && cleanStudentMobile && cleanInputPassword === cleanStudentMobile) {
+        isMatch = true;
+      }
+
+      if (!isMatch && cleanStudentPlain && cleanInputPassword === cleanStudentPlain) {
+        isMatch = true;
+      }
+
+      if (!isMatch && cleanStudentEnroll && cleanInputPassword === cleanStudentEnroll) {
+        isMatch = true;
+      }
+
       if (isMatch) {
+        if (cleanStudentMobile && (cleanStudentPlain !== cleanStudentMobile || !student.password)) {
+          try {
+            const newHash = bcrypt.hashSync(cleanStudentMobile, 10);
+            await supabase.from('students').update({
+              password: newHash,
+              plain_password: cleanStudentMobile
+            }).eq('id', student.id);
+          } catch (e) {}
+        }
         const deviceId = (req.body?.deviceId || req.body?.device_id || '').trim();
         const deviceFingerprint = (req.body?.deviceFingerprint || req.body?.device_fingerprint || '').trim();
         
@@ -210,12 +336,40 @@ router.post('/admin/login', async (req, res) => {
     }
 
     const override = getAdminOverride();
+    const adminEmail = (override && override.email ? override.email : admin.email) || 'admin@ljcca.edu';
+    let fileSubjects = [];
+    try {
+      const p = path.join(__dirname, '../data/faculty_subjects.json');
+      if (fs.existsSync(p)) {
+        const map = JSON.parse(fs.readFileSync(p, 'utf8'));
+        fileSubjects = map['admin_primary'] || map[adminEmail.toLowerCase()] || map[admin.id] || [];
+      }
+    } catch(e) {}
+
+    const { data: facMatch } = await supabase.from('faculty')
+      .select('id')
+      .or(`email.eq.${adminEmail.toLowerCase()},username.eq.${adminEmail.toLowerCase()}`)
+      .maybeSingle();
+    const facultyId = facMatch ? facMatch.id : admin.id;
+
+    const assignedAdminRoles = getFacultyRoles(facultyId || 'admin_primary', adminEmail, adminEmail, 'ADMIN-01');
+    const cleanAdminRoles = Array.from(new Set([...(assignedAdminRoles || ['admin', 'faculty']), 'admin']));
+    const hasFacultyAccess = cleanAdminRoles.includes('faculty');
+
     const finalAdmin = {
       id: admin.id,
+      faculty_id: facultyId,
       name: override && override.name ? override.name : admin.name,
-      email: override && override.email ? override.email : admin.email,
+      email: adminEmail,
       mobile: override && override.mobile !== undefined ? override.mobile : (admin.mobile || ''),
-      role: 'admin'
+      department: 'BCA',
+      subjects: fileSubjects,
+      role: 'admin',
+      roles: cleanAdminRoles,
+      hasAdminAccess: true,
+      hasFacultyAccess: hasFacultyAccess,
+      isPrimaryAdmin: true,
+      originalRole: 'admin'
     };
 
     const token = jwt.sign(
@@ -496,6 +650,8 @@ router.post('/change-password', authenticateJWT, async (req, res) => {
         plain_password: newPassword 
       }).eq('id', req.user.id);
       
+      notifyChange('FACULTY_CHANGED', { action: 'password_update', facultyId: req.user.id });
+
       res.json({ message: 'Password updated successfully' });
 
     } else if (req.user.role === 'student') {
@@ -526,7 +682,7 @@ router.post('/change-password', authenticateJWT, async (req, res) => {
   }
 });
 
-// Update profile details
+// Update profile details (Admin & Faculty support)
 router.post('/update-profile', authenticateJWT, async (req, res) => {
   const { name, email, mobile } = req.body;
 
@@ -535,7 +691,7 @@ router.post('/update-profile', authenticateJWT, async (req, res) => {
   }
 
   try {
-    if (req.user.role === 'admin') {
+    if (req.user.role === 'admin' && !req.user.isFacultyUser) {
       if (!email || !email.trim()) {
         return res.status(400).json({ error: 'Email is required' });
       }
@@ -571,6 +727,14 @@ router.post('/update-profile', authenticateJWT, async (req, res) => {
       // Save to persistent file storage to guarantee permanence even if Supabase RLS is restricted
       setAdminOverride(updatedData);
 
+      // Also sync linked faculty table entry if it exists (id 78 or matches email)
+      try {
+        await supabase.from('faculty').update({
+          name: updatedData.name,
+          mobile: updatedData.mobile
+        }).or(`id.eq.78,email.eq.${updatedData.email.toLowerCase()}`);
+      } catch (e) {}
+
       const newAdminUser = {
         id: req.user.id,
         name: updatedData.name,
@@ -586,13 +750,149 @@ router.post('/update-profile', authenticateJWT, async (req, res) => {
         { expiresIn: '24h' }
       );
 
+      notifyChange('FACULTY_CHANGED', { action: 'admin_profile_update' });
+
       return res.json({
         message: 'Profile updated successfully',
         user: newAdminUser,
         token
       });
+
+    } else if (req.user.role === 'faculty' || req.user.isFacultyUser || req.user.hasFacultyAccess) {
+      if (!email || !email.trim()) {
+        return res.status(400).json({ error: 'Email is required' });
+      }
+
+      const cleanEmail = email.trim().toLowerCase();
+      const cleanName = name.trim();
+      const cleanMobile = mobile ? String(mobile).trim() : '';
+
+      // Find faculty record in Supabase
+      let { data: currentFac } = await supabase
+        .from('faculty')
+        .select('*')
+        .eq('id', req.user.id)
+        .maybeSingle();
+
+      if (!currentFac && req.user.faculty_id) {
+        const { data: facById } = await supabase
+          .from('faculty')
+          .select('*')
+          .eq('id', req.user.faculty_id)
+          .maybeSingle();
+        currentFac = facById;
+      }
+
+      if (!currentFac && req.user.email) {
+        const { data: facByEmail } = await supabase
+          .from('faculty')
+          .select('*')
+          .or(`email.eq.${req.user.email.toLowerCase()},username.eq.${req.user.email.toLowerCase()}`)
+          .maybeSingle();
+        currentFac = facByEmail;
+      }
+
+      if (!currentFac) {
+        return res.status(404).json({ error: 'Faculty account not found' });
+      }
+
+      // Check email uniqueness if email is changing
+      if (cleanEmail !== (currentFac.email || '').toLowerCase() && cleanEmail !== (currentFac.username || '').toLowerCase()) {
+        const { data: existingFac } = await supabase
+          .from('faculty')
+          .select('id')
+          .or(`email.eq.${cleanEmail},username.eq.${cleanEmail}`)
+          .maybeSingle();
+
+        if (existingFac && String(existingFac.id) !== String(currentFac.id)) {
+          return res.status(400).json({ error: 'Email address is already in use by another faculty account' });
+        }
+      }
+
+      // Update Supabase faculty record
+      let updateObj = {
+        name: cleanName,
+        email: cleanEmail,
+        username: cleanEmail,
+        mobile: cleanMobile
+      };
+
+      let { error: updateErr } = await supabase
+        .from('faculty')
+        .update(updateObj)
+        .eq('id', currentFac.id);
+
+      if (updateErr && (updateErr.message?.includes('email') || updateErr.code === '42703' || updateErr.message?.includes('column'))) {
+        console.warn('Supabase faculty table missing email column on update, retrying without email:', updateErr.message);
+        delete updateObj.email;
+        const retry = await supabase.from('faculty').update(updateObj).eq('id', currentFac.id);
+        updateErr = retry.error;
+      }
+
+      if (updateErr) {
+        console.error('Supabase update faculty error:', updateErr);
+        return res.status(400).json({ error: updateErr.message || 'Failed to update faculty profile' });
+      }
+
+      // Preserve/sync roles and subjects maps for persistent configuration
+      const oldEmail = (currentFac.email || '').toLowerCase();
+      const oldUsername = (currentFac.username || '').toLowerCase();
+
+      const rolesMap = loadFacultyRolesMap();
+      const currentRoles = rolesMap[currentFac.id] || rolesMap[String(currentFac.id)] || (oldEmail ? rolesMap[oldEmail] : null) || (oldUsername ? rolesMap[oldUsername] : null) || ['faculty'];
+      rolesMap[currentFac.id] = currentRoles;
+      rolesMap[String(currentFac.id)] = currentRoles;
+      rolesMap[cleanEmail] = currentRoles;
+      if (currentFac.employee_no) rolesMap[currentFac.employee_no] = currentRoles;
+      saveFacultyRolesMap(rolesMap);
+
+      const subjectsMap = loadFacultySubjectsMap();
+      const currentSubjects = subjectsMap[currentFac.id] || subjectsMap[String(currentFac.id)] || (oldEmail ? subjectsMap[oldEmail] : null) || (oldUsername ? subjectsMap[oldUsername] : null) || (currentFac.employee_no ? subjectsMap[currentFac.employee_no] : null) || [];
+      if (Array.isArray(currentSubjects) && currentSubjects.length > 0) {
+        subjectsMap[currentFac.id] = currentSubjects;
+        subjectsMap[String(currentFac.id)] = currentSubjects;
+        subjectsMap[cleanEmail] = currentSubjects;
+        if (currentFac.employee_no) subjectsMap[currentFac.employee_no] = currentSubjects;
+        saveFacultySubjectsMap(subjectsMap);
+      }
+
+      const assignedRoles = getFacultyRoles(currentFac.id, cleanEmail, cleanEmail, currentFac.employee_no);
+      const hasAdminAccess = assignedRoles.includes('admin');
+      const hasFacultyAccess = assignedRoles.includes('faculty') || !hasAdminAccess;
+
+      const updatedFacUser = {
+        id: currentFac.id,
+        name: cleanName,
+        username: cleanEmail,
+        employee_no: currentFac.employee_no,
+        department: currentFac.department ? String(currentFac.department).split('||SUB:')[0].trim() : 'BCA',
+        mobile: cleanMobile,
+        email: cleanEmail,
+        subjects: currentSubjects,
+        role: hasAdminAccess ? 'admin' : 'faculty',
+        roles: assignedRoles,
+        hasAdminAccess,
+        hasFacultyAccess,
+        isFacultyUser: true,
+        originalRole: hasAdminAccess ? 'admin' : 'faculty'
+      };
+
+      const token = jwt.sign(
+        updatedFacUser,
+        JWT_SECRET,
+        { expiresIn: '24h' }
+      );
+
+      notifyChange('FACULTY_CHANGED', { action: 'faculty_profile_update', facultyId: currentFac.id });
+
+      return res.json({
+        message: 'Profile updated successfully',
+        user: updatedFacUser,
+        token
+      });
+
     } else {
-      return res.status(403).json({ error: 'Profile update via this endpoint is currently available for admin only' });
+      return res.status(403).json({ error: 'Profile update via this endpoint is not available for this role' });
     }
   } catch (err) {
     console.error('Update profile error:', err);
@@ -603,7 +903,8 @@ router.post('/update-profile', authenticateJWT, async (req, res) => {
 // Check current user details with full profile details
 router.get('/me', authenticateJWT, async (req, res) => {
   try {
-    if (req.user.role === 'faculty') {
+    const isPrimaryAdminUser = req.user.isPrimaryAdmin === true || req.user.email === 'admin@ljcca.edu' || String(req.user.id) === '78' || req.user.id === 'admin_primary';
+    if (!isPrimaryAdminUser && (req.user.role === 'faculty' || req.user.isFacultyUser || req.user.faculty_id || typeof req.user.id === 'number' || !isNaN(Number(req.user.id)))) {
       const { data: faculty } = await supabase.from('faculty').select('*').eq('id', req.user.id).maybeSingle();
       if (faculty) {
         let deptName = faculty.department || '';
@@ -635,6 +936,9 @@ router.get('/me', authenticateJWT, async (req, res) => {
           embeddedSubjects.forEach(s => { if (s && s.subjectName) subMap.set(String(s.subjectName).trim().toLowerCase(), s); });
         }
         const finalSubjects = Array.from(subMap.values());
+        const assignedRoles = getFacultyRoles(faculty.id, faculty.email, faculty.username, faculty.employee_no);
+        const hasAdminAccess = assignedRoles.includes('admin');
+        const hasFacultyAccess = assignedRoles.includes('faculty') || !hasAdminAccess;
 
         return res.json({
           user: {
@@ -644,8 +948,14 @@ router.get('/me', authenticateJWT, async (req, res) => {
             employee_no: faculty.employee_no,
             department: deptName || 'BCA',
             mobile: faculty.mobile,
+            email: faculty.email,
             subjects: finalSubjects,
-            role: 'faculty'
+            role: hasAdminAccess ? 'admin' : 'faculty',
+            roles: assignedRoles,
+            hasAdminAccess,
+            hasFacultyAccess,
+            isFacultyUser: true,
+            originalRole: hasAdminAccess ? 'admin' : 'faculty'
           }
         });
       }
@@ -671,13 +981,43 @@ router.get('/me', authenticateJWT, async (req, res) => {
       }
     } else if (req.user.role === 'admin') {
       const override = getAdminOverride();
+      const adminEmail = (override && override.email ? override.email : req.user.email) || 'admin@ljcca.edu';
+      const adminId = req.user.id;
+
+      let fileSubjects = [];
+      try {
+        const p = path.join(__dirname, '../data/faculty_subjects.json');
+        if (fs.existsSync(p)) {
+          const map = JSON.parse(fs.readFileSync(p, 'utf8'));
+          fileSubjects = map['admin_primary'] || map[adminEmail.toLowerCase()] || map[adminId] || [];
+        }
+      } catch(e) {}
+
+      const { data: facMatch } = await supabase.from('faculty')
+        .select('id')
+        .or(`email.eq.${adminEmail.toLowerCase()},username.eq.${adminEmail.toLowerCase()}`)
+        .maybeSingle();
+      const facultyId = facMatch ? facMatch.id : req.user.id;
+
+      const assignedAdminRoles = getFacultyRoles(facultyId || 'admin_primary', adminEmail, adminEmail, 'ADMIN-01');
+      const cleanAdminRoles = Array.from(new Set([...(assignedAdminRoles || ['admin', 'faculty']), 'admin']));
+      const hasFacultyAccess = cleanAdminRoles.includes('faculty');
+
       return res.json({
         user: {
           id: req.user.id,
+          faculty_id: facultyId,
           name: override && override.name ? override.name : req.user.name,
-          email: override && override.email ? override.email : req.user.email,
+          email: adminEmail,
           mobile: override && override.mobile !== undefined ? override.mobile : (req.user.mobile || ''),
-          role: 'admin'
+          department: 'BCA',
+          subjects: fileSubjects,
+          role: 'admin',
+          roles: cleanAdminRoles,
+          hasAdminAccess: true,
+          hasFacultyAccess: hasFacultyAccess,
+          isPrimaryAdmin: true,
+          originalRole: 'admin'
         }
       });
     }

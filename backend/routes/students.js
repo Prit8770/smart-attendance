@@ -103,39 +103,91 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Enrollment Number, Student Name, Email ID, Course, Semester, and Mobile are required' });
   }
 
-  const cleanEmail = email ? String(email).trim() : '';
+  const cleanEmail = email ? String(email).trim().toLowerCase() : '';
   if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
     return res.status(400).json({ error: 'Please enter a valid Email ID format (e.g. student@college.edu)' });
   }
 
   const cleanEnroll = String(enrollment_no).trim();
   if (!/^\d{10}$/.test(cleanEnroll)) {
-    return res.status(400).json({ error: 'Please enter valid enrollment number' });
+    return res.status(400).json({ error: 'Please enter valid 10-digit enrollment number' });
   }
 
-  if (!/^\d{10}$/.test(String(mobile).trim())) {
-    return res.status(400).json({ error: 'Please enter valid mobile number' });
+  const cleanMobile = String(mobile).trim();
+  if (!/^\d{10}$/.test(cleanMobile)) {
+    return res.status(400).json({ error: 'Please enter valid 10-digit mobile number' });
   }
+
+  const cleanSem = String(semester).trim();
+  const cleanDiv = division ? String(division).trim().toUpperCase() : '';
+  const cleanRoll = roll_no ? String(roll_no).trim() : '';
 
   if (customPassword && customPassword.trim() !== '') {
     const passCheck = validateStrongPassword(customPassword);
     if (!passCheck.isValid) return res.status(400).json({ error: passCheck.error });
   }
 
-  // Default password is set to student's mobile number
   const username = cleanEnroll.toLowerCase();
-  const rawPassword = (customPassword && customPassword.trim() !== '') ? customPassword.trim() : String(mobile).trim();
+  const rawPassword = (customPassword && customPassword.trim() !== '') ? customPassword.trim() : cleanMobile;
   const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
   try {
-    // Check if enrollment number already exists (Fast indexed query)
-    const { data: existing } = await supabase.from('students')
-      .select('id')
+    // 1. Check if enrollment number already exists
+    const { data: existingEnroll } = await supabase.from('students')
+      .select('id, name, enrollment_no')
       .eq('enrollment_no', cleanEnroll)
       .maybeSingle();
 
-    if (existing) {
-      return res.status(400).json({ error: 'Student with this enrollment number already exists' });
+    if (existingEnroll) {
+      return res.status(400).json({ error: `Student with Enrollment Number '${cleanEnroll}' already exists (${existingEnroll.name}).` });
+    }
+
+    // 2. Check if mobile number already exists for another student
+    const { data: existingMobile } = await supabase.from('students')
+      .select('id, name, enrollment_no, mobile')
+      .eq('mobile', cleanMobile)
+      .maybeSingle();
+
+    if (existingMobile) {
+      return res.status(400).json({ error: `Mobile number '${cleanMobile}' is already registered for student ${existingMobile.name} (Enrollment: ${existingMobile.enrollment_no}).` });
+    }
+
+    // 3. Check if email already exists for another student
+    if (cleanEmail) {
+      const { data: existingEmail } = await supabase.from('students')
+        .select('id, name, enrollment_no, email')
+        .ilike('email', cleanEmail)
+        .maybeSingle();
+
+      if (existingEmail) {
+        return res.status(400).json({ error: `Email ID '${cleanEmail}' is already registered for student ${existingEmail.name} (Enrollment: ${existingEmail.enrollment_no}).` });
+      }
+    }
+
+    // 4. Check if Roll Number already exists in the SAME semester and SAME division
+    if (cleanRoll && cleanSem) {
+      let rollQuery = supabase.from('students')
+        .select('id, name, enrollment_no, roll_no, semester, division')
+        .eq('semester', cleanSem)
+        .eq('roll_no', cleanRoll);
+
+      if (cleanDiv) {
+        rollQuery = rollQuery.ilike('division', cleanDiv);
+      }
+
+      const { data: existingRolls } = await rollQuery;
+      if (existingRolls && existingRolls.length > 0) {
+        const match = cleanDiv 
+          ? existingRolls.find(s => (s.division || '').trim().toUpperCase() === cleanDiv)
+          : existingRolls.find(s => !(s.division || '').trim());
+
+        if (match) {
+          const divLabel = cleanDiv ? `Division ${cleanDiv}` : 'General Division';
+          return res.status(400).json({
+            error: `Roll Number '${cleanRoll}' already exists in Semester ${cleanSem}, ${divLabel} (Assigned to: ${match.name} - ${match.enrollment_no}).`
+          });
+        }
+      }
     }
 
     const newStudentObj = {
@@ -143,14 +195,14 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
       name: String(name).trim(),
       email: cleanEmail,
       course: String(course).trim(),
-      semester: String(semester).trim(),
-      mobile: String(mobile).trim(),
+      semester: cleanSem,
+      mobile: cleanMobile,
       username,
       password: hashedPassword,
       plain_password: rawPassword
     };
-    if (roll_no && String(roll_no).trim() !== '') newStudentObj.roll_no = String(roll_no).trim();
-    if (division && String(division).trim() !== '') newStudentObj.division = String(division).trim().toUpperCase();
+    if (cleanRoll) newStudentObj.roll_no = cleanRoll;
+    if (cleanDiv) newStudentObj.division = cleanDiv;
 
     let { data: result, error } = await supabase.from('students').insert([newStudentObj]).select().single();
 
@@ -167,12 +219,12 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
     const returnedStudent = {
       id: result.id,
       enrollment_no: cleanEnroll,
-      roll_no: result.roll_no || (roll_no ? String(roll_no).trim() : null),
-      division: result.division || (division ? String(division).trim().toUpperCase() : null),
+      roll_no: result.roll_no || (cleanRoll || null),
+      division: result.division || (cleanDiv || null),
       name: String(name).trim(),
       course: String(course).trim(),
-      semester: String(semester).trim(),
-      mobile: String(mobile).trim(),
+      semester: cleanSem,
+      mobile: cleanMobile,
       username,
       plain_password: rawPassword,
       generatedPassword: rawPassword // Backward compatibility
@@ -202,14 +254,19 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Name, Course, Semester, and Mobile are required' });
   }
 
-  const cleanEmail = email ? String(email).trim() : '';
+  const cleanEmail = email ? String(email).trim().toLowerCase() : '';
   if (cleanEmail !== '' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
     return res.status(400).json({ error: 'Please enter a valid Email ID format (e.g. student@college.edu)' });
   }
 
-  if (!/^\d{10}$/.test(String(mobile).trim())) {
-    return res.status(400).json({ error: 'Please enter valid mobile number' });
+  const cleanMobile = String(mobile).trim();
+  if (!/^\d{10}$/.test(cleanMobile)) {
+    return res.status(400).json({ error: 'Please enter valid 10-digit mobile number' });
   }
+
+  const cleanSem = String(semester).trim();
+  const cleanDiv = division ? String(division).trim().toUpperCase() : '';
+  const cleanRoll = roll_no ? String(roll_no).trim() : '';
 
   try {
     const { data: student } = await supabase.from('students').select('*').eq('id', id).maybeSingle();
@@ -217,18 +274,69 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Student not found' });
     }
 
+    // 1. Check if mobile number already belongs to another student
+    const { data: existingMobile } = await supabase.from('students')
+      .select('id, name, enrollment_no, mobile')
+      .eq('mobile', cleanMobile)
+      .neq('id', id)
+      .maybeSingle();
+
+    if (existingMobile) {
+      return res.status(400).json({ error: `Mobile number '${cleanMobile}' is already registered for student ${existingMobile.name} (Enrollment: ${existingMobile.enrollment_no}).` });
+    }
+
+    // 2. Check if email already belongs to another student
+    if (cleanEmail) {
+      const { data: existingEmail } = await supabase.from('students')
+        .select('id, name, enrollment_no, email')
+        .ilike('email', cleanEmail)
+        .neq('id', id)
+        .maybeSingle();
+
+      if (existingEmail) {
+        return res.status(400).json({ error: `Email ID '${cleanEmail}' is already registered for student ${existingEmail.name} (Enrollment: ${existingEmail.enrollment_no}).` });
+      }
+    }
+
+    // 3. Check if Roll Number already exists in the SAME semester and SAME division for another student
+    if (cleanRoll && cleanSem) {
+      let rollQuery = supabase.from('students')
+        .select('id, name, enrollment_no, roll_no, semester, division')
+        .eq('semester', cleanSem)
+        .eq('roll_no', cleanRoll)
+        .neq('id', id);
+
+      if (cleanDiv) {
+        rollQuery = rollQuery.ilike('division', cleanDiv);
+      }
+
+      const { data: existingRolls } = await rollQuery;
+      if (existingRolls && existingRolls.length > 0) {
+        const match = cleanDiv 
+          ? existingRolls.find(s => (s.division || '').trim().toUpperCase() === cleanDiv)
+          : existingRolls.find(s => !(s.division || '').trim());
+
+        if (match) {
+          const divLabel = cleanDiv ? `Division ${cleanDiv}` : 'General Division';
+          return res.status(400).json({
+            error: `Roll Number '${cleanRoll}' already exists in Semester ${cleanSem}, ${divLabel} (Assigned to: ${match.name} - ${match.enrollment_no}).`
+          });
+        }
+      }
+    }
+
     let updateObj = {
       name: String(name).trim(),
       email: cleanEmail,
       course: String(course).trim(),
-      semester: String(semester).trim(),
-      mobile: String(mobile).trim()
+      semester: cleanSem,
+      mobile: cleanMobile
     };
-    if (student.hasOwnProperty('roll_no') || (roll_no && String(roll_no).trim() !== '')) {
-      updateObj.roll_no = (roll_no && String(roll_no).trim() !== '') ? String(roll_no).trim() : null;
+    if (student.hasOwnProperty('roll_no') || cleanRoll !== '') {
+      updateObj.roll_no = cleanRoll !== '' ? cleanRoll : null;
     }
-    if (student.hasOwnProperty('division') || (division && String(division).trim() !== '')) {
-      updateObj.division = (division && String(division).trim() !== '') ? String(division).trim().toUpperCase() : null;
+    if (student.hasOwnProperty('division') || cleanDiv !== '') {
+      updateObj.division = cleanDiv !== '' ? cleanDiv : null;
     }
     let newPassword = null;
 
@@ -286,7 +394,40 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   }
 });
 
-// POST reset student device ID
+// POST bulk reset student device IDs (Must be defined BEFORE /:id/reset-device)
+router.post('/bulk-reset-device', authenticateJWT, requireAdmin, async (req, res) => {
+  const { studentIds, resetAll } = req.body;
+  
+  try {
+    if (resetAll || !studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+      const { error } = await supabase
+        .from('students')
+        .update({ device_id: null, locked_until: null })
+        .not('id', 'is', null);
+
+      if (error) throw error;
+      return res.json({ success: true, message: 'All student device bindings & lockouts reset successfully!' });
+    }
+
+    const chunkSize = 500;
+    for (let i = 0; i < studentIds.length; i += chunkSize) {
+      const chunk = studentIds.slice(i, i + chunkSize);
+      const { error } = await supabase
+        .from('students')
+        .update({ device_id: null, locked_until: null })
+        .in('id', chunk);
+
+      if (error) throw error;
+    }
+
+    res.json({ success: true, message: `Device binding & lockout reset successfully for ${studentIds.length} student(s)!` });
+  } catch (err) {
+    console.error('Bulk reset device binding error:', err);
+    res.status(500).json({ error: err.message || 'Failed to reset student device bindings.' });
+  }
+});
+
+// POST reset single student device ID
 router.post('/:id/reset-device', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
   try {
@@ -305,66 +446,88 @@ router.post('/:id/reset-device', authenticateJWT, requireAdmin, async (req, res)
     res.status(500).json({ error: err.message || 'Failed to reset device ID' });
   }
 });
-
-// POST bulk reset student device IDs
-router.post('/bulk-reset-device', authenticateJWT, requireAdmin, async (req, res) => {
-  const { studentIds } = req.body;
-  if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
-    return res.status(400).json({ error: 'Please select at least one student' });
-  }
-
+router.put('/:id/reset-device', authenticateJWT, requireAdmin, async (req, res) => {
+  const { id } = req.params;
   try {
-    const { error } = await supabase
-      .from('students')
-      .update({ device_id: null, locked_until: null })
-      .in('id', studentIds);
-
-    if (error) {
-      if (error.code === 'PGRST204' || error.message?.includes('device_id')) {
-        return res.status(400).json({
-          error: "Supabase DB Error: 'device_id' column database table me nahi hai.\n\nKripya Supabase Dashboard -> SQL Editor me ye command run karein:\n\nALTER TABLE students ADD COLUMN IF NOT EXISTS device_id TEXT;"
-        });
-      }
-      throw error;
-    }
-
-    res.json({
-      success: true,
-      message: `Device IDs for ${studentIds.length} student(s) reset successfully. They can now log in from new devices.`
-    });
+    const { error } = await supabase.from('students').update({ device_id: null, locked_until: null }).eq('id', id);
+    if (error) throw error;
+    res.json({ success: true, message: 'Device binding & lockout reset successfully!' });
   } catch (err) {
-    console.error('Error bulk resetting device IDs:', err);
-    res.status(500).json({ error: err.message || 'Failed to bulk reset device IDs' });
+    console.error('Reset device binding error:', err);
+    res.status(500).json({ error: err.message || 'Failed to reset student device binding.' });
   }
 });
 
-// POST import batch of students (High Performance Batch Upsert < 1s)
+// POST import batch of students (High Performance Batch Validation & Insert)
 router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
   const { students: importedList } = req.body;
   const passwordHashCache = new Map();
 
-  if (!importedList || !Array.isArray(importedList)) {
-    return res.status(400).json({ error: 'Invalid data format. Array expected.' });
+  if (!importedList || !Array.isArray(importedList) || importedList.length === 0) {
+    return res.status(400).json({ error: 'Invalid data format. Non-empty array of students expected.' });
   }
 
-  const results = {
-    successCount: 0,
-    errors: []
-  };
-
   try {
-    const seenInFile = new Map();
+    // 1. Fetch all existing students from DB for duplicate checking
+    let allDbStudents = [];
+    let from = 0;
+    const step = 1000;
+    let hasMore = true;
+    while (hasMore) {
+      const { data: chunk, error: fetchErr } = await supabase.from('students')
+        .select('id, enrollment_no, roll_no, division, semester, mobile, email, name')
+        .range(from, from + step - 1);
+      if (fetchErr) throw fetchErr;
+      if (chunk && chunk.length > 0) {
+        allDbStudents = allDbStudents.concat(chunk);
+        from += step;
+        if (chunk.length < step) hasMore = false;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    const dbEnrollMap = new Map();
+    const dbMobileMap = new Map();
+    const dbEmailMap = new Map();
+    const dbRollMap = new Map();
+
+    for (const s of allDbStudents) {
+      if (s.enrollment_no) dbEnrollMap.set(String(s.enrollment_no).trim(), s);
+      if (s.mobile) dbMobileMap.set(String(s.mobile).trim(), s);
+      if (s.email && String(s.email).trim()) dbEmailMap.set(String(s.email).trim().toLowerCase(), s);
+      if (s.roll_no && s.semester) {
+        const key = `${String(s.semester).trim()}__${String(s.division || '').trim().toUpperCase()}__${String(s.roll_no).trim()}`;
+        dbRollMap.set(key, s);
+      }
+    }
+
+    const fileEnrollMap = new Map();
+    const fileMobileMap = new Map();
+    const fileEmailMap = new Map();
+    const fileRollMap = new Map();
+
+    const validRows = [];
+    const errors = [];
 
     for (let i = 0; i < importedList.length; i++) {
       const student = importedList[i];
-      const { enrollment_no, roll_no, division, name, email, course, semester, mobile, password } = student;
+      const rowNum = i + 1;
+      const name = String(student.name || '').trim();
+      const rawEnroll = student.enrollment_no;
+      const rawMobile = student.mobile;
+      const rawEmail = student.email;
+      const rawSem = student.semester;
+      const rawDiv = student.division;
+      const rawRoll = student.roll_no;
+      const rawCourse = student.course;
 
-      if (!enrollment_no || !name || !course || !semester || !mobile) {
-        results.errors.push(`Row ${i + 1}: Missing required fields.`);
+      if (!rawEnroll || !name || !rawCourse || !rawSem || !rawMobile) {
+        errors.push(`Row ${rowNum} (${name || 'Unnamed'}): Missing required fields (Enrollment No, Name, Course, Semester, or Mobile).`);
         continue;
       }
 
-      let cleanEnroll = String(enrollment_no).trim();
+      let cleanEnroll = String(rawEnroll).trim();
       if (cleanEnroll.includes('.') || cleanEnroll.includes('e') || cleanEnroll.includes('E')) {
         const num = Number(cleanEnroll);
         if (!isNaN(num)) cleanEnroll = Math.round(num).toString();
@@ -372,16 +535,97 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
       cleanEnroll = cleanEnroll.replace(/\D/g, '');
 
       if (!cleanEnroll || !/^\d{10}$/.test(cleanEnroll)) {
-        results.errors.push(`Row ${i + 1}: Invalid enrollment number "${enrollment_no}". Enrollment number must be exactly 10 digits.`);
+        errors.push(`Row ${rowNum} (${name}): Invalid Enrollment Number "${rawEnroll}". Enrollment number must be exactly 10 digits.`);
         continue;
       }
 
-      const username = cleanEnroll.toLowerCase();
-      const rawPassword = (mobile && String(mobile).trim() !== '') 
-        ? String(mobile).trim() 
-        : ((password && String(password).trim() !== '') ? String(password).trim() : cleanEnroll);
+      let cleanMobile = String(rawMobile).trim().replace(/\D/g, '');
+      if (!cleanMobile || !/^\d{10}$/.test(cleanMobile)) {
+        errors.push(`Row ${rowNum} (${name}): Invalid Mobile Number "${rawMobile}". Mobile number must be exactly 10 digits.`);
+        continue;
+      }
 
-      // Fast salt rounds (4) for lightning fast batch hashing (< 50ms total)
+      const cleanEmail = rawEmail ? String(rawEmail).trim().toLowerCase() : '';
+      if (cleanEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+        errors.push(`Row ${rowNum} (${name}): Invalid Email ID format "${rawEmail}".`);
+        continue;
+      }
+
+      const cleanSem = String(rawSem).trim();
+      const cleanDiv = rawDiv ? String(rawDiv).trim().toUpperCase() : '';
+      const cleanRoll = rawRoll ? String(rawRoll).trim() : '';
+
+      // Check 1: In-file duplicate Enrollment No
+      if (fileEnrollMap.has(cleanEnroll)) {
+        const prev = fileEnrollMap.get(cleanEnroll);
+        errors.push(`Row ${rowNum} (${name}): Duplicate Enrollment Number '${cleanEnroll}' in file (Same as Row ${prev.rowNum} - ${prev.name}).`);
+        continue;
+      }
+
+      // Check 2: In-file duplicate Mobile No
+      if (fileMobileMap.has(cleanMobile)) {
+        const prev = fileMobileMap.get(cleanMobile);
+        errors.push(`Row ${rowNum} (${name}): Duplicate Mobile Number '${cleanMobile}' in file (Same as Row ${prev.rowNum} - ${prev.name}).`);
+        continue;
+      }
+
+      // Check 3: In-file duplicate Email ID
+      if (cleanEmail && fileEmailMap.has(cleanEmail)) {
+        const prev = fileEmailMap.get(cleanEmail);
+        errors.push(`Row ${rowNum} (${name}): Duplicate Email ID '${cleanEmail}' in file (Same as Row ${prev.rowNum} - ${prev.name}).`);
+        continue;
+      }
+
+      // Check 4: In-file duplicate Roll No in same Semester & Division
+      if (cleanRoll && cleanSem) {
+        const rollKey = `${cleanSem}__${cleanDiv}__${cleanRoll}`;
+        if (fileRollMap.has(rollKey)) {
+          const prev = fileRollMap.get(rollKey);
+          const divLabel = cleanDiv ? `Division ${cleanDiv}` : 'General Division';
+          errors.push(`Row ${rowNum} (${name}): Duplicate Roll Number '${cleanRoll}' in Semester ${cleanSem}, ${divLabel} in file (Same as Row ${prev.rowNum} - ${prev.name}).`);
+          continue;
+        }
+        fileRollMap.set(rollKey, { rowNum, name });
+      }
+
+      fileEnrollMap.set(cleanEnroll, { rowNum, name });
+      fileMobileMap.set(cleanMobile, { rowNum, name });
+      if (cleanEmail) fileEmailMap.set(cleanEmail, { rowNum, name });
+
+      // Check 5: Database duplicate Enrollment No
+      if (dbEnrollMap.has(cleanEnroll)) {
+        const existing = dbEnrollMap.get(cleanEnroll);
+        errors.push(`Row ${rowNum} (${name}): Enrollment Number '${cleanEnroll}' already exists in database for student '${existing.name}'.`);
+        continue;
+      }
+
+      // Check 6: Database duplicate Mobile No
+      if (dbMobileMap.has(cleanMobile)) {
+        const existing = dbMobileMap.get(cleanMobile);
+        errors.push(`Row ${rowNum} (${name}): Mobile Number '${cleanMobile}' is already registered in database for student '${existing.name}' (Enrollment: ${existing.enrollment_no}).`);
+        continue;
+      }
+
+      // Check 7: Database duplicate Email ID
+      if (cleanEmail && dbEmailMap.has(cleanEmail)) {
+        const existing = dbEmailMap.get(cleanEmail);
+        errors.push(`Row ${rowNum} (${name}): Email ID '${cleanEmail}' is already registered in database for student '${existing.name}' (Enrollment: ${existing.enrollment_no}).`);
+        continue;
+      }
+
+      // Check 8: Database duplicate Roll No in same Semester & Division
+      if (cleanRoll && cleanSem) {
+        const rollKey = `${cleanSem}__${cleanDiv}__${cleanRoll}`;
+        if (dbRollMap.has(rollKey)) {
+          const existing = dbRollMap.get(rollKey);
+          const divLabel = cleanDiv ? `Division ${cleanDiv}` : 'General Division';
+          errors.push(`Row ${rowNum} (${name}): Roll Number '${cleanRoll}' already exists in Semester ${cleanSem}, ${divLabel} in database for student '${existing.name}' (Enrollment: ${existing.enrollment_no}).`);
+          continue;
+        }
+      }
+
+      const username = cleanEnroll.toLowerCase();
+      const rawPassword = cleanMobile;
       if (!passwordHashCache.has(rawPassword)) {
         passwordHashCache.set(rawPassword, bcrypt.hashSync(rawPassword, 4));
       }
@@ -389,45 +633,54 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
 
       const importObj = {
         enrollment_no: cleanEnroll,
-        name: String(name).trim(),
-        course: String(course).trim(),
-        semester: String(semester).trim(),
-        mobile: String(mobile).trim(),
+        name,
+        course: String(rawCourse).trim(),
+        semester: cleanSem,
+        mobile: cleanMobile,
         username,
         password: hashedPassword,
         plain_password: rawPassword
       };
-      if (email && String(email).trim() !== '') importObj.email = String(email).trim();
-      if (roll_no && String(roll_no).trim() !== '') importObj.roll_no = String(roll_no).trim();
-      if (division && String(division).trim() !== '') importObj.division = String(division).trim();
+      if (cleanEmail) importObj.email = cleanEmail;
+      if (cleanRoll) importObj.roll_no = cleanRoll;
+      if (cleanDiv) importObj.division = cleanDiv;
 
-      seenInFile.set(cleanEnroll, importObj);
+      validRows.push(importObj);
     }
 
-    const deduplicatedRows = Array.from(seenInFile.values());
+    // If there are ANY errors or duplicate conflicts, reject the entire import and return descriptive errors
+    if (errors.length > 0) {
+      return res.status(400).json({
+        error: `Bulk Upload failed: ${errors.length} duplicate/validation issue(s) detected. No records were saved.`,
+        errors,
+        totalErrors: errors.length
+      });
+    }
 
-    // Execute High Performance Bulk Upsert in chunks of 500 (Handles BOTH Insert & Update in 1 Query)
+    // High performance chunked insertion
     const chunkSize = 500;
-    for (let c = 0; c < deduplicatedRows.length; c += chunkSize) {
-      const chunk = deduplicatedRows.slice(c, c + chunkSize);
-      let { error: insertErr } = await supabase.from('students').upsert(chunk, { onConflict: 'enrollment_no' });
+    let successCount = 0;
+    for (let c = 0; c < validRows.length; c += chunkSize) {
+      const chunk = validRows.slice(c, c + chunkSize);
+      let { error: insertErr } = await supabase.from('students').insert(chunk);
 
       if (insertErr && (insertErr.message?.includes('email') || insertErr.code === '42703')) {
-        // Retry chunk without email if DB missing email column
         const sanitizedChunk = chunk.map(({ email, ...rest }) => rest);
-        const retry = await supabase.from('students').upsert(sanitizedChunk, { onConflict: 'enrollment_no' });
+        const retry = await supabase.from('students').insert(sanitizedChunk);
         insertErr = retry.error;
       }
 
       if (insertErr) {
         console.error('Batch insert chunk error:', insertErr);
-        results.errors.push(`Batch import error: ${insertErr.message}`);
-      } else {
-        results.successCount += chunk.length;
+        throw insertErr;
       }
+      successCount += chunk.length;
     }
 
-    res.json(results);
+    res.json({
+      message: `Successfully imported ${successCount} student records!`,
+      successCount
+    });
   } catch (err) {
     console.error('Import process error:', err);
     res.status(500).json({ error: err.message || 'Failed to process student import batch.' });
@@ -622,60 +875,6 @@ router.post('/promote', authenticateJWT, requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message || 'Failed to promote students.' });
   }
 });
-
-// Admin Bulk Reset Student Device Bindings (Must be defined BEFORE /:id/reset-device)
-router.post('/bulk-reset-device', authenticateJWT, requireAdmin, async (req, res) => {
-  const { studentIds, resetAll } = req.body;
-  
-  try {
-    if (resetAll || !studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
-      const { error } = await supabase
-        .from('students')
-        .update({ device_id: null, locked_until: null })
-        .not('id', 'is', null);
-
-      if (error) throw error;
-      return res.json({ success: true, message: 'All student device bindings & lockouts reset successfully!' });
-    }
-
-    const chunkSize = 500;
-    for (let i = 0; i < studentIds.length; i += chunkSize) {
-      const chunk = studentIds.slice(i, i + chunkSize);
-      const { error } = await supabase
-        .from('students')
-        .update({ device_id: null, locked_until: null })
-        .in('id', chunk);
-
-      if (error) throw error;
-    }
-
-    res.json({ success: true, message: `Device binding & lockout reset successfully for ${studentIds.length} student(s)!` });
-  } catch (err) {
-    console.error('Bulk reset device binding error:', err);
-    res.status(500).json({ error: err.message || 'Failed to reset student device bindings.' });
-  }
-});
-
-// Admin Reset Student Device Binding (Single Student)
-const resetSingleDevice = async (req, res) => {
-  const { id } = req.params;
-  try {
-    const { error } = await supabase
-      .from('students')
-      .update({ device_id: null, locked_until: null })
-      .eq('id', id);
-
-    if (error) throw error;
-
-    res.json({ success: true, message: 'Device binding & lockout reset successfully!' });
-  } catch (err) {
-    console.error('Reset device binding error:', err);
-    res.status(500).json({ error: err.message || 'Failed to reset student device binding.' });
-  }
-};
-
-router.post('/:id/reset-device', authenticateJWT, requireAdmin, resetSingleDevice);
-router.put('/:id/reset-device', authenticateJWT, requireAdmin, resetSingleDevice);
 
 module.exports = router;
 

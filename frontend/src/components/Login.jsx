@@ -335,7 +335,7 @@ export default function Login({ onLoginSuccess, onBack }) {
           </button>
         </form>
         <p style={{ marginTop: '65px', textAlign: 'center', fontSize: '0.82rem', color: '#93c5fd', lineHeight: '1.4' }}>
-          EduMark © {new Date().getFullYear()} • <span style={{ color: '#fbbf24', fontWeight: '700' }}>This Module Built and Designed By Dabhi Prit And Jadav Dashrath</span>
+          EduMark © {new Date().getFullYear()} • This Module Built and Designed By <span style={{ color: '#fbbf24', fontWeight: '700' }}>Dabhi Prit And Jadav Dashrath</span>
         </p>
       </div>
     </div>
@@ -359,7 +359,7 @@ const styles = {
     width: '450px',
     height: '450px',
     borderRadius: '50%',
-    background: 'radial-gradient(circle, rgba(147, 51, 234, 0.25) 0%, rgba(0,0,0,0) 70%)',
+    background: 'radial-gradient(circle, rgba(0, 59, 122, 0.5) 0%, rgba(0,0,0,0) 70%)',
     top: '-10%',
     left: '-10%',
     zIndex: 0
@@ -379,7 +379,7 @@ const styles = {
     maxWidth: '420px',
     padding: '40px 32px',
     zIndex: 1,
-    boxShadow: '0 24px 50px rgba(0, 0, 0, 0.25), 0 0 40px rgba(147, 51, 234, 0.15)',
+    boxShadow: '0 24px 50px rgba(0, 0, 0, 0.35), 0 0 40px rgba(251, 191, 36, 0.1)',
     position: 'relative',
     borderRadius: '24px',
     background: 'rgba(255, 255, 255, 0.03)',

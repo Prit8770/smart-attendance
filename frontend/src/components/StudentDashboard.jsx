@@ -1540,7 +1540,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             <GraduationCap size={24} color="#0f172a" strokeWidth={2.5} />
           </div>
           <div className="admin-brand-text">
-            <span className="admin-brand-title">EduMark</span>
+            <span className="admin-brand-title">Edu<span className="brand-mark-accent">Mark</span></span>
             <span className="admin-brand-subtitle">Student Portal</span>
           </div>
         </div>
@@ -1794,7 +1794,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                             <tr key={log.id || idx}>
                               <td style={{ textAlign: 'center', fontWeight: '700', color: 'var(--text-muted)' }}>{idx + 1}</td>
                               <td style={{ fontWeight: '700' }}>{log.date}</td>
-                              <td style={{ fontWeight: '700', color: 'var(--text-primary)' }}>{log.subject || log.subject_name || log.subjectName || 'C Language'}</td>
+                              <td style={{ fontWeight: '700', color: 'var(--text-primary)' }}>{log.subject || log.subject_name || log.subjectName || '-'}</td>
                               <td style={{ fontWeight: '600' }}>{log.faculty_name || log.facultyName || log.faculty || 'Faculty'}</td>
                               <td style={{ textAlign: 'center' }}>
                                 <span style={{

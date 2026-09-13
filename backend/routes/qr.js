@@ -34,9 +34,9 @@ const requireAdminOrFaculty = (req, res, next) => {
   }
 };
 
-// Middleware to restrict strictly to faculty
+// Middleware to restrict strictly to faculty (or admin acting as faculty)
 const requireFacultyOnly = (req, res, next) => {
-  if (req.user && req.user.role === 'faculty') {
+  if (req.user && (req.user.role === 'faculty' || req.user.role === 'admin')) {
     next();
   } else {
     res.status(403).json({ error: 'Access denied. Faculty only can generate QR codes.' });
@@ -77,6 +77,39 @@ router.post('/toggle-settings', authenticateJWT, async (req, res) => {
   }
 });
 
+// Helper to resolve valid faculty table ID to satisfy foreign key constraint: qr_sessions_created_by_faculty_id_fkey
+async function resolveValidFacultyId(user) {
+  if (!user) return null;
+  // 1. Check if user.faculty_id exists in faculty table
+  if (user.faculty_id) {
+    const { data: byFacId } = await supabase.from('faculty').select('id').eq('id', user.faculty_id).maybeSingle();
+    if (byFacId && byFacId.id) return byFacId.id;
+  }
+  // 2. Check if user.id exists in faculty table
+  if (user.id) {
+    const { data: byId } = await supabase.from('faculty').select('id').eq('id', user.id).maybeSingle();
+    if (byId && byId.id) return byId.id;
+  }
+  // 3. Look up by email or username
+  const email = (user.email || '').toLowerCase().trim();
+  const username = (user.username || '').toLowerCase().trim();
+  if (email) {
+    const { data: byEmail } = await supabase.from('faculty').select('id').eq('email', email).maybeSingle();
+    if (byEmail && byEmail.id) return byEmail.id;
+  }
+  if (username) {
+    const { data: byUser } = await supabase.from('faculty').select('id').eq('username', username).maybeSingle();
+    if (byUser && byUser.id) return byUser.id;
+  }
+  // 4. If admin, check admin@ljcca.edu in faculty table
+  const { data: adminFac } = await supabase.from('faculty').select('id').eq('email', 'admin@ljcca.edu').maybeSingle();
+  if (adminFac && adminFac.id) return adminFac.id;
+
+  // 5. Fallback: get any first faculty member ID
+  const { data: firstFac } = await supabase.from('faculty').select('id').limit(1).maybeSingle();
+  return firstFac ? firstFac.id : null;
+}
+
 // POST start new QR session (Faculty only)
 router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, res) => {
   const { semester, division, subject } = req.body;
@@ -88,9 +121,15 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
       return res.status(403).json({ error: 'QR Attendance session generation is currently disabled by Admin.' });
     }
 
+    // Resolve valid ID in faculty table to satisfy foreign key constraint: qr_sessions_created_by_faculty_id_fkey
+    const facultyId = await resolveValidFacultyId(req.user);
+    if (!facultyId) {
+      return res.status(400).json({ error: 'No valid faculty account found to associate with this QR session.' });
+    }
+
     // 2. Check if this specific faculty member has already generated 5 sessions today
     const { count } = await supabase.from('qr_sessions').select('*', { count: 'exact', head: true })
-      .eq('created_by_faculty_id', req.user.id)
+      .eq('created_by_faculty_id', facultyId)
       .eq('date', today);
 
     if (count !== null && count >= 5) {
@@ -110,7 +149,7 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
     let insertPayload = {
       created_at: createdAt,
       expires_at: expiresAt,
-      created_by_faculty_id: req.user.id,
+      created_by_faculty_id: facultyId,
       date: today,
       tokens: JSON.stringify(tokens),
       semester: semester ? parseInt(semester) : null,
@@ -169,8 +208,9 @@ router.get('/active', authenticateJWT, async (req, res) => {
       .select('*')
       .order('id', { ascending: false })
       .limit(1);
-    if (req.user && req.user.role === 'faculty') {
-      sessionQuery = sessionQuery.eq('created_by_faculty_id', req.user.id);
+    if (req.user && (req.user.role === 'faculty' || req.user.originalRole === 'admin')) {
+      const activeFacId = req.user.faculty_id || req.user.id;
+      sessionQuery = sessionQuery.or(`created_by_faculty_id.eq.${req.user.id},created_by_faculty_id.eq.${activeFacId}`);
     }
     const { data: latestSession } = await sessionQuery.maybeSingle();
 
@@ -217,7 +257,8 @@ router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) =>
       .eq('date', today)
       .order('id', { ascending: false });
     if (req.user.role === 'faculty') {
-      sessionsQuery = sessionsQuery.eq('created_by_faculty_id', req.user.id);
+      const activeFacId = req.user.faculty_id || req.user.id;
+      sessionsQuery = sessionsQuery.or(`created_by_faculty_id.eq.${req.user.id},created_by_faculty_id.eq.${activeFacId}`);
     }
     const { data: sessions, error } = await sessionsQuery;
 

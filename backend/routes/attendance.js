@@ -437,7 +437,7 @@ router.post('/submit', authenticateJWT, async (req, res) => {
 
 // POST manual attendance by Faculty/Admin
 router.post('/manual', authenticateJWT, requireAdmin, async (req, res) => {
-  const { student_id, qr_session_id, otp_id } = req.body;
+  const { student_id, qr_session_id, otp_id, date } = req.body;
 
   if (!student_id) {
     return res.status(400).json({ error: 'Student ID is required.' });
@@ -445,6 +445,59 @@ router.post('/manual', authenticateJWT, requireAdmin, async (req, res) => {
 
   try {
     const today = getLocalDateString();
+    let sessionDate = null;
+    let linkCol = null;
+    let linkId = null;
+    let activeManualSubject = null;
+
+    if (qr_session_id) {
+      linkCol = 'qr_session_id';
+      linkId = qr_session_id;
+      const { data: sessRow } = await supabase.from('qr_sessions').select('date, subject').eq('id', qr_session_id).maybeSingle();
+      if (sessRow) {
+        if (sessRow.date) sessionDate = sessRow.date;
+        if (sessRow.subject) activeManualSubject = sessRow.subject;
+      }
+    } else if (otp_id) {
+      linkCol = 'otp_id';
+      linkId = otp_id;
+      const { data: sessRow } = await supabase.from('otp').select('date, subject').eq('id', otp_id).maybeSingle();
+      if (sessRow) {
+        if (sessRow.date) sessionDate = sessRow.date;
+        if (sessRow.subject) activeManualSubject = sessRow.subject;
+      }
+    } else {
+      // Find latest QR session by this faculty today
+      const { data: recentQr } = await supabase.from('qr_sessions')
+        .select('id, subject, date')
+        .eq('created_by_faculty_id', req.user.id)
+        .gte('created_at', today + 'T00:00:00.000Z')
+        .order('id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (recentQr) {
+        linkCol = 'qr_session_id';
+        linkId = recentQr.id;
+        if (recentQr.date) sessionDate = recentQr.date;
+        if (recentQr.subject) activeManualSubject = recentQr.subject;
+      } else {
+        const { data: recentOtp } = await supabase.from('otp')
+          .select('id, subject, date')
+          .eq('generated_by', req.user.id)
+          .order('id', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (recentOtp) {
+          linkCol = 'otp_id';
+          linkId = recentOtp.id;
+          if (recentOtp.date) sessionDate = recentOtp.date;
+          if (recentOtp.subject) activeManualSubject = recentOtp.subject;
+        }
+      }
+    }
+
+    const targetDate = date || sessionDate || today;
+
     let dupQuery = supabase.from('attendance')
       .select('id, device_id, status')
       .eq('student_id', student_id)
@@ -455,7 +508,7 @@ router.post('/manual', authenticateJWT, requireAdmin, async (req, res) => {
     } else if (otp_id) {
       dupQuery = dupQuery.eq('otp_id', otp_id);
     } else {
-      dupQuery = dupQuery.eq('date', today);
+      dupQuery = dupQuery.eq('date', targetDate);
     }
 
     const { data: existing } = await dupQuery.limit(1).maybeSingle();
@@ -465,44 +518,6 @@ router.post('/manual', authenticateJWT, requireAdmin, async (req, res) => {
         return res.status(400).json({ error: 'Student already marked attendance via Smartphone for this session.' });
       } else {
         return res.status(400).json({ error: 'Student is already marked present for this session.' });
-      }
-    }
-
-    let linkCol = null;
-    let linkId = null;
-    let activeManualSubject = null;
-
-    if (qr_session_id) {
-      linkCol = 'qr_session_id';
-      linkId = qr_session_id;
-    } else if (otp_id) {
-      linkCol = 'otp_id';
-      linkId = otp_id;
-    } else {
-      // Find latest QR session by this faculty today
-      const { data: recentQr } = await supabase.from('qr_sessions')
-        .select('id, subject')
-        .eq('created_by_faculty_id', req.user.id)
-        .gte('created_at', today + 'T00:00:00.000Z')
-        .order('id', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (recentQr) {
-        linkCol = 'qr_session_id';
-        linkId = recentQr.id;
-        if (recentQr.subject) activeManualSubject = recentQr.subject;
-      } else {
-        const { data: recentOtp } = await supabase.from('otp')
-          .select('id, subject')
-          .eq('generated_by', req.user.id)
-          .order('id', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-        if (recentOtp) {
-          linkCol = 'otp_id';
-          linkId = recentOtp.id;
-          if (recentOtp.subject) activeManualSubject = recentOtp.subject;
-        }
       }
     }
 
@@ -516,7 +531,7 @@ router.post('/manual', authenticateJWT, requireAdmin, async (req, res) => {
     const localTimeStr = submitTime.toLocaleTimeString('en-US', { hour12: false });
     const insertPayload = {
       student_id,
-      date: today,
+      date: targetDate,
       time: localTimeStr,
       latitude: 0,
       longitude: 0,
@@ -1375,7 +1390,7 @@ router.get('/subject-breakdown', authenticateJWT, async (req, res) => {
                 seenNames.add(subKey);
                 matchingSubjects.push({
                   name,
-                  code: subCode || `BCA-${studentSem}0${matchingSubjects.length + 1}`,
+                  code: subCode || '',
                   shortName: subShort
                 });
               }
@@ -1388,56 +1403,6 @@ router.get('/subject-breakdown', authenticateJWT, async (req, res) => {
         if (f.email) facultySubjectListMap.set(String(f.email), facSemSubs);
       }
     });
-
-    // Fallback curriculum if no faculty subjects assigned yet
-    if (matchingSubjects.length === 0) {
-      const defaultCurriculum = {
-        1: [
-          { name: 'C Language', code: 'BCA-101', shortName: 'C Language' },
-          { name: 'Computer Fundamentals & IT', code: 'BCA-102', shortName: 'CF & IT' },
-          { name: 'Digital Electronics', code: 'BCA-103', shortName: 'DE' },
-          { name: 'Mathematical Foundation', code: 'BCA-104', shortName: 'Maths' },
-          { name: 'Communication Skills', code: 'BCA-105', shortName: 'Comm Skills' }
-        ],
-        2: [
-          { name: 'Database Management Systems (DBMS)', code: 'BCA-201', shortName: 'DBMS' },
-          { name: 'Web Technologies & React', code: 'BCA-202', shortName: 'WT' },
-          { name: 'Data Structures & Algorithms', code: 'BCA-203', shortName: 'DSA' },
-          { name: 'Software Engineering', code: 'BCA-204', shortName: 'SE' },
-          { name: 'Computer Networks', code: 'BCA-205', shortName: 'CN' }
-        ],
-        3: [
-          { name: 'Java Programming', code: 'BCA-301', shortName: 'JAVA' },
-          { name: 'Operating Systems', code: 'BCA-302', shortName: 'OS' },
-          { name: 'Computer Architecture & Org', code: 'BCA-303', shortName: 'CAO' },
-          { name: 'Python Programming', code: 'BCA-304', shortName: 'PYTHON' },
-          { name: 'Discrete Mathematics', code: 'BCA-305', shortName: 'DM' }
-        ],
-        4: [
-          { name: 'Advanced Java & J2EE', code: 'BCA-401', shortName: 'ADV-JAVA' },
-          { name: 'PHP & MySQL Web Dev', code: 'BCA-402', shortName: 'PHP' },
-          { name: 'Object Oriented Analysis & Design', code: 'BCA-403', shortName: 'OOAD' },
-          { name: 'Cyber Security & Laws', code: 'BCA-404', shortName: 'CYBER-SEC' },
-          { name: 'Environmental Studies', code: 'BCA-405', shortName: 'EVS' }
-        ],
-        5: [
-          { name: 'Mobile Application Dev (Android)', code: 'BCA-501', shortName: 'MAD' },
-          { name: 'Cloud Computing & DevOps', code: 'BCA-502', shortName: 'CLOUD' },
-          { name: 'Information & Network Security', code: 'BCA-503', shortName: 'INS' },
-          { name: 'Artificial Intelligence & ML', code: 'BCA-504', shortName: 'AI-ML' },
-          { name: 'Project Development Phase 1', code: 'BCA-505', shortName: 'PROJECT-1' }
-        ],
-        6: [
-          { name: 'Full Stack Web Development', code: 'BCA-601', shortName: 'FULLSTACK' },
-          { name: 'Data Science & Big Data Analytics', code: 'BCA-602', shortName: 'DATA-SCI' },
-          { name: 'Software Quality Testing', code: 'BCA-603', shortName: 'SQT' },
-          { name: 'Major Project & Viva', code: 'BCA-604', shortName: 'MAJOR-PROJ' }
-        ]
-      };
-
-      const semDefaults = defaultCurriculum[studentSem] || defaultCurriculum[1];
-      semDefaults.forEach(d => matchingSubjects.push(d));
-    }
 
     // 3. Query created QR sessions, OTP sessions and student attendance records
     const [{ data: qrSessions }, { data: otps }, { data: rawStudentAtt }] = await Promise.all([
@@ -1700,4 +1665,393 @@ router.get('/subject-breakdown', authenticateJWT, async (req, res) => {
   }
 });
 
+// GET Semester Master Attendance Matrix (Date-Wise Subject Grid)
+router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) => {
+  const { semester, division, startDate, endDate, date, subject } = req.query;
+
+  const semParam = semester ? String(semester).trim() : 'ALL';
+  const isAllSem = semParam === 'ALL' || semParam === '' || semParam.toLowerCase() === 'all';
+  const semNum = isAllSem ? 'ALL' : semParam.replace(/\D/g, '').trim();
+
+  try {
+    const localMeta = getLocalSessionMetaMap();
+
+    // 1. Fetch all registered students (Paginated loop to fetch 100% of students without 1000-row limit)
+    let allStudents = [];
+    let from = 0;
+    const step = 1000;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data: chunk, error: studentErr } = await supabase
+        .from('students')
+        .select('id, enrollment_no, roll_no, division, name, email, semester, mobile')
+        .range(from, from + step - 1);
+
+      if (studentErr) throw studentErr;
+
+      if (chunk && chunk.length > 0) {
+        allStudents = allStudents.concat(chunk);
+        from += step;
+        if (chunk.length < step) hasMore = false;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    // Filter students belonging to this semester & optional division
+    let targetStudents = (allStudents || []).filter(s => {
+      if (!isAllSem) {
+        const sSem = String(s.semester || '').replace(/\D/g, '').trim();
+        if (sSem !== semNum) return false;
+      }
+      if (division && division !== 'ALL') {
+        const sDiv = String(s.division || '').trim().toUpperCase();
+        if (sDiv !== String(division).trim().toUpperCase()) return false;
+      }
+      return true;
+    });
+
+    // Sort students by Semester first (if ALL), then Division (A, B, C...), then numerically by roll_no
+    targetStudents.sort((a, b) => {
+      if (isAllSem) {
+        const semA = parseInt(String(a.semester || '').replace(/\D/g, ''), 10) || 0;
+        const semB = parseInt(String(b.semester || '').replace(/\D/g, ''), 10) || 0;
+        if (semA !== semB) return semA - semB;
+      }
+      const divA = String(a.division || 'A').trim().toUpperCase();
+      const divB = String(b.division || 'A').trim().toUpperCase();
+      if (divA !== divB) {
+        return divA.localeCompare(divB);
+      }
+      const rA = parseInt(String(a.roll_no || '').replace(/\D/g, ''), 10);
+      const rB = parseInt(String(b.roll_no || '').replace(/\D/g, ''), 10);
+      if (!isNaN(rA) && !isNaN(rB)) return rA - rB;
+      if (!isNaN(rA)) return -1;
+      if (!isNaN(rB)) return 1;
+      return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+
+    // 2. Fetch faculties, qr_sessions, otp sessions, and attendance records
+    let qrQuery = supabase.from('qr_sessions').select('id, created_at, created_by_faculty_id, semester, division, subject, date');
+    let otpQuery = supabase.from('otp').select('id, generated_time, generated_by, semester, division, subject, date');
+    let attQuery = supabase.from('attendance').select('id, student_id, qr_session_id, otp_id, date, time, status, subject, device_id, distance').in('status', ['Success', 'Present']);
+
+    if (date) {
+      qrQuery = qrQuery.eq('date', date);
+      otpQuery = otpQuery.eq('date', date);
+      attQuery = attQuery.eq('date', date);
+    } else if (startDate && endDate) {
+      qrQuery = qrQuery.gte('date', startDate).lte('date', endDate);
+      otpQuery = otpQuery.gte('date', startDate).lte('date', endDate);
+      attQuery = attQuery.gte('date', startDate).lte('date', endDate);
+    }
+
+    const [
+      { data: faculties },
+      { data: qrSessions },
+      { data: otpSessions },
+      { data: allAttendance }
+    ] = await Promise.all([
+      supabase.from('faculty').select('id, name'),
+      qrQuery,
+      otpQuery,
+      attQuery
+    ]);
+
+    const facMap = new Map((faculties || []).map(f => [String(f.id), f.name]));
+    const studentIdSet = new Set(targetStudents.map(s => String(s.id)));
+
+    const cleanSubjectName = (sub) => {
+      if (!sub) return 'Lecture';
+      return String(sub).replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim() || String(sub).trim();
+    };
+
+    // 3. Identify and collect all sessions conducted for this semester
+    const sessionMap = new Map();
+
+    // Collect matching QR sessions
+    (qrSessions || []).forEach(q => {
+      const qSem = String(q.semester || '').replace(/\D/g, '').trim();
+      if (isAllSem || qSem === semNum) {
+        if (division && division !== 'ALL' && q.division && String(q.division).toUpperCase() !== 'ALL') {
+          if (String(q.division).toUpperCase() !== String(division).toUpperCase()) return;
+        }
+
+        const sessDate = q.date || (q.created_at ? getLocalDateString(new Date(q.created_at)) : getLocalDateString());
+        if (date && sessDate !== date) return;
+        if (startDate && endDate && (sessDate < startDate || sessDate > endDate)) return;
+
+        let rawSub = q.subject || (localMeta[`qr_${q.id}`] ? localMeta[`qr_${q.id}`].subject : null) || 'General';
+        let sub = cleanSubjectName(rawSub);
+        if (subject && subject !== 'ALL' && String(sub).toLowerCase() !== String(subject).toLowerCase() && String(rawSub).toLowerCase() !== String(subject).toLowerCase()) return;
+
+        const facName = facMap.get(String(q.created_by_faculty_id)) || 'Faculty';
+        let formattedTime = 'Session';
+        if (q.created_at) {
+          try {
+            formattedTime = new Date(q.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          } catch(e) {}
+        }
+
+        const key = `qr_${q.id}`;
+        sessionMap.set(key, {
+          key,
+          id: q.id,
+          type: 'QR',
+          date: sessDate,
+          time: formattedTime,
+          created_at: q.created_at || sessDate,
+          subject: sub,
+          faculty_name: facName,
+          division: q.division || 'ALL',
+          logs: []
+        });
+      }
+    });
+
+    // Collect matching OTP sessions
+    (otpSessions || []).forEach(o => {
+      const oSem = String(o.semester || '').replace(/\D/g, '').trim();
+      if (isAllSem || oSem === semNum) {
+        if (division && division !== 'ALL' && o.division && String(o.division).toUpperCase() !== 'ALL') {
+          if (String(o.division).toUpperCase() !== String(division).toUpperCase()) return;
+        }
+
+        const otpDateVal = o.date || (o.generated_time ? getLocalDateString(new Date(o.generated_time)) : (o.created_at ? getLocalDateString(new Date(o.created_at)) : getLocalDateString()));
+        const sessDate = otpDateVal;
+        if (date && sessDate !== date) return;
+        if (startDate && endDate && (sessDate < startDate || sessDate > endDate)) return;
+
+        let rawSub = o.subject || (localMeta[`otp_${o.id}`] ? localMeta[`otp_${o.id}`].subject : null) || 'General';
+        let sub = cleanSubjectName(rawSub);
+        if (subject && subject !== 'ALL' && String(sub).toLowerCase() !== String(subject).toLowerCase() && String(rawSub).toLowerCase() !== String(subject).toLowerCase()) return;
+
+        const facName = facMap.get(String(o.generated_by)) || 'Faculty';
+        let formattedTime = 'Session';
+        const rawTime = o.generated_time || o.created_at;
+        if (rawTime) {
+          try {
+            formattedTime = new Date(rawTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+          } catch(e) {}
+        }
+
+        const key = `otp_${o.id}`;
+        sessionMap.set(key, {
+          key,
+          id: o.id,
+          type: 'OTP',
+          date: sessDate,
+          time: formattedTime,
+          created_at: rawTime || sessDate,
+          subject: sub,
+          faculty_name: facName,
+          division: o.division || 'ALL',
+          logs: []
+        });
+      }
+    });
+
+
+    // Also link any manual or direct attendance records
+    (allAttendance || []).forEach(att => {
+      if (!studentIdSet.has(String(att.student_id))) return;
+      if (att.status !== 'Success' && att.status !== 'Present') return;
+
+      const attDate = att.date || getLocalDateString();
+      if (date && attDate !== date) return;
+      if (startDate && endDate && (attDate < startDate || attDate > endDate)) return;
+
+      if (att.qr_session_id && sessionMap.has(`qr_${att.qr_session_id}`)) {
+        sessionMap.get(`qr_${att.qr_session_id}`).logs.push(att);
+        return;
+      }
+
+      if (att.otp_id && sessionMap.has(`otp_${att.otp_id}`)) {
+        sessionMap.get(`otp_${att.otp_id}`).logs.push(att);
+        return;
+      }
+
+      const rawSub = att.subject || 'Class Lecture';
+      const manSub = cleanSubjectName(rawSub);
+      if (subject && subject !== 'ALL' && String(manSub).toLowerCase() !== String(subject).toLowerCase() && String(rawSub).toLowerCase() !== String(subject).toLowerCase()) return;
+
+      const manKey = `manual_${attDate}_${manSub.replace(/\s+/g, '_')}`;
+      if (!sessionMap.has(manKey)) {
+        sessionMap.set(manKey, {
+          key: manKey,
+          id: att.id,
+          type: 'Manual',
+          date: attDate,
+          time: att.time || 'Class',
+          created_at: attDate,
+          subject: manSub,
+          faculty_name: 'Faculty (Manual)',
+          division: 'ALL',
+          logs: []
+        });
+      }
+      sessionMap.get(manKey).logs.push(att);
+    });
+
+    // 4. Sort sessions chronologically (Date Ascending -> Time Ascending)
+    const sessionsList = Array.from(sessionMap.values()).sort((a, b) => {
+      if (a.date !== b.date) return a.date.localeCompare(b.date);
+      return String(a.time || '').localeCompare(String(b.time || ''));
+    });
+
+    // 5. Build Grouped Date structure (Date -> [Subjects/Sessions])
+    const dateGroupsMap = new Map();
+    sessionsList.forEach(sess => {
+      if (!dateGroupsMap.has(sess.date)) {
+        let fDate = sess.date;
+        try {
+          fDate = new Date(sess.date + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        } catch(e) {}
+        dateGroupsMap.set(sess.date, {
+          date: sess.date,
+          formattedDate: fDate,
+          sessions: []
+        });
+      }
+      dateGroupsMap.get(sess.date).sessions.push({
+        columnKey: sess.key,
+        subject: sess.subject,
+        time: sess.time,
+        type: sess.type,
+        faculty_name: sess.faculty_name,
+        division: sess.division
+      });
+    });
+
+    const dateGroups = Array.from(dateGroupsMap.values());
+
+    // 6. Build Columns list & Matrix lookup
+    const columns = sessionsList.map(s => {
+      let fDate = s.date;
+      try {
+        fDate = new Date(s.date + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      } catch(e) {}
+      return {
+        columnKey: s.key,
+        date: s.date,
+        formattedDate: fDate,
+        subject: s.subject,
+        time: s.time,
+        type: s.type,
+        faculty_name: s.faculty_name,
+        division: s.division
+      };
+    });
+
+    const totalLectures = columns.length;
+    let totalPresentOverall = 0;
+    let totalPossibleOverall = 0;
+    const attendanceMatrix = {};
+
+    const studentMatrixRows = targetStudents.map(student => {
+      const stId = String(student.id);
+      attendanceMatrix[stId] = {};
+
+      let presentCount = 0;
+      let absentCount = 0;
+      let applicableCount = 0;
+
+      const studentDiv = String(student.division || 'A').trim().toUpperCase();
+
+      columns.forEach(col => {
+        const sess = sessionMap.get(col.columnKey);
+        const matchLog = sess ? sess.logs.find(l => String(l.student_id) === stId && (l.status === 'Success' || l.status === 'Present')) : null;
+
+        const sessDiv = String(col.division || 'ALL').trim().toUpperCase();
+        const isApplicable = sessDiv === 'ALL' || sessDiv === '' || studentDiv === sessDiv;
+
+        if (matchLog) {
+          attendanceMatrix[stId][col.columnKey] = {
+            status: 'P',
+            time: matchLog.time || null,
+            method: col.type,
+            distance: matchLog.distance || null
+          };
+          presentCount++;
+          applicableCount++;
+        } else if (isApplicable) {
+          attendanceMatrix[stId][col.columnKey] = {
+            status: 'A',
+            time: null,
+            method: null,
+            distance: null
+          };
+          absentCount++;
+          applicableCount++;
+        } else {
+          attendanceMatrix[stId][col.columnKey] = {
+            status: 'NA',
+            time: null,
+            method: null,
+            distance: null,
+            targetDivision: col.division
+          };
+        }
+      });
+
+      const pct = applicableCount > 0 ? Math.round((presentCount / applicableCount) * 100) : (totalLectures === 0 ? 0 : 100);
+      totalPresentOverall += presentCount;
+      totalPossibleOverall += applicableCount;
+
+      return {
+        ...student,
+        presentCount,
+        absentCount,
+        applicableCount,
+        pct
+      };
+    });
+
+    const overallAttendancePct = totalPossibleOverall > 0 ? Math.round((totalPresentOverall / totalPossibleOverall) * 100) : 0;
+    const uniqueSubjects = Array.from(new Set(sessionsList.map(s => s.subject).filter(Boolean)));
+
+    // Available divisions in this semester
+    const semStudentsAllDivs = (allStudents || []).filter(s => {
+      if (isAllSem) return true;
+      const sSem = String(s.semester || '').replace(/\D/g, '').trim();
+      return sSem === semNum;
+    });
+    const availableDivsSet = new Set();
+    semStudentsAllDivs.forEach(s => {
+      if (s.division && String(s.division).trim()) {
+        availableDivsSet.add(String(s.division).trim().toUpperCase());
+      }
+    });
+    (sessionsList || []).forEach(sess => {
+      if (sess.division && sess.division !== 'ALL' && String(sess.division).trim()) {
+        availableDivsSet.add(String(sess.division).trim().toUpperCase());
+      }
+    });
+    const availableDivisions = Array.from(availableDivsSet).sort();
+
+    res.json({
+      success: true,
+      semester: semNum,
+      students: studentMatrixRows,
+      columns,
+      dateGroups,
+      attendanceMatrix,
+      uniqueSubjects,
+      availableDivisions,
+      summary: {
+        totalStudents: targetStudents.length,
+        totalLectures,
+        overallAttendancePct,
+        highAttendanceCount: studentMatrixRows.filter(s => s.pct >= 75).length,
+        lowAttendanceCount: studentMatrixRows.filter(s => s.pct < 75).length
+      }
+    });
+  } catch (err) {
+    console.error('Error fetching semester attendance matrix:', err);
+    res.status(500).json({ error: 'Failed to generate semester attendance matrix.' });
+  }
+});
+
 module.exports = router;
+

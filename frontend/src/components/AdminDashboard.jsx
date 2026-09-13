@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Users, KeyRound, QrCode, MapPin, BarChart3, Download, Upload, TrendingUp, Plus, Search,
-  Trash2, Edit, Check, CheckCircle, XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Unlock,
-  Sun, Moon, GraduationCap, User, Settings, Folder, Calendar, Menu, RotateCcw, X,
-  LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileText, ClipboardList, AlertTriangle, UserPlus, BookOpen, FileSpreadsheet, Send, MessageSquare, ArrowLeft
+  Trash2, Edit, Check, CheckCircle, XCircle, Clock, Shield, ShieldAlert, LogOut, RefreshCw, Unlock,
+  Sun, Moon, GraduationCap, User, Settings, Folder, FolderOpen, Calendar, Menu, RotateCcw, X,
+  LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileText, ClipboardList, AlertTriangle, UserPlus, BookOpen, FileSpreadsheet, Send, MessageSquare, ArrowLeft, Printer, Layers, SlidersHorizontal, Filter
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -12,6 +12,7 @@ import Swal from 'sweetalert2';
 import QRCode from 'qrcode';
 import ToastContainer from './ToastContainer';
 import SearchableSemesterSelect from './SearchableSemesterSelect';
+import AdminModalCloseBtn from './AdminModalCloseBtn';
 
 // Bulletproof Helper to get local date string YYYY-MM-DD
 const getLocalDateStr = (dInput) => {
@@ -41,15 +42,17 @@ const isTodaySession = (dStr, cStr) => {
   return true; // Default true for backend endpoints that already return today's records
 };
 
-export default function AdminDashboard({ user, token, onLogout, theme, toggleTheme, onUpdateUser }) {
-  // Automatically enforce Light Theme for Admin Panel
-  useEffect(() => {
-    document.body.classList.add('light-theme');
-    return () => {
-      document.body.classList.remove('light-theme');
-    };
-  }, []);
-
+export default function AdminDashboard({
+  user,
+  token,
+  onLogout,
+  theme,
+  toggleTheme,
+  onUpdateUser,
+  onSwitchRole,
+  activeRole = 'admin',
+  canSwitchRole = true
+}) {
   const [toasts, setToasts] = useState([]);
 
   const showToast = (message, type = 'error', duration = 4000) => {
@@ -66,6 +69,22 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'students', 'otp', 'location', 'reports'
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [roleMenuOpen, setRoleMenuOpen] = useState(false);
+  const roleMenuRef = useRef(null);
+
+  useEffect(() => {
+    const handleOutsideClick = (e) => {
+      if (roleMenuRef.current && !roleMenuRef.current.contains(e.target)) {
+        setRoleMenuOpen(false);
+      }
+    };
+    if (roleMenuOpen) {
+      document.addEventListener('mousedown', handleOutsideClick);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+    };
+  }, [roleMenuOpen]);
   const [activeStatsList, setActiveStatsList] = useState(null); // null, 'total', 'present', 'absent', 'qrsessions'
   const [presentFacultyFolder, setPresentFacultyFolder] = useState(null); // null or faculty_name
   const [presentSessionFolder, setPresentSessionFolder] = useState(null); // null or session_id
@@ -194,6 +213,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     department: '',
     mobile: '',
     password: '',
+    roles: ['faculty'],
     subjects: [{ subjectName: '', semester: '1' }]
   });
   const [showFacultyModal, setShowFacultyModal] = useState(false);
@@ -219,6 +239,374 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const openSemesterModal = (type) => {
     showToast('Functionality available in Faculty Dashboard', 'error');
   };
+
+  // Master Attendance Matrix States
+  const [selectedSemFolder, setSelectedSemFolder] = useState('ALL');
+  const [matrixData, setMatrixData] = useState(null);
+  const [matrixLoading, setMatrixLoading] = useState(false);
+  const [matrixDateMode, setMatrixDateMode] = useState('all');
+  const [matrixMonth, setMatrixMonth] = useState(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [matrixStartDate, setMatrixStartDate] = useState('');
+  const [matrixEndDate, setMatrixEndDate] = useState('');
+  const [matrixSingleDate, setMatrixSingleDate] = useState('');
+  const [matrixDivFilter, setMatrixDivFilter] = useState('ALL');
+  const [matrixSubjectFilter, setMatrixSubjectFilter] = useState('ALL');
+  const [matrixStatusFilter, setMatrixStatusFilter] = useState('ALL');
+  const [matrixSearch, setMatrixSearch] = useState('');
+  const [matrixSortBy, setMatrixSortBy] = useState('roll_asc');
+  const [selectedCellInfo, setSelectedCellInfo] = useState(null);
+  const [directoryReloading, setDirectoryReloading] = useState(false);
+
+  // Helper to remove subject codes like (101), (104), [102], etc.
+  const cleanSubjectTitle = (sub) => {
+    if (!sub) return 'Subject';
+    return String(sub).replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim() || sub;
+  };
+
+  // Fetch Semester Matrix Data from Backend API with client-side fallback
+  const fetchSemesterMatrix = async (semNumber) => {
+    const targetSem = (!semNumber || semNumber === 'ALL') ? 'ALL' : semNumber;
+    if (!matrixData) {
+      setMatrixLoading(true);
+    }
+    try {
+      let query = `?semester=${targetSem}`;
+      if (matrixDateMode === 'month' && matrixMonth) {
+        query += `&month=${matrixMonth}`;
+      } else if (matrixDateMode === 'custom') {
+        if (matrixStartDate) query += `&startDate=${matrixStartDate}`;
+        if (matrixEndDate) query += `&endDate=${matrixEndDate}`;
+      } else if (matrixDateMode === 'single' && matrixSingleDate) {
+        query += `&date=${matrixSingleDate}`;
+      }
+      if (matrixDivFilter && matrixDivFilter !== 'ALL') {
+        query += `&division=${matrixDivFilter}`;
+      }
+      if (matrixSubjectFilter && matrixSubjectFilter !== 'ALL') {
+        query += `&subject=${encodeURIComponent(matrixSubjectFilter)}`;
+      }
+
+      const res = await fetch(`/api/attendance/semester-matrix${query}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setMatrixData(data);
+      } else {
+        fallbackCompileMatrix(targetSem);
+      }
+    } catch (err) {
+      console.error('Error fetching semester matrix:', err);
+      fallbackCompileMatrix(targetSem);
+    } finally {
+      setMatrixLoading(false);
+    }
+  };
+
+  const fallbackCompileMatrix = (semNumber) => {
+    const isAll = !semNumber || semNumber === 'ALL';
+    const targetSem = isAll ? 'ALL' : String(semNumber).replace(/\D/g, '');
+    const semStudents = (students || []).filter(s => {
+      if (isAll) return true;
+      return String(s.semester || '').replace(/\D/g, '') === targetSem;
+    });
+    
+    semStudents.sort((a, b) => {
+      if (isAll) {
+        const semA = parseInt(String(a.semester || '').replace(/\D/g, ''), 10) || 0;
+        const semB = parseInt(String(b.semester || '').replace(/\D/g, ''), 10) || 0;
+        if (semA !== semB) return semA - semB;
+      }
+      const divA = String(a.division || 'A').trim().toUpperCase();
+      const divB = String(b.division || 'A').trim().toUpperCase();
+      if (divA !== divB) {
+        return divA.localeCompare(divB);
+      }
+      const rA = parseInt(String(a.roll_no || '').replace(/\D/g, ''), 10);
+      const rB = parseInt(String(b.roll_no || '').replace(/\D/g, ''), 10);
+      if (!isNaN(rA) && !isNaN(rB)) return rA - rB;
+      return String(a.roll_no || '').localeCompare(String(b.roll_no || ''), undefined, { numeric: true });
+    });
+
+    const semLogs = (liveLogs || []).filter(l => {
+      if (l.status !== 'Success') return false;
+      if (isAll) return true;
+      const lSem = String(l.semester || l.students?.semester || '').replace(/\D/g, '');
+      return lSem === targetSem;
+    });
+
+    const sessionMap = new Map();
+    (qrSessionHistory || []).forEach(sess => {
+      const sSem = String(sess.semester || '').replace(/\D/g, '');
+      if (isAll || sSem === targetSem) {
+        const dateStr = getLocalDateStr(sess.date || sess.created_at);
+        const colKey = `${dateStr}_${sess.id || sess.qr_session_id || sess.otp_id}`;
+        sessionMap.set(colKey, {
+          columnKey: colKey,
+          date: dateStr,
+          subject: cleanSubjectTitle(sess.subject || 'Subject'),
+          faculty_name: sess.faculty_name || 'Faculty',
+          time: sess.created_at ? new Date(sess.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Session',
+          type: sess.qr_session_id ? 'QR' : 'OTP',
+          division: sess.division || 'ALL'
+        });
+      }
+    });
+
+    const columns = Array.from(sessionMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+    const attendanceMatrix = {};
+
+    const logSet = new Set();
+    (semLogs || []).forEach(l => {
+      const lDate = getLocalDateStr(l.date || l.timestamp || l.created_at);
+      if (l.student_id) logSet.add(`${String(l.student_id)}_${lDate}`);
+      if (l.enrollment_no) logSet.add(`${String(l.enrollment_no).toLowerCase()}_${lDate}`);
+    });
+
+    semStudents.forEach(st => {
+      attendanceMatrix[String(st.id)] = {};
+      const studentDiv = String(st.division || 'A').trim().toUpperCase();
+
+      columns.forEach(col => {
+        const sessDiv = String(col.division || 'ALL').trim().toUpperCase();
+        const isApplicable = sessDiv === 'ALL' || sessDiv === '' || studentDiv === sessDiv;
+
+        const hasLog = logSet.has(`${String(st.id)}_${col.date}`) ||
+          (st.enrollment_no ? logSet.has(`${String(st.enrollment_no).toLowerCase()}_${col.date}`) : false);
+
+        if (hasLog) {
+          attendanceMatrix[String(st.id)][col.columnKey] = {
+            status: 'P',
+            time: col.time,
+            method: col.type
+          };
+        } else if (isApplicable) {
+          attendanceMatrix[String(st.id)][col.columnKey] = {
+            status: 'A',
+            time: col.time,
+            method: col.type
+          };
+        } else {
+          attendanceMatrix[String(st.id)][col.columnKey] = {
+            status: 'NA',
+            time: col.time,
+            method: col.type,
+            targetDivision: col.division
+          };
+        }
+      });
+    });
+
+    const dateGroupsMap = new Map();
+    columns.forEach(col => {
+      if (!dateGroupsMap.has(col.date)) {
+        dateGroupsMap.set(col.date, {
+          date: col.date,
+          formattedDate: col.date,
+          sessions: []
+        });
+      }
+      dateGroupsMap.get(col.date).sessions.push(col);
+    });
+
+    const dateGroups = Array.from(dateGroupsMap.values());
+    const uniqueSubjects = Array.from(new Set(columns.map(c => c.subject)));
+
+    setMatrixData({
+      semester: semNumber,
+      totalStudents: semStudents.length,
+      columns,
+      dateGroups,
+      uniqueSubjects,
+      students: semStudents,
+      attendanceMatrix,
+      summary: {
+        totalStudents: semStudents.length,
+        totalLectures: columns.length,
+        overallAttendancePct: 0,
+        highAttendanceCount: 0,
+        lowAttendanceCount: semStudents.length
+      }
+    });
+  };
+
+  useEffect(() => {
+    if (activeTab === 'attendance_logs') {
+      fetchSemesterMatrix(selectedSemFolder || 'ALL');
+    }
+  }, [activeTab, selectedSemFolder, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
+
+  // Automatically reset matrix filters when navigating away from attendance logs
+  useEffect(() => {
+    if (activeTab !== 'attendance_logs') {
+      setSelectedSemFolder('ALL');
+      setMatrixSearch('');
+    }
+  }, [activeTab]);
+
+  const handleReloadDirectory = async () => {
+    setDirectoryReloading(true);
+    try {
+      await Promise.all([
+        fetchStudents(),
+        fetchLiveLogs(),
+        fetchQrData(),
+        fetchStats()
+      ]);
+      if (selectedSemFolder) {
+        await fetchSemesterMatrix(selectedSemFolder);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setDirectoryReloading(false);
+    }
+  };
+
+  // Filtered & Sorted Student Records for Master Matrix Table
+  const processedMatrixStudents = useMemo(() => {
+    if (!matrixData || !matrixData.students) return [];
+
+    let list = matrixData.students.map(st => {
+      const rowAttendance = matrixData.attendanceMatrix?.[String(st.id)] || {};
+      let presentCount = 0;
+      let absentCount = 0;
+      let applicableCount = 0;
+
+      (matrixData.columns || []).forEach(col => {
+        const cell = rowAttendance[col.columnKey];
+        if (cell?.status === 'P') {
+          presentCount++;
+          applicableCount++;
+        } else if (cell?.status === 'A') {
+          absentCount++;
+          applicableCount++;
+        }
+      });
+
+      const finalPresent = applicableCount > 0 ? presentCount : (st.presentCount !== undefined ? st.presentCount : presentCount);
+      const finalAbsent = applicableCount > 0 ? absentCount : (st.absentCount !== undefined ? st.absentCount : absentCount);
+      const finalApplicable = applicableCount > 0 ? applicableCount : ((finalPresent + finalAbsent) || 0);
+      const pct = finalApplicable > 0 ? Math.round((finalPresent / finalApplicable) * 100) : (matrixData.columns?.length === 0 ? (st.pct !== undefined ? st.pct : 0) : 100);
+
+      return {
+        ...st,
+        presentCount: finalPresent,
+        absentCount: finalAbsent,
+        applicableCount: finalApplicable,
+        totalConducted: finalApplicable,
+        pct
+      };
+    });
+
+    // 1. Search Query
+    if (matrixSearch) {
+      const q = matrixSearch.trim().toLowerCase();
+      list = list.filter(st =>
+        (st.name && st.name.toLowerCase().includes(q)) ||
+        (st.roll_no && String(st.roll_no).toLowerCase().includes(q)) ||
+        (st.enrollment_no && st.enrollment_no.toLowerCase().includes(q))
+      );
+    }
+
+    // 2. Division Filter
+    if (matrixDivFilter && matrixDivFilter !== 'ALL') {
+      list = list.filter(st => String(st.division || 'A').toUpperCase() === String(matrixDivFilter).toUpperCase());
+    }
+
+    // 3. Status Filter (Safe vs Defaulters)
+    if (matrixStatusFilter === 'regular') {
+      list = list.filter(st => st.pct >= 75);
+    } else if (matrixStatusFilter === 'defaulter') {
+      list = list.filter(st => st.pct < 75);
+    }
+
+    // 4. Sorting (Semester-wise first, then Division-wise, then by Roll No / Name / Pct)
+    list.sort((a, b) => {
+      const semA = parseInt(String(a.semester || '').replace(/\D/g, ''), 10) || 0;
+      const semB = parseInt(String(b.semester || '').replace(/\D/g, ''), 10) || 0;
+      if (semA !== semB) {
+        return semA - semB;
+      }
+
+      const divA = String(a.division || 'A').trim().toUpperCase();
+      const divB = String(b.division || 'A').trim().toUpperCase();
+      if (divA !== divB) {
+        return divA.localeCompare(divB);
+      }
+
+      if (matrixSortBy === 'roll_asc' || matrixSortBy === 'roll_desc') {
+        const rA = parseInt(String(a.roll_no || '').replace(/\D/g, ''), 10);
+        const rB = parseInt(String(b.roll_no || '').replace(/\D/g, ''), 10);
+        const diff = (!isNaN(rA) && !isNaN(rB))
+          ? rA - rB
+          : String(a.roll_no || '').localeCompare(String(b.roll_no || ''), undefined, { numeric: true });
+        return matrixSortBy === 'roll_asc' ? diff : -diff;
+      }
+      if (matrixSortBy === 'name_asc' || matrixSortBy === 'name_desc') {
+        const diff = String(a.name || '').localeCompare(String(b.name || ''));
+        return matrixSortBy === 'name_asc' ? diff : -diff;
+      }
+      if (matrixSortBy === 'pct_desc') {
+        return b.pct - a.pct;
+      }
+      if (matrixSortBy === 'pct_asc') {
+        return a.pct - b.pct;
+      }
+      return 0;
+    });
+
+    return list;
+  }, [matrixData, matrixSearch, matrixDivFilter, matrixStatusFilter, matrixSortBy]);
+
+  const dateBoundaryKeys = useMemo(() => {
+    const keys = new Set();
+    const dateGroups = matrixData?.dateGroups || [];
+    dateGroups.forEach((grp) => {
+      if (grp.sessions?.length > 0) {
+        const lastSession = grp.sessions[grp.sessions.length - 1];
+        if (lastSession?.columnKey) keys.add(lastSession.columnKey);
+      }
+    });
+    return keys;
+  }, [matrixData?.dateGroups]);
+
+  // Dynamically compute available divisions for the selected semester
+  const availableSemesterDivisions = useMemo(() => {
+    if (matrixData?.availableDivisions && Array.isArray(matrixData.availableDivisions) && matrixData.availableDivisions.length > 0) {
+      return matrixData.availableDivisions;
+    }
+    const divs = new Set();
+    const targetSem = String(selectedSemFolder || '').replace(/\D/g, '');
+
+    (students || []).forEach(s => {
+      const sSem = String(s.semester || '').replace(/\D/g, '');
+      if (sSem === targetSem && s.division && String(s.division).trim()) {
+        divs.add(String(s.division).trim().toUpperCase());
+      }
+    });
+
+    (matrixData?.students || []).forEach(s => {
+      if (s.division && String(s.division).trim()) divs.add(String(s.division).trim().toUpperCase());
+    });
+
+    (matrixData?.columns || []).forEach(c => {
+      if (c.division && c.division !== 'ALL' && String(c.division).trim()) divs.add(String(c.division).trim().toUpperCase());
+    });
+
+    const sorted = Array.from(divs).sort();
+    return sorted.length > 0 ? sorted : ['A', 'B'];
+  }, [matrixData, selectedSemFolder, students]);
+
+  useEffect(() => {
+    setMatrixDivFilter('ALL');
+    setMatrixSubjectFilter('ALL');
+    setMatrixSearch('');
+  }, [selectedSemFolder]);
 
   // Leave Applications Management State
   const [allLeaves, setAllLeaves] = useState([]);
@@ -288,6 +676,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     ];
   });
   const [showAddRuleModal, setShowAddRuleModal] = useState(false);
+  const [editingRuleId, setEditingRuleId] = useState(null);
   const [newRuleName, setNewRuleName] = useState('');
   const [newRulePercentage, setNewRulePercentage] = useState('75');
   const [newRuleWarningPercentage, setNewRuleWarningPercentage] = useState('80');
@@ -296,27 +685,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const [newRuleSubject, setNewRuleSubject] = useState('All Subjects');
   const [newRuleSubjectType, setNewRuleSubjectType] = useState('All Types');
 
-  const handleSaveRule = (e) => {
-    e.preventDefault();
-    if (!newRuleName.trim()) {
-      showToast('Please enter a rule name.', 'error');
-      return;
-    }
-    const newRule = {
-      id: Date.now(),
-      name: newRuleName.trim(),
-      minPercentage: parseFloat(newRulePercentage) || 75,
-      warningPercentage: parseFloat(newRuleWarningPercentage) || 80,
-      program: newRuleProgram,
-      semester: newRuleSemester,
-      subject: newRuleSubject,
-      subjectType: newRuleSubjectType,
-      status: 'Active'
-    };
-    const updated = [...blacklistRules, newRule];
-    setBlacklistRules(updated);
-    localStorage.setItem('admin_blacklist_rules', JSON.stringify(updated));
-    showToast('New Blacklist Rule added successfully!', 'success');
+  const handleOpenAddRuleModal = () => {
+    setEditingRuleId(null);
     setNewRuleName('');
     setNewRulePercentage('75');
     setNewRuleWarningPercentage('80');
@@ -324,6 +694,73 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     setNewRuleSemester('All Semesters');
     setNewRuleSubject('All Subjects');
     setNewRuleSubjectType('All Types');
+    setShowAddRuleModal(true);
+  };
+
+  const handleEditRule = (rule) => {
+    setEditingRuleId(rule.id);
+    setNewRuleName(rule.name || '');
+    setNewRulePercentage(String(rule.minPercentage || 75));
+    setNewRuleWarningPercentage(String(rule.warningPercentage || 80));
+    setNewRuleProgram(rule.program || 'All Programs');
+    setNewRuleSemester(rule.semester || 'All Semesters');
+    setNewRuleSubject(rule.subject || 'All Subjects');
+    setNewRuleSubjectType(rule.subjectType || 'All Types');
+    setShowAddRuleModal(true);
+  };
+
+  const handleSaveRule = (e) => {
+    e.preventDefault();
+    if (!newRuleName.trim()) {
+      showToast('Please enter a rule name.', 'error');
+      return;
+    }
+
+    if (editingRuleId) {
+      const updated = blacklistRules.map(r => {
+        if (r.id === editingRuleId) {
+          return {
+            ...r,
+            name: newRuleName.trim(),
+            minPercentage: parseFloat(newRulePercentage) || 75,
+            warningPercentage: parseFloat(newRuleWarningPercentage) || 80,
+            program: newRuleProgram,
+            semester: newRuleSemester,
+            subject: newRuleSubject,
+            subjectType: newRuleSubjectType
+          };
+        }
+        return r;
+      });
+      setBlacklistRules(updated);
+      localStorage.setItem('admin_blacklist_rules', JSON.stringify(updated));
+      showToast('Blacklist Rule updated successfully!', 'success');
+    } else {
+      const newRule = {
+        id: Date.now(),
+        name: newRuleName.trim(),
+        minPercentage: parseFloat(newRulePercentage) || 75,
+        warningPercentage: parseFloat(newRuleWarningPercentage) || 80,
+        program: newRuleProgram,
+        semester: newRuleSemester,
+        subject: newRuleSubject,
+        subjectType: newRuleSubjectType,
+        status: 'Active'
+      };
+      const updated = [...blacklistRules, newRule];
+      setBlacklistRules(updated);
+      localStorage.setItem('admin_blacklist_rules', JSON.stringify(updated));
+      showToast('New Blacklist Rule added successfully!', 'success');
+    }
+
+    setNewRuleName('');
+    setNewRulePercentage('75');
+    setNewRuleWarningPercentage('80');
+    setNewRuleProgram('All Programs');
+    setNewRuleSemester('All Semesters');
+    setNewRuleSubject('All Subjects');
+    setNewRuleSubjectType('All Types');
+    setEditingRuleId(null);
     setShowAddRuleModal(false);
   };
 
@@ -373,9 +810,11 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   });
 
   const handleToggleFloatingMobileMenu = (e) => {
-    const isChecked = e.target.checked;
-    setShowFloatingMobileMenu(isChecked);
-    localStorage.setItem('admin_show_floating_mobile_menu', JSON.stringify(isChecked));
+    setShowFloatingMobileMenu(prev => {
+      const next = typeof e?.target?.checked === 'boolean' ? e.target.checked : !prev;
+      localStorage.setItem('admin_show_floating_mobile_menu', JSON.stringify(next));
+      return next;
+    });
   };
 
   const isAnyAdminModalOpen = Boolean(
@@ -401,7 +840,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     showToast(`Filters Applied: ${semText} • ${divText} • ${statusText}`, 'success');
   };
 
-  // Get all assigned teaching subjects across ALL faculties
+  // Get all assigned teaching subjects across ALL faculties (Sorted semester-wise: Sem 1, Sem 2, etc.)
   const allFacultySubjects = (() => {
     let subs = [];
     (faculties || []).forEach(f => {
@@ -413,14 +852,27 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       }
       if (Array.isArray(fSubs)) {
         fSubs.forEach((s, idx) => {
-          const subKey = s.id || s.code || `${f.id}_${s.subjectName || s.name || 'sub'}_${idx}`;
-          subs.push({ ...s, subKey, facultyId: f.id, facultyName: f.name });
+          const subCodeVal = (s.code || s.subjectCode || s.subject_code || s.subCode || s.sub_code || '').toString().trim();
+          const subKey = s.id || (subCodeVal ? `${f.id}_${subCodeVal}` : null) || `${f.id}_${s.subjectName || s.name || 'sub'}_${idx}`;
+          subs.push({ ...s, code: subCodeVal, subjectCode: subCodeVal, subKey, facultyId: f.id, facultyName: f.name });
         });
       }
     });
+
+    // Sort Semester-wise ascending (Sem 1, Sem 2, Sem 3, ...), then by subject name
+    subs.sort((a, b) => {
+      const semA = parseInt(String(a.semester || '0').replace(/\D/g, ''), 10) || 0;
+      const semB = parseInt(String(b.semester || '0').replace(/\D/g, ''), 10) || 0;
+      if (semA !== semB) return semA - semB;
+      const nameA = String(a.subjectName || a.name || '').trim().toLowerCase();
+      const nameB = String(b.subjectName || b.name || '').trim().toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+
     return subs;
   })();
 
+  // Calculate attendance & defaulter status for all students (Memoized to eliminate mobile lag)
   // Calculate attendance & defaulter status for all students (Memoized to eliminate mobile lag)
   const defaulterStudentList = useMemo(() => {
     if (!students || !Array.isArray(students) || students.length === 0) return [];
@@ -435,19 +887,38 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       return s.trim();
     };
 
-    // 1. Calculate conducted session count per (Semester + Division)
-    const semDivSessionCount = {};
+    // 1. Calculate unique conducted session keys per (Semester + Division) across all sources
+    const semDivSessionKeysMap = {};
+
+    const registerSessionKey = (semVal, divVal, sessKey) => {
+      if (!semVal || !sessKey) return;
+      const sem = String(semVal).replace(/\D/g, '').trim() || '1';
+      const div = String(divVal || 'ALL').trim().toUpperCase();
+
+      const comboKey = `${sem}_${div}`;
+      if (!semDivSessionKeysMap[comboKey]) {
+        semDivSessionKeysMap[comboKey] = new Set();
+      }
+      semDivSessionKeysMap[comboKey].add(sessKey);
+    };
 
     (qrSessionHistory || []).forEach(sess => {
       if (!sess) return;
-      const sem = String(sess.semester || '1').trim();
-      const div = String(sess.division || 'ALL').trim().toUpperCase();
+      const sem = sess.semester || '1';
+      const div = sess.division || 'ALL';
+      const sKey = sess.id || sess.qr_session_id || sess.otp_id || `${sess.date}_${sess.subject}_${sess.time}`;
+      registerSessionKey(sem, div, sKey);
+    });
 
-      if (div === 'ALL') {
-        semDivSessionCount[`${sem}_ALL`] = (semDivSessionCount[`${sem}_ALL`] || 0) + 1;
-      } else {
-        const key = `${sem}_${div}`;
-        semDivSessionCount[key] = (semDivSessionCount[key] || 0) + 1;
+    allSystemLogs.forEach(log => {
+      if (!log) return;
+      const sem = log.semester || (log.student && log.student.semester) || '1';
+      const div = log.division || (log.student && log.student.division) || 'ALL';
+      const sKey = log.qr_session_id ? `qr_${log.qr_session_id}` :
+                   log.otp_id ? `otp_${log.otp_id}` :
+                   (log.date && log.subject ? `${log.date}_${log.subject}_${log.time || log.id}` : null);
+      if (sKey) {
+        registerSessionKey(sem, div, sKey);
       }
     });
 
@@ -459,7 +930,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       if (!log) return;
       const status = String(log.status || '').toLowerCase();
       if (status === 'success' || status === 'present') {
-        const enroll = String(log.enrollment_no || log.student_id || '').trim().toLowerCase();
+        const enroll = String(log.enrollment_no || log.student_id || log.student?.enrollment_no || '').trim().toLowerCase();
         if (enroll) {
           const sessKey = log.qr_session_id ? `qr_${log.qr_session_id}` : log.otp_id ? `otp_${log.otp_id}` : `${normDateStr(log.date || log.created_at)}_${log.time || log.id}`;
           const studentSessKey = `${enroll}_${sessKey}`;
@@ -474,55 +945,66 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     const activeRules = (blacklistRules || []).filter(r => !r.status || r.status === 'Active');
 
     return students.map((std) => {
-      const semStr = String(std.semester || std.sem || '1').trim();
+      const semStr = String(std.semester || std.sem || '1').replace(/\D/g, '').trim();
       const divCode = String(std.division || std.div || 'A').trim().toUpperCase();
 
-      // Conducted sessions for std's semester & division
-      const divSpecificCount = semDivSessionCount[`${semStr}_${divCode}`] || 0;
-      const semAllCount = semDivSessionCount[`${semStr}_ALL`] || 0;
-      const totalConducted = divSpecificCount + semAllCount;
+      const divSpecificKeys = semDivSessionKeysMap[`${semStr}_${divCode}`];
+      const semAllKeys = semDivSessionKeysMap[`${semStr}_ALL`];
+
+      const combinedKeys = new Set();
+      if (divSpecificKeys) divSpecificKeys.forEach(k => combinedKeys.add(k));
+      if (semAllKeys) semAllKeys.forEach(k => combinedKeys.add(k));
+
+      const totalConducted = combinedKeys.size;
 
       const studentEnroll = String(std.enrollment_no || std.id || std.roll_no || std.roll || '').trim().toLowerCase();
       const realAttended = studentAttendedCountMap[studentEnroll] || 0;
 
       let totalLectures, attendedLectures, absent, percentage, statusKey, statusLabel, hasSession;
 
+      // Dynamically find threshold from configured blacklist rules
+      const matchedRule = [...activeRules].reverse().find(r => {
+        const matchSem = !r.semester || r.semester === 'All Semesters' || String(r.semester).replace(/\D/g, '') === String(std.semester || '').replace(/\D/g, '');
+        const matchProg = !r.program || r.program === 'All Programs' || String(r.program).toLowerCase() === String(std.course || '').toLowerCase();
+        return matchSem && matchProg;
+      }) || activeRules[activeRules.length - 1] || activeRules[0];
+
+      const defaulterThreshold = matchedRule ? (parseFloat(matchedRule.minPercentage) || 50) : 50;
+      const warningThreshold = matchedRule && matchedRule.warningPercentage !== undefined
+        ? parseFloat(matchedRule.warningPercentage)
+        : (defaulterThreshold < 75 ? 75 : 80);
+
       if (totalConducted > 0) {
         hasSession = true;
         totalLectures = totalConducted;
-        attendedLectures = realAttended;
-        absent = Math.max(0, totalConducted - realAttended);
-        percentage = Math.min(100, Math.round((realAttended / totalConducted) * 100));
-
-        // Dynamically find threshold from configured blacklist rules
-        const matchedRule = [...activeRules].reverse().find(r => {
-          const matchSem = !r.semester || r.semester === 'All Semesters' || String(r.semester).replace(/\D/g, '') === String(std.semester || '').replace(/\D/g, '');
-          const matchProg = !r.program || r.program === 'All Programs' || String(r.program).toLowerCase() === String(std.course || '').toLowerCase();
-          return matchSem && matchProg;
-        }) || activeRules[activeRules.length - 1] || activeRules[0];
-
-        const defaulterThreshold = matchedRule ? (parseFloat(matchedRule.minPercentage) || 75) : 75;
-        const warningThreshold = matchedRule && matchedRule.warningPercentage ? parseFloat(matchedRule.warningPercentage) : (defaulterThreshold < 75 ? 75 : 80);
-
-        if (percentage < defaulterThreshold) {
-          statusKey = 'CRITICAL';
-          statusLabel = 'Defaulter';
-        } else if (percentage < warningThreshold) {
-          statusKey = 'WARNING';
-          statusLabel = 'Warning';
-        } else {
-          statusKey = 'SAFE';
-          statusLabel = 'Safe';
-        }
+        attendedLectures = Math.min(totalConducted, realAttended);
+        absent = Math.max(0, totalConducted - attendedLectures);
+        percentage = Math.min(100, Math.round((attendedLectures / totalConducted) * 100));
       } else {
-        // No sessions conducted yet for this semester + division
-        hasSession = false;
-        totalLectures = 0;
-        attendedLectures = 0;
-        absent = 0;
-        percentage = 0;
+        if (realAttended > 0) {
+          hasSession = true;
+          totalLectures = realAttended;
+          attendedLectures = realAttended;
+          absent = 0;
+          percentage = 100;
+        } else {
+          hasSession = false;
+          totalLectures = 0;
+          attendedLectures = 0;
+          absent = 0;
+          percentage = 0;
+        }
+      }
+
+      if (percentage < defaulterThreshold) {
+        statusKey = 'CRITICAL';
+        statusLabel = 'Defaulter';
+      } else if (percentage < warningThreshold) {
+        statusKey = 'WARNING';
+        statusLabel = 'Warning';
+      } else {
         statusKey = 'SAFE';
-        statusLabel = '-';
+        statusLabel = 'Safe';
       }
 
       const matchedSub = (allFacultySubjects || []).find(s => s && String(s.semester || '').replace(/\D/g, '') === String(std.semester));
@@ -903,19 +1385,21 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       const status = String(log.status || '').toLowerCase();
       if (status === 'success' || status === 'present') {
         const d = normDateStr(log.date || log.created_at);
-        const enroll = String(log.enrollment_no || log.student_id || log.roll_no || '').trim().toLowerCase();
         const sId = log.qr_session_id ? `qr_${log.qr_session_id}` : log.otp_id ? `otp_${log.otp_id}` : null;
-        if (enroll && d) {
-          presentMap.add(`${enroll}_${d}`);
-          if (sId) presentMap.add(`${enroll}_${sId}`);
-        }
+        const enrolls = [log.enrollment_no, log.student_id, log.roll_no].filter(Boolean).map(x => String(x).trim().toLowerCase());
+        enrolls.forEach(en => {
+          if (d) presentMap.add(`${en}_${d}`);
+          if (sId) presentMap.add(`${en}_${sId}`);
+          if (log.qr_session_id) presentMap.add(`${en}_${log.qr_session_id}`);
+          if (log.otp_id) presentMap.add(`${en}_${log.otp_id}`);
+        });
       }
     });
 
     const rows = filteredStudents.map((std, sIdx) => {
       const semStr = std.semester ? `${std.semester}` : (targetSem || '1');
       const divCode = String(std.division || std.div || 'A').trim().toUpperCase();
-      const studentEnroll = String(std.enrollment_no || std.roll_no || std.roll || std.id || '').trim().toLowerCase();
+      const studentKeys = [std.enrollment_no, std.roll_no, std.roll, std.id].filter(Boolean).map(x => String(x).trim().toLowerCase());
 
       const subjName = (reportSubjectFilter && reportSubjectFilter !== 'ALL') ? reportSubjectFilter : (std.subjectName || 'All Subjects');
       const matchedSub = (allFacultySubjects || []).find(s => (s.subjectName || s.name || '').toLowerCase().trim() === (subjName).toLowerCase().trim());
@@ -944,13 +1428,12 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
           rowObj[colObj.colKey] = '-';
         } else {
           conductedForStudentCount++;
-          const isPresent = presentMap.has(`${studentEnroll}_${colObj.sessId}`) ||
-            presentMap.has(`${studentEnroll}_${rawD}`) ||
-            allSystemLogs.some(l =>
-              l && (String(l.status || '').toLowerCase() === 'success' || String(l.status || '').toLowerCase() === 'present') &&
-              String(l.enrollment_no || l.student_id || '').trim().toLowerCase() === studentEnroll &&
-              (normDateStr(l.date || l.created_at) === rawD || String(l.qr_session_id) === String(colObj.sessId))
-            );
+          const isPresent = studentKeys.some(k =>
+            presentMap.has(`${k}_${colObj.sessId}`) ||
+            presentMap.has(`${k}_${rawD}`) ||
+            (colObj.qr_session_id && presentMap.has(`${k}_${colObj.qr_session_id}`)) ||
+            (colObj.otp_id && presentMap.has(`${k}_${colObj.otp_id}`))
+          );
 
           if (isPresent) {
             rowObj[colObj.colKey] = 'P';
@@ -1142,19 +1625,21 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       const status = String(log.status || '').toLowerCase();
       if (status === 'success' || status === 'present') {
         const d = normDateStr(log.date || log.created_at);
-        const enroll = String(log.enrollment_no || log.student_id || log.roll_no || '').trim().toLowerCase();
         const sId = log.qr_session_id ? `qr_${log.qr_session_id}` : log.otp_id ? `otp_${log.otp_id}` : null;
-        if (enroll && d) {
-          presentMap.add(`${enroll}_${d}`);
-          if (sId) presentMap.add(`${enroll}_${sId}`);
-        }
+        const enrolls = [log.enrollment_no, log.student_id, log.roll_no].filter(Boolean).map(x => String(x).trim().toLowerCase());
+        enrolls.forEach(en => {
+          if (d) presentMap.add(`${en}_${d}`);
+          if (sId) presentMap.add(`${en}_${sId}`);
+          if (log.qr_session_id) presentMap.add(`${en}_${log.qr_session_id}`);
+          if (log.otp_id) presentMap.add(`${en}_${log.otp_id}`);
+        });
       }
     });
 
     const rows = filteredStudents.map((std, sIdx) => {
       const semStr = std.semester ? `${std.semester}` : (targetSem || '1');
       const divCode = String(std.division || std.div || 'A').trim().toUpperCase();
-      const studentEnroll = String(std.enrollment_no || std.roll_no || std.roll || std.id || '').trim().toLowerCase();
+      const studentKeys = [std.enrollment_no, std.roll_no, std.roll, std.id].filter(Boolean).map(x => String(x).trim().toLowerCase());
 
       let totalPresent = 0;
       let totalAbsent = 0;
@@ -1173,13 +1658,12 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
           sessionAttendance[col.key] = '-';
         } else {
           conductedForStudentCount++;
-          const isPresent = presentMap.has(`${studentEnroll}_${col.sessId}`) ||
-            presentMap.has(`${studentEnroll}_${rawD}`) ||
-            allSystemLogs.some(l =>
-              l && (String(l.status || '').toLowerCase() === 'success' || String(l.status || '').toLowerCase() === 'present') &&
-              String(l.enrollment_no || l.student_id || '').trim().toLowerCase() === studentEnroll &&
-              (normDateStr(l.date || l.created_at) === rawD || String(l.qr_session_id) === String(col.sessId))
-            );
+          const isPresent = studentKeys.some(k =>
+            presentMap.has(`${k}_${col.sessId}`) ||
+            presentMap.has(`${k}_${rawD}`) ||
+            (col.qr_session_id && presentMap.has(`${k}_${col.qr_session_id}`)) ||
+            (col.otp_id && presentMap.has(`${k}_${col.otp_id}`))
+          );
 
           if (isPresent) {
             sessionAttendance[col.key] = 'P';
@@ -1205,6 +1689,21 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         totalAbsent,
         attPct
       };
+    });
+
+    // Sort rows by Semester, Division, then Roll No
+    rows.sort((a, b) => {
+      const semA = parseInt(String(a.sem || a.semester || '').replace(/\D/g, '')) || 0;
+      const semB = parseInt(String(b.sem || b.semester || '').replace(/\D/g, '')) || 0;
+      if (semA !== semB) return semA - semB;
+
+      const divA = String(a.division || '').toUpperCase();
+      const divB = String(b.division || '').toUpperCase();
+      if (divA !== divB) return divA.localeCompare(divB);
+
+      const rollA = parseInt(String(a.roll_no || '').replace(/\D/g, '')) || 0;
+      const rollB = parseInt(String(b.roll_no || '').replace(/\D/g, '')) || 0;
+      return rollA - rollB;
     });
 
     return { sessionCols, rows };
@@ -1243,33 +1742,33 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
   const semDivFilteredList = useMemo(() => {
     return (defaulterStudentList || []).filter(std => {
-      if (appliedDefaulterSem !== 'ALL') {
+      if (defaulterSemFilter !== 'ALL') {
         const stdSem = String(std.semester || std.sem || '1').replace(/\D/g, '').trim();
-        if (stdSem !== String(appliedDefaulterSem).trim()) return false;
+        if (stdSem !== String(defaulterSemFilter).trim()) return false;
       }
-      if (appliedDefaulterDiv !== 'ALL') {
+      if (defaulterDivFilter !== 'ALL') {
         const stdDiv = String(std.division || std.div || '').trim().toUpperCase();
-        if (stdDiv !== appliedDefaulterDiv.toUpperCase()) return false;
+        if (stdDiv !== defaulterDivFilter.toUpperCase()) return false;
       }
       return true;
     });
-  }, [defaulterStudentList, appliedDefaulterSem, appliedDefaulterDiv]);
+  }, [defaulterStudentList, defaulterSemFilter, defaulterDivFilter]);
 
   const totalDefaultersCount = semDivFilteredList.filter(s => s.statusKey === 'CRITICAL').length;
   const warningsIssuedCount = semDivFilteredList.filter(s => s.statusKey === 'WARNING').length;
 
   const filteredDefaulterList = useMemo(() => {
     return semDivFilteredList.filter(std => {
-      if (appliedDefaulterStatus === 'CRITICAL') {
+      if (defaulterStatusFilter === 'CRITICAL') {
         return std.statusKey === 'CRITICAL';
       }
-      if (appliedDefaulterStatus === 'WARNING') {
+      if (defaulterStatusFilter === 'WARNING') {
         return std.statusKey === 'WARNING';
       }
       // 'ALL' -> Exclude Safe level students completely from defaulters list
       return std.statusKey !== 'SAFE';
     });
-  }, [semDivFilteredList, appliedDefaulterStatus]);
+  }, [semDivFilteredList, defaulterStatusFilter]);
 
   const handleOpenAddSubjectModal = () => {
     setNewSubName('');
@@ -1304,7 +1803,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     if (!sub) return;
     setNewSubName(sub.subjectName || sub.name || '');
     setNewSubShort(sub.shortName || sub.shortCode || sub.short || '');
-    setNewSubCode(sub.code || sub.subjectCode || '');
+    setNewSubCode(sub.code || sub.subjectCode || sub.subject_code || sub.subCode || sub.sub_code || '');
     setNewSubSem(sub.semester ? String(sub.semester).replace(/\D/g, '') : '1');
     setNewSubType(sub.type || sub.subjectType || 'Theory');
     setNewSubFacultyId(sub.facultyId || '');
@@ -1372,10 +1871,12 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       return;
     }
 
+    const subCodeVal = (newSubCode || '').trim();
     const newSubObj = {
       subjectName: newSubName.trim(),
       shortName: newSubShort.trim(),
-      code: newSubCode.trim(),
+      code: subCodeVal,
+      subjectCode: subCodeVal,
       semester: String(newSubSem || '1'),
       type: newSubType || 'Theory'
     };
@@ -1529,6 +2030,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     };
   });
   const [locationMessage, setLocationMessage] = useState('');
+  const [locationSaving, setLocationSaving] = useState(false);
   const [addressQuery, setAddressQuery] = useState('');
   const [searchLoading, setSearchLoading] = useState(false);
   const mapContainerRef = useRef(null);
@@ -1616,7 +2118,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   };
 
   // Attendance live monitor & All Attendance Records Directory state
-  const [selectedSemFolder, setSelectedSemFolder] = useState(null);
   const [selectedFacultyFolder, setSelectedFacultyFolder] = useState(null);
   const [selectedSessionFolder, setSelectedSessionFolder] = useState(null);
   const [sessionFolderTab, setSessionFolderTab] = useState('present');
@@ -2115,19 +2616,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     }
   };
 
-  const [directoryReloading, setDirectoryReloading] = useState(false);
-
-  const handleReloadDirectory = async () => {
-    setDirectoryReloading(true);
-    try {
-      await fetchLiveLogs();
-    } catch (err) {
-      console.error('Error reloading directory:', err);
-    } finally {
-      setDirectoryReloading(false);
-    }
-  };
-
   // Fetch Report Data
   const fetchReportData = async () => {
     let query = '';
@@ -2174,6 +2662,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     fetchFaculties();
     fetchQrSettings();
     fetchAllLeaves();
+    fetchReportData();
   }, []);
 
   // Smart Auto-Polling for Stats, Logs & Sessions (0ms Broadcast Sync for Instant Edits)
@@ -2384,6 +2873,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   const handleSaveLocation = async (e) => {
     e.preventDefault();
     setLocationMessage('');
+    setLocationSaving(true);
     try {
       const res = await fetch('/api/location', {
         method: 'POST',
@@ -2393,8 +2883,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         },
         body: JSON.stringify(locationForm)
       });
+      const data = await res.json();
       if (res.ok) {
-        const data = await res.json();
         const savedLoc = data.location || locationForm;
         const updated = {
           latitude: parseFloat(savedLoc.latitude) || 23.0225,
@@ -2408,13 +2898,46 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         } catch (e) { }
         setLocationMessage('Location configuration saved successfully!');
         syncMapLayer(updated.latitude, updated.longitude, updated.radius);
+
+        Swal.fire({
+          icon: 'success',
+          title: 'Location Saved Successfully!',
+          html: `
+            <div style="font-size: 0.92rem; color: #334155; text-align: left; line-height: 1.6; padding: 10px 14px; background: rgba(16, 185, 129, 0.08); border-radius: 8px; border: 1px solid rgba(16, 185, 129, 0.25);">
+              <div>📍 <strong>Latitude:</strong> ${updated.latitude.toFixed(6)}</div>
+              <div>📍 <strong>Longitude:</strong> ${updated.longitude.toFixed(6)}</div>
+              <div>🎯 <strong>Radius:</strong> ${updated.radius} meters</div>
+            </div>
+            <p style="margin-top: 10px; font-size: 0.85rem; color: #10b981; font-weight: 600;">Campus geofence updated for all students & faculties.</p>
+          `,
+          confirmButtonText: 'Great!',
+          confirmButtonColor: '#10b981',
+          timer: 3500
+        });
       } else {
-        const err = await res.json();
-        setLocationMessage(err.error || 'Failed to save configuration.');
+        const errMsg = data.error || 'Failed to save location configuration.';
+        setLocationMessage(errMsg);
+        Swal.fire({
+          icon: 'error',
+          title: 'Location Not Saved!',
+          text: errMsg,
+          confirmButtonText: 'Try Again',
+          confirmButtonColor: '#ef4444'
+        });
       }
     } catch (err) {
       console.error('Error saving location:', err);
-      setLocationMessage('Network error. Failed to save location.');
+      const netMsg = 'Network error. Failed to save location.';
+      setLocationMessage(netMsg);
+      Swal.fire({
+        icon: 'error',
+        title: 'Location Not Saved!',
+        text: 'Network error occurred while saving location. Please check your connection and try again.',
+        confirmButtonText: 'OK',
+        confirmButtonColor: '#ef4444'
+      });
+    } finally {
+      setLocationSaving(false);
     }
   };
 
@@ -2566,6 +3089,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
           localStorage.setItem('attendance_user', JSON.stringify(data.user));
           if (data.token) localStorage.setItem('attendance_token', data.token);
         }
+        notifyDataChanged();
       } else {
         setProfileMessage({ text: data.error || 'Failed to update profile.', type: 'danger' });
       }
@@ -2640,63 +3164,11 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     }
   };
 
-  // Send imported student batch to backend (Instant 0ms Toast & UI + Silent Background Sync)
+  // Send imported student batch to backend with full duplicate error reporting
   const sendBulkImport = async (studentsList) => {
-    // 1. Optimistic Instant UI Update & Instant Toast Notification (0ms latency)
-    if (Array.isArray(studentsList) && studentsList.length > 0) {
-      setStudents(prev => {
-        const safePrev = Array.isArray(prev) ? prev : [];
-        const existingEnrollMap = new Map();
-        safePrev.forEach((s, idx) => {
-          if (s.enrollment_no) existingEnrollMap.set(String(s.enrollment_no).trim().toLowerCase(), idx);
-        });
-
-        const merged = [...safePrev];
-        studentsList.forEach((st, i) => {
-          const key = String(st.enrollment_no || '').trim().toLowerCase();
-          const existingIdx = existingEnrollMap.get(key);
-          const studentObj = {
-            id: st.id || `imp_${Date.now()}_${i}`,
-            enrollment_no: st.enrollment_no,
-            name: st.name,
-            course: st.course || 'B.E.',
-            semester: st.semester || '1',
-            division: st.division || '',
-            roll_no: st.roll_no || '',
-            mobile: st.mobile || '0000000000',
-            email: st.email || '',
-            username: st.enrollment_no
-          };
-          if (existingIdx !== undefined) {
-            merged[existingIdx] = { ...merged[existingIdx], ...studentObj };
-          } else {
-            merged.unshift(studentObj);
-          }
-        });
-
-        const sorted = sortStudentList(merged);
-        try {
-          sessionStorage.setItem('cached_admin_students', JSON.stringify(sorted));
-          localStorage.setItem('cached_admin_students', JSON.stringify(sorted));
-        } catch (e) { }
-        return sorted;
-      });
-
-      setStuPage(1); // Jump to page 1 so new students appear on screen instantly
-      setStats(prev => {
-        const updated = {
-          ...prev,
-          totalStudents: (prev.totalStudents || 0) + studentsList.length
-        };
-        try {
-          sessionStorage.setItem('cached_admin_stats', JSON.stringify(updated));
-          localStorage.setItem('cached_admin_stats', JSON.stringify(updated));
-        } catch (e) { }
-        return updated;
-      });
-
-      // Show toast message INSTANTLY (0ms delay)
-      showToast(`Successfully imported ${studentsList.length} student records!`, 'success');
+    if (!Array.isArray(studentsList) || studentsList.length === 0) {
+      showToast('No student records found to import.', 'warning');
+      return;
     }
 
     try {
@@ -2709,25 +3181,46 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         body: JSON.stringify({ students: studentsList })
       });
       const data = await response.json();
+
       if (response.status === 401 || response.status === 403) {
         showToast(data.error || 'Your session has expired. Please log in again.', 'error');
         if (onLogout) onLogout();
         return;
       }
+
       if (response.ok) {
-        if (data.errors && data.errors.length > 0) {
-          showToast(`Import warnings: ` + data.errors.slice(0, 3).join('; '), 'warning');
-        }
-        // Silent background fetch (false) to NEVER hide the student list
+        showToast(data.message || `Successfully imported ${studentsList.length} student records!`, 'success');
         fetchStudents(false);
         fetchStats();
       } else {
         fetchStudents(false);
-        showToast(data.error || 'Failed to sync imported students with backend.', 'error');
+        if (data.errors && Array.isArray(data.errors) && data.errors.length > 0) {
+          Swal.fire({
+            icon: 'error',
+            title: 'Bulk Upload Failed!',
+            html: `
+              <div style="text-align: left; max-height: 250px; overflow-y: auto; font-size: 0.84rem; padding: 10px 12px; background: rgba(239, 68, 68, 0.08); border-radius: 8px; border: 1px solid rgba(239, 68, 68, 0.25);">
+                <strong style="color: #b91c1c;">Found ${data.errors.length} duplicate / validation issue(s):</strong>
+                <ul style="margin-top: 8px; padding-left: 18px; line-height: 1.5; color: #dc2626;">
+                  ${data.errors.slice(0, 15).map(e => `<li>${e}</li>`).join('')}
+                  ${data.errors.length > 15 ? `<li style="font-weight: 700;">...and ${data.errors.length - 15} more errors</li>` : ''}
+                </ul>
+              </div>
+              <p style="margin-top: 10px; font-size: 0.82rem; color: #64748b;">
+                Please ensure mobile numbers, emails, and enrollment numbers are unique, and roll numbers are not duplicated in the same semester & division.
+              </p>
+            `,
+            confirmButtonText: 'Review & Fix',
+            confirmButtonColor: '#f59e0b'
+          });
+        } else {
+          showToast(data.error || 'Bulk upload failed.', 'error', 5000);
+        }
       }
     } catch (err) {
       console.error('Import error:', err);
       fetchStudents(false);
+      showToast(err.message || 'Failed to upload students.', 'error');
     }
   };
 
@@ -2750,41 +3243,78 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     return { isValid: true };
   };
 
+  // Helper to extract clean digit strings without scientific notation precision loss
+  const cleanDigitString = (val) => {
+    if (val === undefined || val === null) return '';
+    let str = String(val).trim();
+    if (!str) return '';
+
+    // Handle potential scientific notation (e.g. 2.400059139e+09 or 2.400059139E9)
+    if (/^[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)$/.test(str)) {
+      try {
+        const num = Number(str);
+        if (!isNaN(num) && isFinite(num)) {
+          str = BigInt(Math.round(num)).toString();
+        }
+      } catch (_) {}
+    }
+
+    // Remove trailing .0 or float decimal representations from Excel
+    str = str.replace(/\.0+$/, '').trim();
+    // Extract only digits
+    return str.replace(/\D/g, '');
+  };
+
   // Helper to map header columns to student properties
   const parseHeaderToStudentField = (header, val, stuObj) => {
     if (val === undefined || val === null) return;
     let strVal = String(val).trim();
     if (!strVal) return;
 
-    // Fix potential float/scientific notation for numbers in Excel (e.g. 2.400059139e+09 or 2400059139.0)
-    if (/^\d+\.?\d*e\+\d+$/i.test(strVal)) {
-      strVal = Number(strVal).toLocaleString('fullwide', { useGrouping: false });
-    }
-    strVal = strVal.replace(/\.0+$/, '').trim();
-
     const rawH = String(header || '').trim().toLowerCase();
     const cleanH = rawH.replace(/[^a-z0-9]/g, '');
+    if (!cleanH) return;
 
-    // 1. Enrollment No (Checked FIRST so 'enrollment' doesn't accidentally match 'roll')
+    // 0. Ignore Serial Number / Row Index columns
+    if (
+      cleanH === 'srno' ||
+      cleanH === 'sno' ||
+      cleanH === 'slno' ||
+      cleanH === 'serialno' ||
+      cleanH === 'sr' ||
+      cleanH === 'seq' ||
+      cleanH === 'seqno' ||
+      cleanH === 'index'
+    ) {
+      return;
+    }
+
+    // 1. Enrollment No / Registration No / Student ID (Specific matches only)
     if (
       cleanH.includes('enroll') ||
       cleanH.includes('enrol') ||
       cleanH.includes('registra') ||
       cleanH.includes('regno') ||
+      cleanH.includes('admission') ||
+      cleanH.includes('admno') ||
       cleanH === 'eno' ||
+      cleanH === 'enrno' ||
+      cleanH === 'enno' ||
       cleanH === 'grno' ||
-      cleanH === 'id' ||
+      cleanH === 'prn' ||
+      cleanH === 'urn' ||
+      cleanH === 'uid' ||
       cleanH === 'studentid' ||
-      (cleanH.includes('no') && !cleanH.includes('roll') && !cleanH.includes('mobile') && !cleanH.includes('phone'))
+      cleanH === 'stdid' ||
+      cleanH === 'studentno' ||
+      cleanH === 'stdno'
     ) {
-      let cleanVal = strVal.trim();
-      if (cleanVal.includes('.') || cleanVal.includes('e') || cleanVal.includes('E')) {
-        const num = Number(cleanVal);
-        if (!isNaN(num)) cleanVal = Math.round(num).toString();
+      const cleanDigits = cleanDigitString(strVal);
+      if (cleanDigits) {
+        stuObj.enrollment_no = cleanDigits;
       }
-      stuObj.enrollment_no = cleanVal;
     }
-    // 2. Roll No (Must explicitly exclude 'enroll'/'enrol')
+    // 2. Roll No (Must not match enrollment)
     else if (
       !cleanH.includes('enroll') &&
       !cleanH.includes('enrol') &&
@@ -2807,27 +3337,43 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     ) {
       stuObj.division = strVal.replace(/div/gi, '').trim().toUpperCase();
     }
-    // 4. Name
-    else if (cleanH.includes('name')) {
+    // 4. Name / Candidate / Student Name
+    else if (cleanH.includes('name') || cleanH.includes('student') || cleanH === 'candidate') {
       stuObj.name = strVal;
     }
-    // 5. Course / Branch / Stream
-    else if (cleanH.includes('course') || cleanH.includes('dept') || cleanH.includes('branch') || cleanH.includes('stream') || cleanH.includes('program')) {
+    // 5. Course / Branch / Dept / Stream / Program
+    else if (
+      cleanH.includes('course') ||
+      cleanH.includes('dept') ||
+      cleanH.includes('branch') ||
+      cleanH.includes('stream') ||
+      cleanH.includes('program') ||
+      cleanH.includes('degree')
+    ) {
       stuObj.course = strVal;
     }
-    // 6. Semester / Sem
-    else if (cleanH.includes('semester') || cleanH.includes('sem')) {
+    // 6. Semester / Sem / Year / Term
+    else if (cleanH.includes('semester') || cleanH.includes('sem') || cleanH.includes('term') || cleanH === 'yr' || cleanH === 'year') {
       stuObj.semester = strVal.replace(/sem/gi, '').trim();
     }
-    // 7. Mobile / Phone
-    else if (cleanH.includes('mobile') || cleanH.includes('phone') || cleanH.includes('contact') || cleanH.includes('cell')) {
-      stuObj.mobile = strVal;
+    // 7. Mobile / Phone / Contact / WhatsApp / Cell
+    else if (
+      cleanH.includes('mobile') ||
+      cleanH.includes('phone') ||
+      cleanH.includes('contact') ||
+      cleanH.includes('cell') ||
+      cleanH.includes('whatsapp') ||
+      cleanH.includes('phno') ||
+      cleanH.includes('mob')
+    ) {
+      const cleanDigits = cleanDigitString(strVal);
+      stuObj.mobile = cleanDigits || strVal;
     }
     // 8. Email / Gmail ID
     else if (cleanH.includes('email') || cleanH.includes('gmail') || cleanH.includes('mail')) {
       stuObj.email = strVal;
     }
-    // 9. Password
+    // 9. Password (Optional)
     else if (cleanH.includes('password') || cleanH.includes('pass')) {
       stuObj.password = strVal;
     }
@@ -2839,44 +3385,102 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     if (!file) return;
 
     const fileType = file.name.split('.').pop().toLowerCase();
+    if (fileType !== 'csv' && fileType !== 'xlsx' && fileType !== 'xls') {
+      showToast('Invalid file format! Please upload only .csv or .xlsx excel files.', 'error');
+      e.target.value = '';
+      return;
+    }
 
-    if (fileType === 'csv') {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        const text = event.target.result;
-        const lines = text.split(/\r?\n/);
-        if (lines.length < 2) {
-          showToast('CSV file is empty or missing data rows.', 'warning');
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        let rows = [];
+        const data = new Uint8Array(event.target.result);
+
+        // Attempt 1: Read via XLSX library across all sheets
+        try {
+          const workbook = XLSX.read(data, { type: 'array', raw: false, cellDates: true });
+          if (workbook && workbook.SheetNames && workbook.SheetNames.length > 0) {
+            for (const sheetName of workbook.SheetNames) {
+              const worksheet = workbook.Sheets[sheetName];
+              if (!worksheet) continue;
+              const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', raw: false });
+              const validRows = rawRows.filter(r =>
+                Array.isArray(r) && r.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== '')
+              );
+              if (validRows.length >= 2) {
+                rows = validRows;
+                break;
+              } else if (validRows.length > rows.length) {
+                rows = validRows;
+              }
+            }
+          }
+        } catch (xlsxErr) {
+          console.warn('XLSX read attempt failed, falling back to text decoder:', xlsxErr);
+        }
+
+        // Attempt 2: Fallback to plain text splitting for raw CSV/TSV
+        if (!rows || rows.length < 2) {
+          try {
+            const textDecoder = new TextDecoder('utf-8');
+            const text = textDecoder.decode(data);
+            const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+            if (lines.length >= 2) {
+              let delimiter = ',';
+              if (lines[0].includes(';') && !lines[0].includes(',')) delimiter = ';';
+              else if (lines[0].includes('\t') && !lines[0].includes(',')) delimiter = '\t';
+              rows = lines.map(line => line.split(delimiter).map(v => v.trim().replace(/^"|"$/g, '')));
+            }
+          } catch (txtErr) {
+            console.warn('Text fallback failed:', txtErr);
+          }
+        }
+
+        if (!rows || rows.length < 2) {
+          showToast('File is empty or missing data rows. Please ensure your file has headers and at least 1 data row.', 'warning');
           return;
         }
 
-        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+        // Dynamically detect header row (first row with recognized column keywords like enroll, name, roll, mobile, etc.)
+        let headerRowIdx = 0;
+        for (let r = 0; r < Math.min(rows.length, 10); r++) {
+          const rowCells = rows[r].map(c => String(c || '').trim().toLowerCase().replace(/[^a-z0-9]/g, ''));
+          const hasEnroll = rowCells.some(c => c.includes('enroll') || c.includes('enrol') || c.includes('reg') || c === 'eno' || c === 'grno' || c === 'studentid');
+          const hasName = rowCells.some(c => c.includes('name') || c.includes('student'));
+          const hasRoll = rowCells.some(c => c.includes('roll'));
+          const hasMobile = rowCells.some(c => c.includes('mobile') || c.includes('phone') || c.includes('contact'));
+
+          if ((hasEnroll && (hasName || hasRoll || hasMobile)) || (hasName && hasRoll) || (hasName && hasMobile)) {
+            headerRowIdx = r;
+            break;
+          }
+        }
+
+        const headers = rows[headerRowIdx].map(h => (h ? h.toString().trim().toLowerCase() : ''));
         const studentsList = [];
         let invalidEnrollmentCount = 0;
 
-        for (let i = 1; i < lines.length; i++) {
-          if (!lines[i].trim()) continue;
-          const values = lines[i].split(',').map(v => v.trim());
-          const stuObj = {};
+        for (let i = headerRowIdx + 1; i < rows.length; i++) {
+          const values = rows[i];
+          if (!values || values.length === 0 || !values.some(v => v !== null && v !== undefined && String(v).trim() !== '')) continue;
 
+          const stuObj = {};
           headers.forEach((header, index) => {
-            let val = values[index] || '';
-            if (val.startsWith('"') && val.endsWith('"')) {
-              val = val.substring(1, val.length - 1);
-            }
+            let val = values[index] !== undefined && values[index] !== null ? values[index].toString().trim() : '';
             parseHeaderToStudentField(header, val, stuObj);
           });
 
           if (stuObj.enrollment_no || stuObj.name) {
-            const cleanEnroll = String(stuObj.enrollment_no || '').replace(/\D/g, '');
-            if (!/^\d{10}$/.test(cleanEnroll)) {
+            const cleanEnroll = cleanDigitString(stuObj.enrollment_no || '');
+            if (!cleanEnroll || !/^\d{10}$/.test(cleanEnroll)) {
               invalidEnrollmentCount++;
               continue;
             }
             stuObj.enrollment_no = cleanEnroll;
             stuObj.course = stuObj.course || 'B.E.';
             stuObj.semester = stuObj.semester || '1';
-            stuObj.mobile = stuObj.mobile || '0000000000';
+            stuObj.mobile = cleanDigitString(stuObj.mobile || '') || '0000000000';
             studentsList.push(stuObj);
           }
         }
@@ -2891,72 +3495,13 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         }
 
         sendBulkImport(studentsList);
-      };
-      reader.readAsText(file);
-    } else if (fileType === 'xlsx' || fileType === 'xls') {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        try {
-          const data = new Uint8Array(event.target.result);
-          const workbook = XLSX.read(data, { type: 'array' });
-          const firstSheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[firstSheetName];
-          const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
-          const rows = rawRows.filter(r => Array.isArray(r) && r.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== ''));
+      } catch (err) {
+        console.error('Error parsing file for student import:', err);
+        showToast('Failed to parse file. Please ensure it is a valid CSV or XLSX Excel file.', 'error');
+      }
+    };
 
-          if (!rows || rows.length < 2) {
-            showToast('Excel file is empty or missing data rows.', 'warning');
-            return;
-          }
-
-          const headers = rows[0].map(h => (h ? h.toString().trim().toLowerCase() : ''));
-          const studentsList = [];
-          let invalidEnrollmentCount = 0;
-
-          for (let i = 1; i < rows.length; i++) {
-            const values = rows[i];
-            if (!values || values.length === 0) continue;
-
-            const stuObj = {};
-            headers.forEach((header, index) => {
-              let val = values[index] !== undefined && values[index] !== null ? values[index].toString().trim() : '';
-              parseHeaderToStudentField(header, val, stuObj);
-            });
-
-            if (stuObj.enrollment_no || stuObj.name) {
-              const cleanEnroll = String(stuObj.enrollment_no || '').replace(/\D/g, '');
-              if (!/^\d{10}$/.test(cleanEnroll)) {
-                invalidEnrollmentCount++;
-                continue;
-              }
-              stuObj.enrollment_no = cleanEnroll;
-              stuObj.course = stuObj.course || 'B.E.';
-              stuObj.semester = stuObj.semester || '1';
-              stuObj.mobile = stuObj.mobile || '0000000000';
-              studentsList.push(stuObj);
-            }
-          }
-
-          if (invalidEnrollmentCount > 0) {
-            showToast(`⚠️ Skipped ${invalidEnrollmentCount} student rows: Enrollment Number must be exactly 10 digits!`, 'warning');
-          }
-
-          if (studentsList.length === 0) {
-            showToast('Import Failed: Enrollment Number must be exactly 10 digits! No valid student rows found.', 'error');
-            return;
-          }
-
-          sendBulkImport(studentsList);
-        } catch (err) {
-          console.error('Error parsing Excel file:', err);
-          showToast('Failed to parse Excel file. Please ensure it is a valid .xlsx file.', 'error');
-        }
-      };
-      reader.readAsArrayBuffer(file);
-    } else {
-      showToast('Invalid file format! Please upload only .csv or .xlsx excel files.', 'error');
-    }
-
+    reader.readAsArrayBuffer(file);
     e.target.value = '';
   };
 
@@ -2998,6 +3543,61 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
     if (!studentForm.mobile || !/^\d{10}$/.test(String(studentForm.mobile).trim())) {
       showToast('Please enter valid 10-digit mobile number (Required)', 'warning');
       return;
+    }
+
+    // 1. Enrollment uniqueness (for Add Mode)
+    if (!isEdit) {
+      const cleanEnroll = String(studentForm.enrollment_no || '').trim();
+      const enrollExists = (students || []).find(s => String(s.enrollment_no || '').trim() === cleanEnroll);
+      if (enrollExists) {
+        showToast(`Student with Enrollment Number '${cleanEnroll}' already exists (${enrollExists.name})!`, 'error', 5000);
+        return;
+      }
+    }
+
+    // 2. Mobile uniqueness check
+    const cleanMobile = String(studentForm.mobile || '').trim();
+    const mobileExists = (students || []).find(s => 
+      String(s.mobile || '').trim() === cleanMobile &&
+      (!isEdit || String(s.id) !== String(studentForm.id))
+    );
+    if (mobileExists) {
+      showToast(`Mobile number '${cleanMobile}' is already registered for student ${mobileExists.name} (${mobileExists.enrollment_no})!`, 'error', 5000);
+      return;
+    }
+
+    // 3. Email uniqueness check
+    if (studentForm.email && studentForm.email.trim()) {
+      const cleanEmail = studentForm.email.trim().toLowerCase();
+      const emailExists = (students || []).find(s => 
+        s.email && String(s.email).trim().toLowerCase() === cleanEmail &&
+        (!isEdit || String(s.id) !== String(studentForm.id))
+      );
+      if (emailExists) {
+        showToast(`Email ID '${studentForm.email}' is already registered for student ${emailExists.name} (${emailExists.enrollment_no})!`, 'error', 5000);
+        return;
+      }
+    }
+
+    // 4. Roll Number uniqueness in SAME Semester & Division
+    if (studentForm.roll_no && String(studentForm.roll_no).trim() !== '' && studentForm.semester) {
+      const cleanRoll = String(studentForm.roll_no).trim();
+      const cleanSem = String(studentForm.semester).trim();
+      const cleanDiv = studentForm.division ? String(studentForm.division).trim().toUpperCase() : '';
+
+      const rollExists = (students || []).find(s => {
+        if (isEdit && String(s.id) === String(studentForm.id)) return false;
+        const sSem = String(s.semester || '').trim();
+        const sDiv = String(s.division || '').trim().toUpperCase();
+        const sRoll = String(s.roll_no || '').trim();
+        return sSem === cleanSem && sDiv === cleanDiv && sRoll === cleanRoll;
+      });
+
+      if (rollExists) {
+        const divText = cleanDiv ? `Division ${cleanDiv}` : 'General Division';
+        showToast(`Roll Number '${cleanRoll}' already exists in Semester ${cleanSem}, ${divText} (Assigned to: ${rollExists.name})!`, 'error', 5000);
+        return;
+      }
     }
 
     if (studentForm.password && String(studentForm.password).trim() !== '') {
@@ -3153,6 +3753,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
           showToast(targetIdsList.length === 1 ? 'Faculty member deleted successfully!' : `Successfully deleted ${targetIdsList.length} faculty member(s).`, 'success');
           fetchFaculties();
           fetchStats();
+          notifyDataChanged();
         } else {
           fetchFaculties();
           showToast(`Failed to delete ${failedCount} faculty member(s)`, 'error');
@@ -3169,54 +3770,71 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       const keysToDelete = new Set(targetIds);
       const facultyUpdates = {};
       allFacultySubjects.forEach(s => {
-        if (keysToDelete.has(s.subKey)) {
-          if (!facultyUpdates[s.facultyId]) {
-            facultyUpdates[s.facultyId] = [];
+        if (keysToDelete.has(s.subKey) || keysToDelete.has(s.id) || keysToDelete.has(s.code)) {
+          const fid = s.facultyId || (faculties.find(f => f.isPrimaryAdmin || f.name === 'Admin')?.id) || 'admin_primary';
+          if (!facultyUpdates[fid]) {
+            facultyUpdates[fid] = [];
           }
-          facultyUpdates[s.facultyId].push(s);
+          facultyUpdates[fid].push(s);
         }
       });
 
-      try {
-        let updatePromises = Object.keys(facultyUpdates).map(async (facId) => {
-          const faculty = faculties.find(f => String(f.id) === String(facId));
-          if (!faculty) return;
+      // Optimistic Instant Local Update (0ms UI latency)
+      setFaculties(prevFacs => {
+        return (prevFacs || []).map(f => {
+          const fIdMatches = (fid) => String(f.id) === String(fid) || (f.isPrimaryAdmin && (String(fid) === 'admin_primary' || String(fid) === '78'));
+          const targetFacKey = Object.keys(facultyUpdates).find(fid => fIdMatches(fid));
+          if (!targetFacKey) return f;
+
+          const toRemove = facultyUpdates[targetFacKey];
           let currentSubs = [];
-          if (typeof faculty.subjects === 'string') {
-            try { currentSubs = JSON.parse(faculty.subjects); } catch(e) { currentSubs = []; }
-          } else if (Array.isArray(faculty.subjects)) {
-            currentSubs = faculty.subjects;
+          if (typeof f.subjects === 'string') {
+            try { currentSubs = JSON.parse(f.subjects); } catch(e) { currentSubs = []; }
+          } else if (Array.isArray(f.subjects)) {
+            currentSubs = f.subjects;
           }
 
-          const removeKeys = new Set(facultyUpdates[facId].map(s => s.subKey));
-          const updatedSubs = currentSubs.filter((s, idx) => {
-            const key = s.id || s.code || `${faculty.id}_${s.subjectName || s.name || 'sub'}_${idx}`;
-            return !removeKeys.has(key);
+          const filteredSubs = currentSubs.filter(sub => {
+            const subName = String(sub.subjectName || sub.name || '').trim().toLowerCase();
+            const subSem = String(sub.semester || '').replace(/\D/g, '');
+            const subCode = String(sub.code || sub.subjectCode || '').trim().toLowerCase();
+            return !toRemove.some(r => {
+              const rName = String(r.subjectName || r.name || '').trim().toLowerCase();
+              const rSem = String(r.semester || '').replace(/\D/g, '');
+              const rCode = String(r.code || r.subjectCode || '').trim().toLowerCase();
+              if (r.subKey && sub.id && r.subKey === sub.id) return true;
+              if (subCode && rCode && subCode === rCode) return true;
+              return subName === rName && (!subSem || !rSem || subSem === rSem);
+            });
           });
 
-          await fetch(`/api/faculty/${facId}`, {
-            method: 'PUT',
+          return { ...f, subjects: filteredSubs };
+        });
+      });
+
+      setSelectedSubjectIds(prev => prev.filter(k => !keysToDelete.has(k)));
+      showToast(keysToDelete.size === 1 ? 'Subject deleted successfully!' : `Successfully deleted ${keysToDelete.size} subject(s).`, 'success');
+
+      try {
+        const updatePromises = Object.keys(facultyUpdates).map(async (facId) => {
+          const subjectsPayload = facultyUpdates[facId];
+          await fetch(`/api/faculty/${facId}/delete-subject`, {
+            method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               Authorization: `Bearer ${token}`
             },
-            body: JSON.stringify({
-              name: faculty.name,
-              email: faculty.email,
-              department: faculty.department,
-              mobile: faculty.mobile,
-              subjects: updatedSubs
-            })
+            body: JSON.stringify({ subjects: subjectsPayload })
           });
         });
 
         await Promise.all(updatePromises);
-        setSelectedSubjectIds(prev => prev.filter(k => !keysToDelete.has(k)));
-        showToast(keysToDelete.size === 1 ? 'Subject deleted successfully!' : `Successfully deleted ${keysToDelete.size} subject(s).`, 'success');
         fetchFaculties();
+        notifyDataChanged();
       } catch (err) {
         console.error('Error deleting subjects:', err);
         showToast('Error deleting subject(s)', 'error');
+        fetchFaculties();
       }
       return;
     }
@@ -3568,6 +4186,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       department: '',
       mobile: '',
       password: '',
+      roles: ['faculty'],
       subjects: [{ subjectName: '', shortName: '', semester: '1' }]
     });
     setCreatedFacultyCredentials(null);
@@ -3587,6 +4206,11 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         parsedSubjects = [{ subjectName: '', shortName: '', semester: '1' }];
       }
     }
+    const isPrimaryAdmin = faculty.isPrimaryAdmin || faculty.id === 'admin_primary' || String(faculty.id) === '78' || (faculty.email && faculty.email.toLowerCase() === 'admin@ljcca.edu');
+    const initialRoles = Array.isArray(faculty.roles) && faculty.roles.length > 0
+      ? (isPrimaryAdmin ? Array.from(new Set([...faculty.roles, 'admin'])) : faculty.roles)
+      : (isPrimaryAdmin ? ['admin', 'faculty'] : (faculty.role === 'admin' ? ['admin', 'faculty'] : ['faculty']));
+
     setFacultyForm({
       id: faculty.id,
       name: faculty.name,
@@ -3594,6 +4218,8 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       department: faculty.department,
       mobile: faculty.mobile,
       password: '',
+      roles: initialRoles,
+      isPrimaryAdmin,
       subjects: parsedSubjects
     });
     setCreatedFacultyCredentials(null);
@@ -3602,6 +4228,10 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
   const handleSaveFaculty = async (e) => {
     e.preventDefault();
+    if (!facultyForm.roles || facultyForm.roles.length === 0) {
+      showToast('Please select at least one role: Faculty or Admin', 'warning');
+      return;
+    }
     if (!facultyForm.email || !facultyForm.email.trim()) {
       showToast('Email ID is required to add faculty member', 'warning');
       return;
@@ -3615,7 +4245,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       return;
     }
 
-    if (facultyForm.password && String(facultyForm.password).trim() !== '') {
+    if (!facultyForm.isPrimaryAdmin && facultyForm.password && String(facultyForm.password).trim() !== '') {
       const passCheck = validateStrongPassword(facultyForm.password);
       if (!passCheck.isValid) {
         showToast(`⚠️ Strong Password Required: ${passCheck.message}`, 'warning', 4000);
@@ -3639,6 +4269,13 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       });
       const data = await res.json();
       if (res.ok) {
+        if (facultyForm.isPrimaryAdmin && onUpdateUser) {
+          onUpdateUser({
+            ...user,
+            roles: facultyForm.roles,
+            hasFacultyAccess: (facultyForm.roles || []).includes('faculty')
+          });
+        }
         if (!isEdit) {
           setCreatedFacultyCredentials({
             username: data.faculty.username,
@@ -3649,6 +4286,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         }
         fetchFaculties();
         fetchStats();
+        notifyDataChanged();
       } else {
         if (res.status === 401 || res.status === 403) {
           showToast(data.error || 'Your session has expired. Please log in again.', 'error');
@@ -3684,6 +4322,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
       if (res.ok) {
         showToast(`Password reset successfully! New Password: ${data.faculty.plain_password}`, 'success');
         fetchFaculties();
+        notifyDataChanged();
       } else {
         showToast(data.error || 'Failed to reset password', 'error');
       }
@@ -4375,6 +5014,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
         }
         showToast(msg, 'success');
         fetchFaculties();
+        notifyDataChanged();
       } else {
         showToast(data.error || 'Failed to import faculty data.', 'error');
       }
@@ -4395,7 +5035,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
   // Download Student Excel Sample Template (Headers only)
   const handleDownloadStudentSampleTemplate = () => {
-    const headers = [['Enrollment No', 'Full Name', 'Roll No', 'Division', 'Course', 'Semester', 'Mobile No', 'Email ID', 'Password']];
+    const headers = [['Enrollment No', 'Full Name', 'Roll No', 'Division', 'Course', 'Semester', 'Mobile No', 'Email ID']];
     const worksheet = XLSX.utils.aoa_to_sheet(headers);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Student Sample');
@@ -4714,7 +5354,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
   };
 
   return (
-    <div className="admin-dashboard-root">
+    <div className={`admin-dashboard-root ${theme === 'light' ? 'admin-theme-light' : ''}`}>
       {/* Floating Return to Dashboard Arrow Button (Rendered on mobile for any tab other than dashboard, students, faculty, subjects) */}
       {activeTab !== 'dashboard' && !['students', 'faculty', 'subjects'].includes(activeTab) && !isAnyAdminModalOpen && (
         <button
@@ -4818,98 +5458,46 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
           }}
         >
           <button
+            className="admin-glass-btn admin-glass-btn-blue"
             onClick={() => { setShowStudentMobileActions(false); handleDownloadStudentSampleTemplate(); }}
-            style={{
-              padding: '8px 14px',
-              fontSize: '0.85rem',
-              fontWeight: '600',
-              borderRadius: '8px',
-              border: '1px solid rgba(168, 85, 247, 0.4)',
-              background: 'rgba(168, 85, 247, 0.15)',
-              color: '#c084fc',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'all 0.15s ease'
-            }}
             title="Download sample Excel file format for student import"
           >
-            <FileSpreadsheet size={16} color="#c084fc" />
+            <FileSpreadsheet size={16} />
             <span>Sample Format</span>
           </button>
 
           <button
+            className="admin-glass-btn admin-glass-btn-purple"
             onClick={() => { setShowStudentMobileActions(false); fileInputRef.current && fileInputRef.current.click(); }}
-            style={{
-              padding: '8px 16px',
-              fontSize: '0.85rem',
-              fontWeight: '700',
-              borderRadius: '8px',
-              border: 'none',
-              background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
-              color: '#ffffff',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
-              transition: 'all 0.15s ease'
-            }}
             title="Import student records batch from CSV/Excel"
           >
-            <Upload size={16} color="#ffffff" />
-            <span style={{ color: '#ffffff' }}>Bulk Upload</span>
+            <Upload size={16} />
+            <span>Bulk Upload</span>
           </button>
 
           <button
+            className="admin-glass-btn admin-glass-btn-green"
             onClick={() => { setShowStudentMobileActions(false); handleExportStudentsData(); }}
-            style={{
-              padding: '8px 16px',
-              fontSize: '0.85rem',
-              fontWeight: '700',
-              borderRadius: '8px',
-              border: 'none',
-              background: 'linear-gradient(135deg, #10b981, #059669)',
-              color: '#ffffff',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
-              transition: 'all 0.15s ease'
-            }}
             title="Export all student records to Excel file"
           >
-            <Download size={16} color="#ffffff" />
-            <span style={{ color: '#ffffff' }}>Export Data</span>
+            <Download size={16} />
+            <span>Export Data</span>
           </button>
 
           <button
+            className="admin-glass-btn admin-glass-btn-amber"
             onClick={() => { setShowStudentMobileActions(false); setPromoteStep(1); }}
-            style={{
-              padding: '8px 16px',
-              fontSize: '0.85rem',
-              fontWeight: '700',
-              borderRadius: '8px',
-              border: 'none',
-              background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-              color: '#ffffff',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
-              transition: 'all 0.15s ease'
-            }}
             title="Promote all students to next semester (Sem 1..7 -> +1, Sem 8 -> Graduate & Remove)"
           >
-            <TrendingUp size={16} color="#ffffff" />
-            <span style={{ color: '#ffffff' }}>Promote</span>
+            <TrendingUp size={16} />
+            <span>Promote</span>
           </button>
 
-          <button className="btn btn-primary full-width-mobile" onClick={() => { setShowStudentMobileActions(false); openAddModal(); }} style={{ color: '#ffffff' }}>
-            <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Student</span>
+          <button
+            className="admin-glass-btn admin-glass-btn-amber full-width-mobile"
+            onClick={() => { setShowStudentMobileActions(false); openAddModal(); }}
+          >
+            <Plus size={16} /> <span>Add Student</span>
           </button>
         </div>
       )}
@@ -4987,75 +5575,37 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
           }}
         >
           <button
+            className="admin-glass-btn admin-glass-btn-blue"
             onClick={() => { setShowFacultyMobileActions(false); handleDownloadFacultySampleTemplate(); }}
-            style={{
-              padding: '8px 14px',
-              fontSize: '0.85rem',
-              fontWeight: '600',
-              borderRadius: '8px',
-              border: '1px solid rgba(168, 85, 247, 0.4)',
-              background: 'rgba(168, 85, 247, 0.15)',
-              color: '#c084fc',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'all 0.15s ease'
-            }}
             title="Download sample Excel file format for faculty import"
           >
-            <FileSpreadsheet size={16} color="#c084fc" />
+            <FileSpreadsheet size={16} />
             <span>Sample Format</span>
           </button>
 
           <button
+            className="admin-glass-btn admin-glass-btn-purple"
             onClick={() => { setShowFacultyMobileActions(false); facultyFileInputRef.current && facultyFileInputRef.current.click(); }}
-            style={{
-              padding: '8px 16px',
-              fontSize: '0.85rem',
-              fontWeight: '700',
-              borderRadius: '8px',
-              border: 'none',
-              background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
-              color: '#ffffff',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
-              transition: 'all 0.15s ease'
-            }}
             title="Import faculty batch from CSV or Excel"
           >
-            <Upload size={16} color="#ffffff" />
-            <span style={{ color: '#ffffff' }}>Bulk Upload</span>
+            <Upload size={16} />
+            <span>Bulk Upload</span>
           </button>
 
           <button
+            className="admin-glass-btn admin-glass-btn-green"
             onClick={() => { setShowFacultyMobileActions(false); handleExportFacultyData(); }}
-            style={{
-              padding: '8px 16px',
-              fontSize: '0.85rem',
-              fontWeight: '700',
-              borderRadius: '8px',
-              border: 'none',
-              background: 'linear-gradient(135deg, #10b981, #059669)',
-              color: '#ffffff',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
-              transition: 'all 0.15s ease'
-            }}
             title="Export faculty records to Excel file"
           >
-            <Download size={16} color="#ffffff" />
-            <span style={{ color: '#ffffff' }}>Export Data</span>
+            <Download size={16} />
+            <span>Export Data</span>
           </button>
 
-          <button className="btn btn-primary full-width-mobile" onClick={() => { setShowFacultyMobileActions(false); openAddFacultyModal(); }} style={{ color: '#ffffff' }}>
-            <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Faculty</span>
+          <button
+            className="admin-glass-btn admin-glass-btn-amber full-width-mobile"
+            onClick={() => { setShowFacultyMobileActions(false); openAddFacultyModal(); }}
+          >
+            <Plus size={16} /> <span>Add Faculty</span>
           </button>
         </div>
       )}
@@ -5133,75 +5683,37 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
           }}
         >
           <button
+            className="admin-glass-btn admin-glass-btn-blue"
             onClick={() => { setShowSubjectMobileActions(false); handleDownloadSubjectSampleTemplate(); }}
-            style={{
-              padding: '8px 14px',
-              fontSize: '0.85rem',
-              fontWeight: '600',
-              borderRadius: '8px',
-              border: '1px solid rgba(168, 85, 247, 0.4)',
-              background: 'rgba(168, 85, 247, 0.15)',
-              color: '#c084fc',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              transition: 'all 0.15s ease'
-            }}
             title="Download sample Excel file format for subject import"
           >
-            <FileSpreadsheet size={16} color="#c084fc" />
+            <FileSpreadsheet size={16} />
             <span>Sample Format</span>
           </button>
 
           <button
+            className="admin-glass-btn admin-glass-btn-purple"
             onClick={() => { setShowSubjectMobileActions(false); subjectFileInputRef.current && subjectFileInputRef.current.click(); }}
-            style={{
-              padding: '8px 16px',
-              fontSize: '0.85rem',
-              fontWeight: '700',
-              borderRadius: '8px',
-              border: 'none',
-              background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
-              color: '#ffffff',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
-              transition: 'all 0.15s ease'
-            }}
             title="Import subject records batch from CSV or Excel"
           >
-            <Upload size={16} color="#ffffff" />
-            <span style={{ color: '#ffffff' }}>Bulk Upload</span>
+            <Upload size={16} />
+            <span>Bulk Upload</span>
           </button>
 
           <button
+            className="admin-glass-btn admin-glass-btn-green"
             onClick={() => { setShowSubjectMobileActions(false); handleExportSubjectsData(); }}
-            style={{
-              padding: '8px 16px',
-              fontSize: '0.85rem',
-              fontWeight: '700',
-              borderRadius: '8px',
-              border: 'none',
-              background: 'linear-gradient(135deg, #10b981, #059669)',
-              color: '#ffffff',
-              cursor: 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
-              transition: 'all 0.15s ease'
-            }}
             title="Export subject records to Excel file"
           >
-            <Download size={16} color="#ffffff" />
-            <span style={{ color: '#ffffff' }}>Export Data</span>
+            <Download size={16} />
+            <span>Export Data</span>
           </button>
 
-          <button className="btn btn-primary full-width-mobile" onClick={() => { setShowSubjectMobileActions(false); handleOpenAddSubjectModal(); }} style={{ color: '#ffffff' }}>
-            <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Subject</span>
+          <button
+            className="admin-glass-btn admin-glass-btn-amber full-width-mobile"
+            onClick={() => { setShowSubjectMobileActions(false); handleOpenAddSubjectModal(); }}
+          >
+            <Plus size={16} /> <span>Add Subject</span>
           </button>
         </div>
       )}
@@ -5259,14 +5771,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             </button>
 
             <button
-              className={`admin-nav-item ${activeTab === 'attendance_logs' ? 'active' : ''}`}
-              onClick={() => { setActiveTab('attendance_logs'); setMobileSidebarOpen(false); fetchLiveLogs(); }}
-            >
-              <ClipboardList size={19} />
-              <span>Attendance Logs</span>
-            </button>
-
-            <button
               className={`admin-nav-item ${activeTab === 'otp' ? 'active' : ''}`}
               onClick={() => { setActiveTab('otp'); setMobileSidebarOpen(false); }}
             >
@@ -5288,6 +5792,24 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             >
               <FileText size={19} />
               <span>Leave Request</span>
+            </button>
+
+            <button
+              className={`admin-nav-item ${activeTab === 'attendance_logs' ? 'active' : ''}`}
+              onClick={() => {
+                setSelectedSemFolder(null);
+                setMatrixSearch('');
+                setMobileSidebarOpen(false);
+                React.startTransition(() => {
+                  setActiveTab('attendance_logs');
+                });
+                setTimeout(() => {
+                  fetchLiveLogs();
+                }, 0);
+              }}
+            >
+              <ClipboardList size={19} />
+              <span>Attendance Logs</span>
             </button>
 
             <button
@@ -5315,14 +5837,137 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             </button>
           </nav>
 
-          <div className="admin-sidebar-footer">
-            <div className="admin-user-profile-card">
+          <div className="admin-sidebar-footer" style={{ position: 'relative' }}>
+            {/* Role Switcher Dropdown (Photo 2) */}
+            {canSwitchRole && roleMenuOpen && (
+              <div
+                ref={roleMenuRef}
+                style={{
+                  position: 'absolute',
+                  bottom: 'calc(100% + 8px)',
+                  left: '12px',
+                  right: '12px',
+                  backgroundColor: '#002244',
+                  border: '1.5px solid rgba(255, 255, 255, 0.15)',
+                  borderRadius: '12px',
+                  overflow: 'hidden',
+                  boxShadow: '0 12px 32px rgba(0, 0, 0, 0.55)',
+                  zIndex: 9999,
+                  display: 'flex',
+                  flexDirection: 'column'
+                }}
+              >
+                {/* Option 1: ORG ADMIN */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRoleMenuOpen(false);
+                    if (onSwitchRole) onSwitchRole('admin');
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '12px 18px',
+                    textAlign: 'left',
+                    background: (activeRole || 'admin') === 'admin' ? '#fbbf24' : 'transparent',
+                    color: (activeRole || 'admin') === 'admin' ? '#002d62' : '#ffffff',
+                    fontWeight: '800',
+                    fontSize: '0.85rem',
+                    letterSpacing: '0.04em',
+                    border: 'none',
+                    borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    transition: 'all 0.15s ease',
+                    textTransform: 'uppercase',
+                    fontFamily: 'inherit'
+                  }}
+                  onMouseEnter={(e) => {
+                    if ((activeRole || 'admin') !== 'admin') e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                  }}
+                  onMouseLeave={(e) => {
+                    if ((activeRole || 'admin') !== 'admin') e.currentTarget.style.background = 'transparent';
+                  }}
+                >
+                  <span>ORG ADMIN</span>
+                </button>
+
+                {/* Option 2: FACULTY */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRoleMenuOpen(false);
+                    if (onSwitchRole) onSwitchRole('faculty');
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '12px 18px',
+                    textAlign: 'left',
+                    background: activeRole === 'faculty' ? '#fbbf24' : 'transparent',
+                    color: activeRole === 'faculty' ? '#002d62' : '#ffffff',
+                    fontWeight: '800',
+                    fontSize: '0.85rem',
+                    letterSpacing: '0.04em',
+                    border: 'none',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    transition: 'all 0.15s ease',
+                    textTransform: 'uppercase',
+                    fontFamily: 'inherit'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (activeRole !== 'faculty') e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (activeRole !== 'faculty') e.currentTarget.style.background = 'transparent';
+                  }}
+                >
+                  <span>FACULTY</span>
+                </button>
+              </div>
+            )}
+
+            <div
+              className="admin-user-profile-card"
+              onClick={() => {
+                if (canSwitchRole) setRoleMenuOpen(prev => !prev);
+              }}
+              style={{
+                cursor: canSwitchRole ? 'pointer' : 'default',
+                userSelect: 'none',
+                position: 'relative'
+              }}
+              title={canSwitchRole ? "Click to switch role (Admin / Faculty)" : undefined}
+            >
               <div className="admin-user-avatar">
                 <GraduationCap size={20} color="#0f172a" />
               </div>
-              <div className="admin-user-details">
-                <span className="admin-user-profile-name">{user?.name || 'Parth Joshi'}</span>
-                <span className="admin-user-profile-email">{user?.email || 'parthsir.lj@gmail.com'}</span>
+              <div className="admin-user-details" style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                  <span className="admin-user-profile-name" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {user?.name || 'Administrative'}
+                  </span>
+                  {canSwitchRole && (
+                    <div
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginLeft: '6px',
+                        color: '#ffffff',
+                        transform: roleMenuOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                        transition: 'transform 0.2s ease',
+                        flexShrink: 0
+                      }}
+                    >
+                      <ChevronDown size={16} strokeWidth={2.5} color="#ffffff" />
+                    </div>
+                  )}
+                </div>
+                <span className="admin-user-profile-email">{user?.email || 'admin@ljcca.edu'}</span>
               </div>
             </div>
 
@@ -6926,24 +7571,9 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
             {/* PANEL FOR ATTENDANCE LOGS DIRECTORY */}
 
             {activeTab === 'subjects' && (
-              <div style={styles.tabContent}>
-                <div className="glass-panel" style={{ ...styles.cardPadding, padding: isMobile ? '16px 12px' : '28px' }}>
-                  {/* Header Row with Search on Left and Add Button on Right */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
-                  <div className="student-search-bar-wrapper" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', width: '100%' }}>
-                    <div style={{ ...styles.searchContainer, flex: 1, margin: 0, minWidth: '200px' }}>
-                      <Search size={18} style={styles.searchIcon} />
-                      <input
-                        type="text"
-                        className="glass-input"
-                        placeholder="Search subject by Name or Code..."
-                        value={subjectSearchQuery}
-                        onChange={(e) => setSubjectSearchQuery(e.target.value)}
-                        style={{ paddingLeft: '40px' }}
-                      />
-                    </div>
-                  </div>
-
+              <div style={styles.tabPanel}>
+                {/* CARD 1: ACTION BUTTONS CARD (TOP) */}
+                <div className="glass-panel desktop-student-action-card" style={{ padding: isMobile ? '14px 16px' : '18px 24px', borderRadius: '16px' }}>
                   <input
                     type="file"
                     accept=".csv,.xlsx"
@@ -6951,94 +7581,98 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     onChange={handleSubjectImportFile}
                     style={{ display: 'none' }}
                   />
-                  <div className="admin-action-btn-group desktop-student-action-group">
-                    <button
-                      onClick={() => { setShowSubjectMobileActions(false); handleDownloadSubjectSampleTemplate(); }}
-                      style={{
-                        padding: '10px 16px',
-                        fontSize: '0.88rem',
-                        fontWeight: '600',
-                        borderRadius: '12px',
-                        border: '1px solid rgba(168, 85, 247, 0.4)',
-                        background: 'rgba(168, 85, 247, 0.15)',
-                        color: '#c084fc',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        transition: 'all 0.15s ease'
-                      }}
-                      title="Download sample Excel file format for subject import"
-                    >
-                      <FileSpreadsheet size={16} color="#c084fc" />
-                      <span>Sample Format</span>
-                    </button>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', width: '100%' }}>
+                    {/* Left Actions Group */}
+                    <div className="admin-action-btn-group desktop-student-action-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        className="admin-glass-btn admin-glass-btn-blue"
+                        onClick={() => { setShowSubjectMobileActions(false); handleDownloadSubjectSampleTemplate(); }}
+                        title="Download sample Excel file format for subject import"
+                      >
+                        <FileSpreadsheet size={16} />
+                        <span>Sample Format</span>
+                      </button>
 
-                    <button
-                      onClick={() => { setShowSubjectMobileActions(false); subjectFileInputRef.current && subjectFileInputRef.current.click(); }}
-                      style={{
-                        padding: '10px 16px',
-                        fontSize: '0.88rem',
-                        fontWeight: '700',
-                        borderRadius: '12px',
-                        border: 'none',
-                        background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
-                        color: '#ffffff',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
-                        transition: 'all 0.15s ease'
-                      }}
-                      title="Import subject records batch from CSV or Excel"
-                    >
-                      <Upload size={16} color="#ffffff" />
-                      <span style={{ color: '#ffffff' }}>Bulk Upload</span>
-                    </button>
+                      <button
+                        className="admin-glass-btn admin-glass-btn-purple"
+                        onClick={() => { setShowSubjectMobileActions(false); subjectFileInputRef.current && subjectFileInputRef.current.click(); }}
+                        title="Import subject records batch from CSV or Excel"
+                      >
+                        <Upload size={16} />
+                        <span>Bulk Upload</span>
+                      </button>
 
-                    <button
-                      onClick={() => { setShowSubjectMobileActions(false); handleExportSubjectsData(); }}
-                      style={{
-                        padding: '10px 16px',
-                        fontSize: '0.88rem',
-                        fontWeight: '700',
-                        borderRadius: '12px',
-                        border: 'none',
-                        background: 'linear-gradient(135deg, #10b981, #059669)',
-                        color: '#ffffff',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
-                        transition: 'all 0.15s ease'
-                      }}
-                      title="Export subject records to Excel file"
-                    >
-                      <Download size={16} color="#ffffff" />
-                      <span style={{ color: '#ffffff' }}>Export</span>
-                    </button>
+                      <button
+                        className="admin-glass-btn admin-glass-btn-green"
+                        onClick={() => { setShowSubjectMobileActions(false); handleExportSubjectsData(); }}
+                        title="Export subject records to Excel file"
+                      >
+                        <Download size={16} />
+                        <span>Export</span>
+                      </button>
 
-                    <button
-                      onClick={() => { setShowSubjectMobileActions(false); handleOpenAddSubjectModal(); }}
-                      className="btn btn-primary"
-                      style={{
-                        display: 'flex', alignItems: 'center', gap: '8px',
-                        padding: '10px 18px', borderRadius: '12px', fontSize: '0.88rem', fontWeight: '700',
-                        background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                        color: '#ffffff',
-                        boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
-                        border: 'none',
-                        cursor: 'pointer'
-                      }}
-                    >
-                      <Plus size={18} color="#ffffff" />
-                      <span style={{ color: '#ffffff' }}>Add Subject</span>
-                    </button>
+                      {selectedSubjectIds.length > 0 && (
+                        <button
+                          className="admin-glass-btn admin-glass-btn-rose"
+                          onClick={() => handleBulkDeleteSubjects(selectedSubjectIds)}
+                          title={`Delete ${selectedSubjectIds.length} selected subject(s)`}
+                        >
+                          <Trash2 size={16} />
+                          <span>
+                            Delete ({selectedSubjectIds.length})
+                          </span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Right Action Group */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
+                      <button
+                        onClick={() => { setShowSubjectMobileActions(false); handleOpenAddSubjectModal(); }}
+                        className="admin-glass-btn admin-glass-btn-amber full-width-mobile"
+                      >
+                        <Plus size={16} /> <span>Add Subject</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
+                {/* CARD 2: SEARCH / FILTER BAR CARD (BELOW BUTTONS) */}
+                <div className="glass-panel" style={{ padding: isMobile ? '14px 16px' : '18px 24px', borderRadius: '16px' }}>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <Search size={18} style={styles.searchIcon} />
+                    <input
+                      type="text"
+                      className="glass-input"
+                      placeholder="Search subject by Name or Code..."
+                      value={subjectSearchQuery}
+                      onChange={(e) => setSubjectSearchQuery(e.target.value)}
+                      style={{ paddingLeft: '40px', paddingRight: subjectSearchQuery ? '36px' : '14px', width: '100%' }}
+                    />
+                    {subjectSearchQuery && (
+                      <button
+                        onClick={() => setSubjectSearchQuery('')}
+                        style={{
+                          position: 'absolute',
+                          right: '12px',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-muted)',
+                          cursor: 'pointer',
+                          padding: '4px',
+                          display: 'flex',
+                          alignItems: 'center'
+                        }}
+                        title="Clear search"
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* CARD 3: SUBJECT DATA TABLE CARD */}
+                <div className="glass-panel" style={{ ...styles.studentCrudPanel, padding: isMobile ? '14px 10px' : '24px', borderRadius: '16px' }}>
                   {/* Subject List / Table */}
                   {allFacultySubjects.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '50px 20px', color: 'var(--text-muted)' }}>
@@ -7059,15 +7693,24 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     </div>
                   ) : (
                     (() => {
-                      const filteredSubjects = allFacultySubjects.filter(sub => {
-                        if (!subjectSearchQuery || !subjectSearchQuery.trim()) return true;
-                        const q = subjectSearchQuery.toLowerCase().trim();
-                        const subName = String(sub.subjectName || sub.name || '').toLowerCase();
-                        const shortCode = String(sub.shortName || sub.shortCode || sub.short || '').toLowerCase();
-                        const subCode = String(sub.code || sub.subjectCode || '').toLowerCase();
-                        const facultyName = String(sub.facultyName || '').toLowerCase();
-                        return subName.includes(q) || shortCode.includes(q) || subCode.includes(q) || facultyName.includes(q);
-                      });
+                      const filteredSubjects = allFacultySubjects
+                        .filter(sub => {
+                          if (!subjectSearchQuery || !subjectSearchQuery.trim()) return true;
+                          const q = subjectSearchQuery.toLowerCase().trim();
+                          const subName = String(sub.subjectName || sub.name || '').toLowerCase();
+                          const shortCode = String(sub.shortName || sub.shortCode || sub.short || '').toLowerCase();
+                          const subCode = String(sub.code || sub.subjectCode || '').toLowerCase();
+                          const facultyName = String(sub.facultyName || '').toLowerCase();
+                          return subName.includes(q) || shortCode.includes(q) || subCode.includes(q) || facultyName.includes(q);
+                        })
+                        .sort((a, b) => {
+                          const semA = parseInt(String(a.semester || '0').replace(/\D/g, ''), 10) || 0;
+                          const semB = parseInt(String(b.semester || '0').replace(/\D/g, ''), 10) || 0;
+                          if (semA !== semB) return semA - semB;
+                          const nameA = String(a.subjectName || a.name || '').trim().toLowerCase();
+                          const nameB = String(b.subjectName || b.name || '').trim().toLowerCase();
+                          return nameA.localeCompare(nameB);
+                        });
 
                       return (
                         <div className="custom-table-container">
@@ -7098,7 +7741,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                                 const isChecked = selectedSubjectIds.includes(sub.subKey);
                                 const subName = sub.subjectName || sub.name || 'Subject';
                                 const shortCode = sub.shortName || sub.shortCode || '-';
-                                const subCode = sub.code || sub.subjectCode || '-';
+                                const subCode = (sub.code || sub.subjectCode || sub.subject_code || sub.subCode || sub.sub_code || '').toString().trim();
                                 const semNum = sub.semester ? String(sub.semester).replace(/\D/g, '') : '1';
                                 const subType = sub.type || sub.subjectType || 'Theory';
                                 const facultyName = sub.facultyName || 'Unknown';
@@ -7126,43 +7769,19 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                                         {shortCode}
                                       </span>
                                     </td>
-                                    <td style={{ whiteSpace: 'nowrap' }}>
-                                      {subCode && subCode !== '-' ? (
-                                        <span style={{
-                                          padding: '2px 10px', borderRadius: '10px', fontSize: '0.78rem', fontWeight: '700',
-                                          background: 'rgba(59, 130, 246, 0.12)', color: '#60a5fa', border: '1px solid rgba(59, 130, 246, 0.25)',
-                                          whiteSpace: 'nowrap', display: 'inline-block'
-                                        }}>
-                                          {subCode}
-                                        </span>
-                                      ) : (
-                                        <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>-</span>
-                                      )}
+                                    <td style={{ whiteSpace: 'nowrap', fontWeight: '600' }}>
+                                      {subCode && subCode !== '-' ? subCode : '-'}
                                     </td>
-                                    <td style={{ whiteSpace: 'nowrap' }}>
-                                      <span style={{
-                                        padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: '700',
-                                        background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.3)',
-                                        whiteSpace: 'nowrap', display: 'inline-block'
-                                      }}>
-                                        Semester {semNum}
-                                      </span>
+                                    <td style={{ whiteSpace: 'nowrap', fontWeight: '600' }}>
+                                      Semester {semNum}
                                     </td>
                                     <td style={{ whiteSpace: 'nowrap' }}>
                                       <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
                                         {facultyName}
                                       </span>
                                     </td>
-                                    <td style={{ whiteSpace: 'nowrap' }}>
-                                      <span style={{
-                                        padding: '3px 10px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: '700',
-                                        background: subType.includes('Both') || subType.includes('+') ? 'rgba(168, 85, 247, 0.15)' : subType === 'Practical' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(59, 130, 246, 0.15)',
-                                        color: subType.includes('Both') || subType.includes('+') ? '#c084fc' : subType === 'Practical' ? '#34d399' : '#60a5fa',
-                                        border: `1px solid ${subType.includes('Both') || subType.includes('+') ? 'rgba(168, 85, 247, 0.3)' : subType === 'Practical' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(59, 130, 246, 0.3)'}`,
-                                        whiteSpace: 'nowrap', display: 'inline-block'
-                                      }}>
-                                        {subType}
-                                      </span>
+                                    <td style={{ whiteSpace: 'nowrap', fontWeight: '600' }}>
+                                      {subType}
                                     </td>
                                     <td style={{ textAlign: 'center' }}>
                                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
@@ -7248,24 +7867,10 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       </h3>
                     </div>
 
-                    <button
-                      type="button"
+                    <AdminModalCloseBtn
                       onClick={() => setShowAddSubjectModal(false)}
-                      style={{
-                        background: '#f1f5f9',
-                        border: 'none',
-                        color: '#64748b',
-                        borderRadius: '50%',
-                        width: '32px', height: '32px',
-                        cursor: 'pointer',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        transition: 'all 0.15s ease'
-                      }}
-                      onMouseEnter={e => { e.currentTarget.style.background = '#fee2e2'; e.currentTarget.style.color = '#ef4444'; }}
-                      onMouseLeave={e => { e.currentTarget.style.background = '#f1f5f9'; e.currentTarget.style.color = '#64748b'; }}
-                    >
-                      <X size={18} />
-                    </button>
+                      title="Close Form"
+                    />
                   </div>
 
                   {/* Modal Body / Form */}
@@ -7483,18 +8088,18 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           background: 'linear-gradient(135deg, #f59e0b, #d97706)',
                           color: '#0f172a',
                           border: '2px solid #d97706',
-                          boxShadow: '0 4px 14px rgba(245, 158, 11, 0.4)',
+                          boxShadow: '0 4px 14px rgba(0, 0, 0, 0.2)',
                           cursor: 'pointer',
                           transition: 'all 0.15s ease',
                           outline: 'none'
                         }}
                         onFocus={e => {
                           e.currentTarget.style.border = '2px solid #0f172a';
-                          e.currentTarget.style.boxShadow = '0 0 0 5px rgba(245, 158, 11, 0.6), 0 4px 14px rgba(245, 158, 11, 0.5)';
+                          e.currentTarget.style.boxShadow = '0 0 0 4px rgba(0, 0, 0, 0.35), 0 4px 14px rgba(0, 0, 0, 0.25)';
                         }}
                         onBlur={e => {
                           e.currentTarget.style.border = '2px solid #d97706';
-                          e.currentTarget.style.boxShadow = '0 4px 14px rgba(245, 158, 11, 0.4)';
+                          e.currentTarget.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.2)';
                         }}
                       >
                         {savingSubjects ? (subjectModalMode === 'edit' ? 'Updating...' : 'Saving...') : (subjectModalMode === 'edit' ? 'Update Subject' : 'Save Subject')}
@@ -7505,771 +8110,782 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
               </div>
             )}
 
-
-
             {activeTab === 'attendance_logs' && (
               <div style={styles.tabPanel}>
-                {/* OTP Active & Live Monitor Row */}
-                <div style={styles.dashboardRow}>
-                  {/* All Attendance Records Directory (Matching Faculty Panel Photo 2!) */}
-                  <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: 1, width: '100%', padding: isMobile ? '12px 8px' : '28px' }}>
-                    <div style={{ marginBottom: '16px' }}>
-                      {/* Line 1: Back Button (Top Left) */}
-                      {/* Header Row: Back Button + Title & Subtitle (Left) & Select Date + Reset Controls (Right) */}
-                      <div className="mobile-stack-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
-                          {selectedSemFolder !== null && !selectedSessionFolder && (
-                            <button
-                              onClick={() => {
-                                setSelectedSemFolder(null);
-                                setSelectedSessionFolder(null);
-                                setFolderSearchDate(new Date().toISOString().split('T')[0]);
-                                setFolderDivFilter('ALL');
+                {/* MASTER ATTENDANCE MATRIX GRID */}
+                <div className="matrix-container" style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%' }}>
+
+                    {/* Card 1: Interactive Filter & Search Toolbar */}
+                    <div className="glass-panel" style={{ ...styles.dashboardPanelCard, background: '#ffffff', border: '1.5px solid #cbd5e1', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)', width: '100%', padding: isMobile ? '12px' : '16px 20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      {/* Row 1: Search Input (Full Width) */}
+                      <div style={{ position: 'relative', width: '100%' }}>
+                        <Search size={16} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#64748b' }} />
+                        <input
+                          className="glass-input"
+                          placeholder="Search student by name, roll no, enrollment no..."
+                          value={matrixSearch}
+                          onChange={e => setMatrixSearch(e.target.value)}
+                          style={{
+                            width: '100%',
+                            paddingLeft: '40px',
+                            paddingRight: matrixSearch ? '36px' : '14px',
+                            height: '42px',
+                            fontSize: '0.88rem',
+                            borderRadius: '10px',
+                            border: '1.5px solid #cbd5e1',
+                            background: '#f8fafc',
+                            color: '#0f172a',
+                            outline: 'none',
+                            boxSizing: 'border-box'
+                          }}
+                        />
+                        {matrixSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setMatrixSearch('')}
+                            style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', display: 'flex', alignItems: 'center' }}
+                          >
+                            <X size={16} />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Row 2: Filter Controls + Reset Button */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', width: '100%' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap', flex: '1 1 auto' }}>
+                          {/* Date Range Selector */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'nowrap' }}>
+                            <select
+                              value={matrixDateMode}
+                              onChange={e => setMatrixDateMode(e.target.value)}
+                              style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
+                            >
+                              <option value="all">All Recorded Dates</option>
+                              <option value="month">By Month</option>
+                              <option value="custom">Custom Date Range</option>
+                              <option value="single">Single Date</option>
+                            </select>
+
+                            {matrixDateMode === 'month' && (
+                              <input
+                                type="month"
+                                value={matrixMonth}
+                                onChange={e => setMatrixMonth(e.target.value)}
+                                style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff', color: '#1e293b', boxSizing: 'border-box', outline: 'none' }}
+                              />
+                            )}
+
+                            {matrixDateMode === 'custom' && (
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexWrap: 'nowrap' }}>
+                                <input
+                                  type="date"
+                                  value={matrixStartDate}
+                                  onChange={e => setMatrixStartDate(e.target.value)}
+                                  style={{ height: '36px', padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff', color: '#1e293b', boxSizing: 'border-box', outline: 'none' }}
+                                />
+                                <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>to</span>
+                                <input
+                                  type="date"
+                                  value={matrixEndDate}
+                                  onChange={e => setMatrixEndDate(e.target.value)}
+                                  style={{ height: '36px', padding: '6px 10px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff', color: '#1e293b', boxSizing: 'border-box', outline: 'none' }}
+                                />
+                              </div>
+                            )}
+
+                            {matrixDateMode === 'single' && (
+                              <input
+                                type="date"
+                                value={matrixSingleDate}
+                                onChange={e => setMatrixSingleDate(e.target.value)}
+                                style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff', color: '#1e293b', boxSizing: 'border-box', outline: 'none' }}
+                              />
+                            )}
+                          </div>
+
+                          {/* Semester Filter */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <Folder size={14} color="#f59e0b" />
+                            <select
+                              value={selectedSemFolder || 'ALL'}
+                              onChange={e => {
+                                setSelectedSemFolder(e.target.value);
+                                setMatrixSearch('');
+                                setMatrixDivFilter('ALL');
+                                setMatrixSubjectFilter('ALL');
+                                setMatrixStatusFilter('ALL');
                               }}
-                              className="btn btn-secondary"
-                              style={{ padding: '5px 14px', fontSize: '0.82rem', flexShrink: 0, marginTop: '2px' }}
+                              style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
                             >
-                              ← Back
-                            </button>
-                          )}
-                          {selectedSessionFolder && (
-                            <button
-                              onClick={() => setSelectedSessionFolder(null)}
-                              className="btn btn-secondary"
-                              style={{ padding: '5px 14px', fontSize: '0.82rem', flexShrink: 0, marginTop: '2px' }}
+                              <option value="ALL">All Semesters</option>
+                              {availableSemesters.map(sem => (
+                                <option key={sem} value={sem}>Semester {sem}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Division Filter */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <Layers size={14} color="var(--text-muted)" />
+                            <select
+                              value={matrixDivFilter}
+                              onChange={e => setMatrixDivFilter(e.target.value)}
+                              style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
                             >
-                              ← Back
-                            </button>
+                              <option value="ALL">All Divisions</option>
+                              {availableSemesterDivisions.map(div => (
+                                <option key={div} value={div}>Division {div}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          {/* Subject Filter */}
+                          {(matrixData?.uniqueSubjects || []).length > 0 && (
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <BookOpen size={14} color="var(--text-muted)" />
+                              <select
+                                value={matrixSubjectFilter}
+                                onChange={e => setMatrixSubjectFilter(e.target.value)}
+                                style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff', color: '#1e293b', maxWidth: '160px', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
+                              >
+                                <option value="ALL">All Subjects</option>
+                                {matrixData.uniqueSubjects.map(sub => (
+                                  <option key={sub} value={sub}>{cleanSubjectTitle(sub)}</option>
+                                ))}
+                              </select>
+                            </div>
                           )}
-                          <Folder size={22} color="#f59e0b" style={{ marginTop: '2px', flexShrink: 0 }} />
-                          <div>
-                            <h3 style={{ ...styles.cardTitle, marginBottom: '2px', lineHeight: 1.2 }}>
-                              {selectedSemFolder === null
-                                ? 'Attendance Logs'
-                                : (selectedSessionFolder
-                                  ? `${selectedSessionFolder.title}`
-                                  : `Sem ${selectedSemFolder} Attendance`
-                                )
-                              }
-                            </h3>
-                            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginTop: '0', marginBottom: '0' }}>
-                              {selectedSemFolder === null
-                                ? 'Click on any semester folder to view date-wise session archives.'
-                                : (selectedSessionFolder
-                                  ? 'View present and absent student records for this session.'
-                                  : `Select a date to view session attendance archives for Semester ${selectedSemFolder}.`
-                                )
-                              }
-                            </p>
+
+                          {/* Status Filter */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <Filter size={14} color="var(--text-muted)" />
+                            <select
+                              value={matrixStatusFilter}
+                              onChange={e => setMatrixStatusFilter(e.target.value)}
+                              style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
+                            >
+                              <option value="ALL">All Statuses</option>
+                              <option value="regular">Safe (≥ 75%)</option>
+                              <option value="defaulter">Defaulters (&lt; 75%)</option>
+                            </select>
                           </div>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
-                          {selectedSemFolder === null ? (
-                            <div style={{ fontSize: '0.85rem', fontWeight: '700', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
-                              📅 Date Archive
-                            </div>
-                          ) : (
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', whiteSpace: 'nowrap' }}>
-                              <Calendar size={16} color="#f59e0b" style={{ flexShrink: 0 }} />
-                              <label style={{ fontSize: '0.82rem', fontWeight: '700', color: 'var(--text-primary)', whiteSpace: 'nowrap', margin: 0 }}>Select Date:</label>
-                              <input
-                                type="date"
-                                value={folderSearchDate}
-                                onChange={(e) => {
-                                  setFolderSearchDate(e.target.value);
-                                  setSelectedSessionFolder(null);
-                                }}
-                                style={{
-                                  padding: '5px 12px',
-                                  borderRadius: '10px',
-                                  border: '1.5px solid #cbd5e1',
-                                  background: '#ffffff',
-                                  color: '#1e293b',
-                                  fontSize: '0.85rem',
-                                  fontWeight: '600',
-                                  cursor: 'pointer',
-                                  outline: 'none',
-                                  boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                                }}
-                              />
-                            </div>
-                          )}
+                        {/* Reset Filters Button */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMatrixSearch('');
+                            setMatrixDateMode('all');
+                            setMatrixMonth('');
+                            setMatrixStartDate('');
+                            setMatrixEndDate('');
+                            setMatrixSingleDate('');
+                            setSelectedSemFolder('ALL');
+                            setMatrixDivFilter('ALL');
+                            setMatrixSubjectFilter('ALL');
+                            setMatrixStatusFilter('ALL');
+                          }}
+                          title="Reset all search & filter values"
+                          style={{
+                            height: '36px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '0 14px',
+                            borderRadius: '8px',
+                            border: '1.5px solid #cbd5e1',
+                            background: '#f8fafc',
+                            color: '#475569',
+                            fontSize: '0.82rem',
+                            fontWeight: '700',
+                            cursor: 'pointer',
+                            whiteSpace: 'nowrap',
+                            transition: 'all 0.15s ease',
+                            marginLeft: 'auto',
+                            boxSizing: 'border-box'
+                          }}
+                          onMouseEnter={e => { e.currentTarget.style.background = '#fee2e2'; e.currentTarget.style.color = '#dc2626'; e.currentTarget.style.borderColor = '#f87171'; }}
+                          onMouseLeave={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.color = '#475569'; e.currentTarget.style.borderColor = '#cbd5e1'; }}
+                        >
+                          <RotateCcw size={14} />
+                          Reset Filters
+                        </button>
+                      </div>
+                    </div>
 
-                          {selectedSemFolder === null ? (
-                            <button
-                              onClick={handleReloadDirectory}
-                              disabled={directoryReloading}
-                              style={{
-                                padding: '6px 14px',
-                                fontSize: '0.82rem',
-                                fontWeight: '600',
-                                borderRadius: '8px',
-                                border: '1.5px solid #cbd5e1',
-                                background: '#ffffff',
-                                color: '#1e293b',
-                                cursor: 'pointer',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '6px',
-                                boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-                                transition: 'all 0.15s ease',
-                                whiteSpace: 'nowrap'
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.borderColor = '#0284c7';
-                                e.currentTarget.style.color = '#0284c7';
-                                e.currentTarget.style.background = '#f0f9ff';
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.borderColor = '#cbd5e1';
-                                e.currentTarget.style.color = '#1e293b';
-                                e.currentTarget.style.background = '#ffffff';
-                              }}
-                            >
-                              <RefreshCw size={14} className={directoryReloading ? 'spin-icon' : ''} />
-                              <span>{directoryReloading ? 'Reloading...' : 'Reload'}</span>
-                            </button>
-                          ) : selectedSessionFolder ? (
-                            <button
-                              onClick={async () => {
-                                setDirectoryReloading(true);
-                                try {
-                                  await Promise.all([
-                                    fetchLiveLogs(),
-                                    fetchQrData(),
-                                    fetchStats()
-                                  ]);
-                                } catch (err) {
-                                  console.error('Error refreshing session logs:', err);
-                                } finally {
-                                  setDirectoryReloading(false);
-                                }
-                              }}
-                              disabled={directoryReloading}
-                              style={{
-                                padding: '6px 14px',
-                                fontSize: '0.82rem',
-                                fontWeight: '600',
-                                borderRadius: '8px',
-                                border: '1.5px solid #cbd5e1',
-                                background: '#ffffff',
-                                color: '#1e293b',
-                                cursor: 'pointer',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '6px',
-                                boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-                                transition: 'all 0.15s ease',
-                                whiteSpace: 'nowrap'
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.borderColor = '#0284c7';
-                                e.currentTarget.style.color = '#0284c7';
-                                e.currentTarget.style.background = '#f0f9ff';
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.borderColor = '#cbd5e1';
-                                e.currentTarget.style.color = '#1e293b';
-                                e.currentTarget.style.background = '#ffffff';
-                              }}
-                              title="Reload session attendance data"
-                            >
-                              <RefreshCw size={14} className={directoryReloading ? 'spin-icon' : ''} />
-                              <span>{directoryReloading ? 'Reloading...' : 'Reload'}</span>
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => {
-                                setFolderSearchDate(new Date().toISOString().split('T')[0]);
-                                setSelectedSessionFolder(null);
-                                handleReloadDirectory();
-                              }}
-                              disabled={directoryReloading}
-                              style={{
-                                padding: '6px 14px',
-                                fontSize: '0.82rem',
-                                fontWeight: '600',
-                                borderRadius: '8px',
-                                border: '1.5px solid #cbd5e1',
-                                background: '#ffffff',
-                                color: '#1e293b',
-                                cursor: 'pointer',
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '6px',
-                                boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
-                                transition: 'all 0.15s ease',
-                                whiteSpace: 'nowrap'
-                              }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.borderColor = '#0284c7';
-                                e.currentTarget.style.color = '#0284c7';
-                                e.currentTarget.style.background = '#f0f9ff';
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.borderColor = '#cbd5e1';
-                                e.currentTarget.style.color = '#1e293b';
-                                e.currentTarget.style.background = '#ffffff';
-                              }}
-                              title="Reset Date to Today"
-                            >
-                              <RotateCcw size={14} className={directoryReloading ? 'spin-icon' : ''} />
-                              <span>{directoryReloading ? 'Resetting...' : 'Reset'}</span>
-                            </button>
-                          )}
+                    {/* Card 2: KPI Metrics Summary Statistics */}
+                    <div className="glass-panel" style={{ ...styles.dashboardPanelCard, background: '#ffffff', border: '1.5px solid #cbd5e1', boxShadow: '0 2px 8px rgba(0, 0, 0, 0.04)', width: '100%', padding: isMobile ? '14px 12px' : '18px 22px' }}>
+                      <div className="matrix-kpi-grid" style={{ margin: 0 }}>
+                        <div className="matrix-kpi-card" style={{ background: '#ffffff', border: '1.5px solid #e2e8f0' }}>
+                          <div className="matrix-kpi-icon-badge blue">
+                            <Users size={22} color="#0284c7" />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
+                              Total Students
+                            </div>
+                            <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0f172a' }}>
+                              {matrixData?.summary?.totalStudents || processedMatrixStudents.length}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="matrix-kpi-card" style={{ background: '#ffffff', border: '1.5px solid #e2e8f0' }}>
+                          <div className="matrix-kpi-icon-badge amber">
+                            <BookOpen size={22} color="#f59e0b" />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
+                              Lectures Conducted
+                            </div>
+                            <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#0f172a' }}>
+                              {matrixData?.summary?.totalLectures || matrixData?.columns?.length || 0}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="matrix-kpi-card" style={{ background: '#ffffff', border: '1.5px solid #e2e8f0' }}>
+                          <div className="matrix-kpi-icon-badge emerald">
+                            <TrendingUp size={22} color="#10b981" />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
+                              Avg Class Attendance
+                            </div>
+                            <div style={{ fontSize: '1.25rem', fontWeight: '800', color: (matrixData?.summary?.overallAttendancePct || 0) >= 75 ? '#10b981' : (matrixData?.summary?.overallAttendancePct || 0) >= 60 ? '#f59e0b' : '#ef4444' }}>
+                              {matrixData?.summary?.overallAttendancePct || 0}%
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="matrix-kpi-card" style={{ background: '#ffffff', border: '1.5px solid #e2e8f0' }}>
+                          <div className="matrix-kpi-icon-badge green">
+                            <CheckCircle size={22} color="#16a34a" />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
+                              Safe (≥ 75%)
+                            </div>
+                            <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#16a34a' }}>
+                              {matrixData?.summary?.highAttendanceCount || 0}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="matrix-kpi-card" style={{ background: '#ffffff', border: '1.5px solid #e2e8f0' }}>
+                          <div className="matrix-kpi-icon-badge red">
+                            <AlertTriangle size={22} color="#ef4444" />
+                          </div>
+                          <div>
+                            <div style={{ fontSize: '0.72rem', fontWeight: '700', color: '#64748b', textTransform: 'uppercase' }}>
+                              Short Attendance (&lt; 75%)
+                            </div>
+                            <div style={{ fontSize: '1.25rem', fontWeight: '800', color: '#ef4444' }}>
+                              {matrixData?.summary?.lowAttendanceCount || 0}
+                            </div>
+                          </div>
                         </div>
                       </div>
                     </div>
 
-                    {selectedSemFolder === null ? (
-                      <>
-                        {/* Semester Folder Cards Grid (Only Semesters with available data) */}
-                        <div className="semester-folder-grid" style={{ display: 'grid', width: '100%', boxSizing: 'border-box', marginTop: '16px' }}>
-                          {availableSemesters.length === 0 ? (
-                            <div style={{
-                              gridColumn: '1 / -1',
-                              textAlign: 'center',
-                              padding: '40px 20px',
-                              background: 'rgba(245, 158, 11, 0.04)',
-                              border: '1.5px dashed rgba(245, 158, 11, 0.25)',
-                              borderRadius: '16px',
-                              color: 'var(--text-muted)'
-                            }}>
-                              <Folder size={42} color="#f59e0b" style={{ marginBottom: '12px', opacity: 0.6 }} />
-                              <div style={{ fontWeight: '700', fontSize: '1.05rem', color: 'var(--text-primary)', marginBottom: '4px' }}>
-                                No Semester Data Available
-                              </div>
-                              <div style={{ fontSize: '0.85rem' }}>
-                                Semester folders will automatically be created here as soon as student records, faculty subjects, or attendance logs are added to the system.
-                              </div>
-                            </div>
-                          ) : (
-                            availableSemesters.map(sem => {
-                              return (
-                                <div
-                                  key={sem}
-                                  onClick={() => { setSelectedSemFolder(String(sem)); setSelectedFacultyFolder(null); setSelectedSessionFolder(null); setFolderDivFilter('ALL'); }}
-                                  style={{
-                                    background: 'rgba(245, 158, 11, 0.06)',
-                                    border: '1.5px solid rgba(245, 158, 11, 0.25)',
-                                    borderRadius: '16px',
-                                    padding: isMobile ? '14px 12px' : '22px 18px',
-                                    cursor: 'pointer',
-                                    transition: 'all 0.2s ease',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '10px'
-                                  }}
-                                  onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 30px rgba(245, 158, 11, 0.25)'; }}
-                                  onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
-                                >
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                    <Folder size={22} color="#f59e0b" style={{ flexShrink: 0 }} />
-                                    <div>
-                                      <div style={{ fontWeight: '700', fontSize: '1.05rem', color: 'var(--text-primary)', lineHeight: 1.2 }}>
-                                        Sem {sem} Folder
-                                      </div>
-                                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                                        Click to view date & session archives
-                                      </div>
-                                    </div>
-                                  </div>
-
-                                  <button
-                                    type="button"
-                                    className="btn btn-primary"
-                                    style={{ width: '100%', padding: '7px 0', fontSize: '0.8rem', marginTop: '4px' }}
-                                  >
-                                    📂 Open Sem {sem} Directory
-                                  </button>
-                                </div>
-                              );
-                            })
+                    {/* Card 4: Attendance Log Table */}
+                    <div className="glass-panel" style={{ ...styles.dashboardPanelCard, background: '#ffffff', border: '1.5px solid #cbd5e1', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.05)', width: '100%', padding: isMobile ? '8px 6px' : '14px' }}>
+                      {matrixLoading ? (
+                        <div style={{ textAlign: 'center', padding: '60px 20px', background: '#f8fafc', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+                          <RefreshCw size={36} color="#f59e0b" className="spin-icon" style={{ marginBottom: '14px' }} />
+                          <div style={{ fontSize: '1rem', fontWeight: '700', color: '#0f172a', marginBottom: '4px' }}>
+                            Loading Semester {selectedSemFolder} Attendance Sheet...
+                          </div>
+                          <div style={{ fontSize: '0.82rem', color: '#64748b' }}>
+                            Compiling all student records, conducted lectures, and punch-in timestamps.
+                          </div>
+                        </div>
+                      ) : processedMatrixStudents.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '50px 20px', background: '#f8fafc', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
+                          <Users size={38} color="#64748b" style={{ marginBottom: '10px', opacity: 0.5 }} />
+                          <div style={{ fontSize: '0.98rem', fontWeight: '700', color: '#0f172a', marginBottom: '4px' }}>
+                            No matching student records found
+                          </div>
+                          <div style={{ fontSize: '0.82rem', color: '#64748b', marginBottom: '12px' }}>
+                            Try clearing your search query or adjusting your status and division filters.
+                          </div>
+                          {matrixSearch && (
+                            <button
+                              onClick={() => setMatrixSearch('')}
+                              className="btn btn-secondary"
+                              style={{ padding: '5px 14px', fontSize: '0.8rem', background: '#f1f5f9', color: '#1e293b', border: '1px solid #cbd5e1' }}
+                            >
+                              Clear Search
+                            </button>
                           )}
                         </div>
-                      </>
-                    ) : (
-                      /* Semester Date Filter & Session Folders View (Direct Access Without Faculty Folders) */
-                      <>
+                      ) : (
+                        <div>
+                          {/* Informational Banner if no lectures conducted yet */}
+                          {(!matrixData?.columns || matrixData.columns.length === 0) && (
+                            <div style={{
+                              padding: '12px 16px',
+                              borderRadius: '10px',
+                              background: '#fef3c7',
+                              border: '1px solid #fde68a',
+                              color: '#92400e',
+                              fontSize: '0.84rem',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '10px',
+                              marginBottom: '12px'
+                            }}>
+                              <Clock size={18} color="#d97706" style={{ flexShrink: 0 }} />
+                              <div style={{ fontWeight: '500' }}>
+                                No attendance sessions have been conducted yet for Semester {selectedSemFolder}. Showing all enrolled students below. Date & Subject columns will automatically appear once lectures are conducted.
+                              </div>
+                            </div>
+                          )}
 
-
-
-
-                        {/* View 1: Session Folders Grid for Selected Semester & Date */}
-                        {!selectedSessionFolder ? (
-                          <div style={{ marginTop: '22px' }}>
-                            <h4 style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)', marginTop: '0', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <Folder size={18} color="#f59e0b" />
-                              Sessions Conducted
-                            </h4>
-
-                            {(() => {
-                              const targetDate = folderSearchDate;
-
-                              const normDate = (raw) => getLocalDateStr(raw);
-
-                              const rawCombined = [...(liveLogs || []), ...(dateLogs || [])];
-                              const seenLogKeys = new Set();
-                              const combinedLogsList = rawCombined.filter(log => {
-                                if (!log) return false;
-                                const key = log.id ? String(log.id) : `${log.enrollment_no}_${log.qr_session_id || log.otp_id}_${log.time}`;
-                                if (seenLogKeys.has(key)) return false;
-                                seenLogKeys.add(key);
-                                return true;
-                              });
-
-                              const logsForDate = combinedLogsList.filter(log => {
-                                if (String(log.semester || '').replace(/\D/g, '') !== String(selectedSemFolder || '').replace(/\D/g, '')) return false;
-
-                                if (folderDivFilter !== 'ALL' && !isDivMatch(log.division, folderDivFilter)) return false;
-                                if (targetDate) {
-                                  const d = normDate(log.date || log.created_at || getLocalDateStr(new Date()));
-                                  if (d && d !== targetDate) return false;
-                                }
-                                return true;
-                              });
-
-                              const sessionsMap = new Map();
-
-                              logsForDate.forEach(log => {
-                                let facName = log.faculty_name || (log.faculty && log.faculty.name) || log.generated_by_name || 'Faculty';
-                                let sessKey = log.qr_session_id
-                                  ? `qr_${log.qr_session_id}`
-                                  : log.otp_id
-                                    ? `otp_${log.otp_id}`
-                                    : `manual_${facName}_${log.time || log.id}`;
-
-                                if (!sessionsMap.has(sessKey)) {
-                                  let sessType = log.qr_session_id ? 'Live QR Session' : log.otp_id ? 'OTP Session' : 'Manual Session';
-
-                                  sessionsMap.set(sessKey, {
-                                    id: sessKey,
-                                    qr_session_id: log.qr_session_id || null,
-                                    otp_id: log.otp_id || null,
-                                    type: sessType,
-                                    faculty_name: facName,
-                                    division: log.division || folderDivFilter,
-                                    subject: log.subject || null,
-                                    time: log.time || 'Session',
-                                    created_at: log.date || log.created_at,
-                                    logs: []
-                                  });
-                                }
-                                sessionsMap.get(sessKey).logs.push(log);
-                              });
-
-                              // Include sessions from qrSessionHistory for this semester and date
-                              (qrSessionHistory || []).forEach(qSess => {
-                                const qSemNum = String(qSess.semester || '').replace(/\D/g, '');
-                                const targetSemNum = String(selectedSemFolder || '').replace(/\D/g, '');
-                                if (!qSemNum || qSemNum === targetSemNum) {
-                                  if (folderDivFilter === 'ALL' || isDivMatch(qSess.division, folderDivFilter)) {
-                                    const qDate = normDate(qSess.date || qSess.created_at);
-                                    if (targetDate && (!qDate || qDate !== targetDate)) return;
-
-                                    let sessKey = qSess.qr_session_id
-                                      ? `qr_${qSess.qr_session_id}`
-                                      : qSess.otp_id
-                                        ? `otp_${qSess.otp_id}`
-                                        : `sess_${qSess.id}`;
-
-                                    if (!sessionsMap.has(sessKey)) {
-                                      let sessType = qSess.qr_session_id ? 'Live QR Session' : 'OTP Session';
-                                      let formattedTime = 'Session';
-                                      if (qSess.created_at) {
-                                        try {
-                                          formattedTime = new Date(qSess.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                                        } catch (e) { }
-                                      }
-                                      sessionsMap.set(sessKey, {
-                                        id: sessKey,
-                                        qr_session_id: qSess.qr_session_id || null,
-                                        otp_id: qSess.otp_id || null,
-                                        type: sessType,
-                                        faculty_name: qSess.faculty_name || 'Faculty',
-                                        division: qSess.division || folderDivFilter,
-                                        subject: qSess.subject || null,
-                                        time: formattedTime,
-                                        created_at: qSess.date || qSess.created_at,
-                                        logs: logsForDate.filter(l =>
-                                          (qSess.qr_session_id && String(l.qr_session_id) === String(qSess.qr_session_id)) ||
-                                          (qSess.otp_id && String(l.otp_id) === String(qSess.otp_id))
-                                        )
-                                      });
-                                    }
-                                  }
-                                }
-                              });
-
-                              const sessionList = Array.from(sessionsMap.values())
-                                .filter(s => {
-                                  if (!targetDate) return true;
-                                  const sDate = normDate(s.created_at || s.date);
-                                  const hasLogsOnDate = s.logs && s.logs.length > 0;
-                                  const isCreatedOnDate = sDate && sDate === targetDate;
-                                  return hasLogsOnDate || isCreatedOnDate;
-                                })
-                                .map((s, idx) => {
-                                  const presentCount = s.logs.filter(l => l.status === 'Success').length;
-                                  const targetSemNum = String(selectedSemFolder || '').replace(/\D/g, '');
-                                  const targetClassCount = (students || []).filter(st => {
-                                    const sSemNum = String(st.semester || '').replace(/\D/g, '');
-                                    if (targetSemNum && sSemNum !== targetSemNum) return false;
-                                    return isDivMatch(st.division, s.division);
-                                  }).length;
-                                  const absentCount = Math.max(0, targetClassCount - presentCount);
-
-                                  return {
-                                    ...s,
-                                    sessionNumber: idx + 1,
-                                    title: `Session ${idx + 1}`,
-                                    presentCount,
-                                    absentCount
-                                  };
-                                });
-
-                              if (folderDateLoading || directoryReloading) {
-                                return (
-                                  <div style={{ textAlign: 'center', padding: '40px 20px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid var(--border-light)' }}>
-                                    <RefreshCw size={32} color="#f59e0b" className="spin-icon" style={{ marginBottom: '12px' }} />
-                                    <p style={{ fontSize: '0.95rem', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '4px' }}>
-                                      Loading sessions for {folderSearchDate || 'selected date'}...
-                                    </p>
-                                    <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>
-                                      Fetching semester attendance logs and session records.
-                                    </p>
-                                  </div>
-                                );
-                              }
-
-                              if (sessionList.length === 0) {
-                                return (
-                                  <div style={{ textAlign: 'center', padding: '40px 20px', background: 'rgba(255,255,255,0.02)', borderRadius: '12px', border: '1px solid var(--border-light)' }}>
-                                    <Folder size={40} color="var(--text-muted)" style={{ marginBottom: '10px', opacity: 0.5 }} />
-                                    <p style={{ fontSize: '0.95rem', fontWeight: '600', color: 'var(--text-primary)', marginBottom: '4px' }}>
-                                      No sessions conducted on {folderSearchDate || 'this date'} for Semester {selectedSemFolder}.
-                                    </p>
-                                    <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: 0 }}>
-                                      Select a different date from the date picker above to view session folders.
-                                    </p>
-                                  </div>
-                                );
-                              }
-
-                              return (
-                                <div className="semester-folder-grid" style={{ display: 'grid', width: '100%', boxSizing: 'border-box' }}>
-                                  {sessionList.map(sess => (
-                                    <div
-                                      key={sess.id}
-                                      onClick={() => {
-                                        setSelectedSessionFolder(sess);
-                                        setSessionFolderTab(sess.presentCount > 0 ? 'present' : 'absent');
-                                      }}
-                                      style={{
-                                        background: 'rgba(245, 158, 11, 0.06)',
-                                        border: '1.5px solid rgba(245, 158, 11, 0.25)',
-                                        borderRadius: '16px',
-                                        padding: '18px 16px',
-                                        cursor: 'pointer',
-                                        transition: 'all 0.2s ease',
-                                        display: 'flex',
-                                        flexDirection: 'column',
-                                        gap: '10px'
-                                      }}
-                                      onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 30px rgba(245, 158, 11, 0.25)'; }}
-                                      onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
-                                    >
-                                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '6px' }}>
-                                        <Folder size={28} color="#f59e0b" style={{ flexShrink: 0 }} />
-                                        <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                                          <span style={{ fontSize: '0.72rem', padding: '2px 6px', borderRadius: '8px', background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', fontWeight: '700', whiteSpace: 'nowrap' }} title={`${sess.presentCount} Present`}>
-                                            ✓ {sess.presentCount}
-                                          </span>
-                                          <span style={{ fontSize: '0.72rem', padding: '2px 6px', borderRadius: '8px', background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', fontWeight: '700', whiteSpace: 'nowrap' }} title={`${sess.absentCount} Absent`}>
-                                            ✕ {sess.absentCount}
-                                          </span>
-                                        </div>
-                                      </div>
-
-                                      <div>
-                                        <div style={{ fontWeight: '700', fontSize: '1.02rem', color: 'var(--text-primary)' }}>
-                                          {sess.title}
-                                        </div>
-                                        <div style={{ fontSize: '0.78rem', color: '#f59e0b', fontWeight: '600', marginTop: '2px' }}>
-                                          Faculty: {sess.faculty_name}
-                                        </div>
-                                        <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                                          Sem {selectedSemFolder} {sess.division && String(sess.division).toUpperCase() !== 'ALL' ? `(Div ${sess.division})` : '(All Div)'}
-                                        </div>
-                                        {sess.subject && (
-                                          <div style={{ fontSize: '0.82rem', color: 'var(--text-primary)', fontWeight: '700', marginTop: '4px' }}>
-                                            📚 {sess.subject}
-                                          </div>
-                                        )}
-                                      </div>
-
-                                      <button
-                                        type="button"
-                                        className="btn btn-primary"
-                                        style={{ width: '100%', padding: '6px 0', fontSize: '0.8rem', marginTop: '4px' }}
-                                      >
-                                        📂 Open {sess.title} Folder
-                                      </button>
-                                    </div>
-                                  ))}
-                                </div>
-                              );
-                            })()}
-                          </div>
-                        ) : (
-                          /* View 2: Inside Selected Session Directory */
-                          (() => {
-                            const rawPresentLogs = selectedSessionFolder.logs ? selectedSessionFolder.logs.filter(l => l.status === 'Success') : [];
-                            const seenPresentKeys = new Set();
-                            const presentLogs = rawPresentLogs.filter(l => {
-                              const key = String(l.enrollment_no || l.id || '').trim().toLowerCase();
-                              if (!key || seenPresentKeys.has(key)) return false;
-                              seenPresentKeys.add(key);
-                              return true;
-                            });
-                            const presentEnrollments = new Set(presentLogs.map(l => String(l.enrollment_no || '').trim().toLowerCase()));
-
-                            const targetSemNum = String(selectedSemFolder || '').replace(/\D/g, '');
-                            const targetStudents = (students || []).filter(s => {
-                              const sSemNum = String(s.semester || '').replace(/\D/g, '');
-                              if (targetSemNum && sSemNum !== targetSemNum) return false;
-                              return isDivMatch(s.division, selectedSessionFolder.division);
-                            });
-
-                            const absentStudents = targetStudents.filter(st => {
-                              const key = String(st.enrollment_no || '').trim().toLowerCase();
-                              return !presentEnrollments.has(key);
-                            });
-
-                            const sessSubject = selectedSessionFolder.subject ||
-                              (selectedSessionFolder.logs && selectedSessionFolder.logs.find(l => l.subject)?.subject) ||
-                              'Subject';
+                          {/* The Matrix Table Container */}
+                          {(() => {
+                            const showSemCol = !selectedSemFolder || selectedSemFolder === 'ALL';
+                            const showDivCol = !matrixDivFilter || matrixDivFilter === 'ALL';
 
                             return (
-                              <div>
-                                {/* Session Directory Header */}
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', flexWrap: 'wrap' }}>
-                                  <div style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-primary)' }}>
-                                    {selectedSessionFolder.title} (Sem {selectedSemFolder}{selectedSessionFolder.division && String(selectedSessionFolder.division).toUpperCase() !== 'ALL' ? ` Div ${selectedSessionFolder.division}` : ''})
-                                  </div>
-                                  <span style={{
-                                    fontSize: '0.85rem',
-                                    padding: '4px 12px',
-                                    borderRadius: '10px',
-                                    background: 'rgba(168, 85, 247, 0.15)',
-                                    color: '#c084fc',
-                                    border: '1px solid rgba(168, 85, 247, 0.3)',
-                                    fontWeight: '700',
-                                    marginLeft: 'auto',
-                                    display: 'inline-flex',
-                                    alignItems: 'center',
-                                    gap: '6px'
-                                  }}>
-                                    📚 {sessSubject}
-                                  </span>
-                                </div>
+                              <div className="matrix-table-wrapper">
+                                <table className="matrix-table">
+                                  <thead>
+                                    {/* Row 1: Roll No, Name, Sem (if All Sems), Div (if All Divs), Date Columns (spanning subjects), Summary Headers */}
+                                    <tr>
+                                      <th rowSpan={2} className="matrix-sticky-col-1" style={{ textAlign: 'center' }}>
+                                        Roll No
+                                      </th>
+                                      <th
+                                        rowSpan={2}
+                                        className="matrix-sticky-col-2"
+                                        style={{
+                                          ...((!showSemCol && !showDivCol) ? { borderRight: '2px solid #cbd5e1', boxShadow: '4px 0 8px -2px rgba(0, 0, 0, 0.08)' } : { borderRight: '1px solid #cbd5e1', boxShadow: 'none' })
+                                        }}
+                                      >
+                                        Student Name
+                                      </th>
+                                      {showSemCol && (
+                                        <th
+                                          rowSpan={2}
+                                          className="matrix-sticky-col-3"
+                                          style={{
+                                            left: '240px',
+                                            minWidth: '55px',
+                                            maxWidth: '55px',
+                                            width: '55px',
+                                            textAlign: 'center',
+                                            ...(!showDivCol ? { borderRight: '2px solid #cbd5e1', boxShadow: '4px 0 8px -2px rgba(0, 0, 0, 0.08)' } : { borderRight: '1px solid #cbd5e1', boxShadow: 'none' })
+                                          }}
+                                        >
+                                          Sem
+                                        </th>
+                                      )}
+                                      {showDivCol && (
+                                        <th
+                                          rowSpan={2}
+                                          className="matrix-sticky-col-3"
+                                          style={{
+                                            left: showSemCol ? '295px' : '240px',
+                                            minWidth: '55px',
+                                            maxWidth: '55px',
+                                            width: '55px',
+                                            textAlign: 'center',
+                                            borderRight: '2px solid #cbd5e1',
+                                            boxShadow: '4px 0 8px -2px rgba(0, 0, 0, 0.08)'
+                                          }}
+                                        >
+                                          Div
+                                        </th>
+                                      )}
 
-                                {/* Present / Absent Tab Switcher */}
-                                <div style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
-                                  <button
-                                    type="button"
-                                    onClick={() => setSessionFolderTab('present')}
-                                    style={{
-                                      padding: '8px 18px', borderRadius: '10px', fontWeight: '700', fontSize: '0.88rem',
-                                      cursor: 'pointer', transition: 'all 0.15s ease',
-                                      border: sessionFolderTab === 'present' ? '2px solid #22c55e' : '1px solid var(--border-light)',
-                                      background: sessionFolderTab === 'present' ? 'rgba(34, 197, 94, 0.2)' : 'rgba(255,255,255,0.05)',
-                                      color: sessionFolderTab === 'present' ? '#4ade80' : 'var(--text-secondary)',
-                                      display: 'flex', alignItems: 'center', gap: '6px'
-                                    }}
-                                  >
-                                    <CheckCircle size={16} /> Present Students ({presentLogs.length})
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => setSessionFolderTab('absent')}
-                                    style={{
-                                      padding: '8px 18px', borderRadius: '10px', fontWeight: '700', fontSize: '0.88rem',
-                                      cursor: 'pointer', transition: 'all 0.15s ease',
-                                      border: sessionFolderTab === 'absent' ? '2px solid #ef4444' : '1px solid var(--border-light)',
-                                      background: sessionFolderTab === 'absent' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(255,255,255,0.05)',
-                                      color: sessionFolderTab === 'absent' ? '#f87171' : 'var(--text-secondary)',
-                                      display: 'flex', alignItems: 'center', gap: '6px'
-                                    }}
-                                  >
-                                    <XCircle size={16} /> Absent Students ({absentStudents.length})
-                                  </button>
-                                </div>
+                                      {(matrixData?.dateGroups || []).map((grp, gIdx) => (
+                                        <th
+                                          key={grp.date || gIdx}
+                                          colSpan={grp.sessions.length}
+                                          className="matrix-date-header matrix-date-boundary"
+                                        >
+                                          📅 {grp.formattedDate || grp.date}
+                                        </th>
+                                      ))}
+                                      <th rowSpan={2} className="matrix-summary-header-p" style={{ width: '65px', textAlign: 'center', color: '#16a34a', background: '#f1f5f9', fontWeight: '800' }}>
+                                        Total P
+                                      </th>
+                                      <th rowSpan={2} className="matrix-summary-header-a" style={{ width: '65px', textAlign: 'center', color: '#dc2626', background: '#f1f5f9', fontWeight: '800' }}>
+                                        Total A
+                                      </th>
+                                      <th rowSpan={2} className="matrix-summary-header-pct" style={{ width: '75px', textAlign: 'center', color: '#d97706', background: '#f1f5f9', fontWeight: '800' }}>
+                                        % Attend
+                                      </th>
+                                    </tr>
 
-                                {/* Search Filter */}
-                                <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-                                  <div style={{ position: 'relative', flex: 1 }}>
-                                    <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                                    <input
-                                      className="glass-input"
-                                      style={{ paddingLeft: '36px', width: '100%', boxSizing: 'border-box' }}
-                                      placeholder="Search student by name or roll no..."
-                                      value={folderSearchName}
-                                      onChange={e => setFolderSearchName(e.target.value)}
-                                    />
-                                  </div>
-                                  {folderSearchName && (
-                                    <button
-                                      onClick={() => setFolderSearchName('')}
-                                      className="btn btn-secondary"
-                                      style={{ padding: '6px 12px', fontSize: '0.8rem' }}
-                                    >Clear</button>
+                                    {/* Row 2: Subject sub-headers under each Date */}
+                                    <tr>
+                                      {(matrixData?.dateGroups || []).map((grp) =>
+                                        grp.sessions.map((sess, sIdx) => {
+                                          const isDateBoundary = sIdx === grp.sessions.length - 1;
+                                          return (
+                                            <th
+                                              key={sess.columnKey || sIdx}
+                                              className={isDateBoundary ? 'matrix-date-boundary' : ''}
+                                              style={{
+                                                textAlign: 'center',
+                                                minWidth: '95px',
+                                                padding: '6px 8px'
+                                              }}
+                                              title={`${cleanSubjectTitle(sess.subject)}\nFaculty: ${sess.faculty_name}\nTime: ${sess.time}\nType: ${sess.type}`}
+                                            >
+                                              <div style={{ fontWeight: '700', fontSize: '0.78rem', color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '110px', margin: '0 auto' }}>
+                                                {cleanSubjectTitle(sess.subject)}
+                                              </div>
+                                              <div style={{ fontSize: '0.68rem', color: '#64748b', marginTop: '2px', fontWeight: '500' }}>
+                                                {sess.time || sess.type}
+                                              </div>
+                                            </th>
+                                          );
+                                        })
+                                      )}
+                                    </tr>
+                                  </thead>
+
+                                  <tbody>
+                                    {processedMatrixStudents.map((st) => (
+                                      <tr key={st.id}>
+                                        {/* Col 1: Roll No */}
+                                        <td className="matrix-sticky-col-1" style={{ fontWeight: '800', color: '#d97706', textAlign: 'center', fontSize: '0.86rem' }}>
+                                          {st.roll_no || '-'}
+                                        </td>
+
+                                        {/* Col 2: Student Name */}
+                                        <td
+                                          className="matrix-sticky-col-2"
+                                          style={{
+                                            ...((!showSemCol && !showDivCol) ? { borderRight: '2px solid #cbd5e1', boxShadow: '4px 0 8px -2px rgba(0, 0, 0, 0.08)' } : { borderRight: '1px solid #cbd5e1', boxShadow: 'none' })
+                                          }}
+                                        >
+                                          <div style={{ fontWeight: '700', fontSize: '0.84rem', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '200px' }}>
+                                            {st.name}
+                                          </div>
+                                          <div style={{ fontSize: '0.72rem', color: '#64748b', fontWeight: '500' }}>
+                                            {st.enrollment_no}
+                                          </div>
+                                        </td>
+
+                                        {/* Col 3: Semester (Sticky if All Sems) */}
+                                        {showSemCol && (
+                                          <td
+                                            className="matrix-sticky-col-3"
+                                            style={{
+                                              left: '240px',
+                                              minWidth: '55px',
+                                              maxWidth: '55px',
+                                              width: '55px',
+                                              textAlign: 'center',
+                                              ...(!showDivCol ? { borderRight: '2px solid #cbd5e1', boxShadow: '4px 0 8px -2px rgba(0, 0, 0, 0.08)' } : { borderRight: '1px solid #cbd5e1', boxShadow: 'none' })
+                                            }}
+                                          >
+                                            <span style={{ fontSize: '0.75rem', padding: '2px 6px', borderRadius: '6px', background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', fontWeight: '700' }}>
+                                              {String(st.semester || (selectedSemFolder !== 'ALL' ? selectedSemFolder : '') || '1').replace(/sem(ester)?\s*/i, '')}
+                                            </span>
+                                          </td>
+                                        )}
+
+                                        {/* Col 4: Division (Sticky if All Divs) */}
+                                        {showDivCol && (
+                                          <td
+                                            className="matrix-sticky-col-3"
+                                            style={{
+                                              left: showSemCol ? '295px' : '240px',
+                                              minWidth: '55px',
+                                              maxWidth: '55px',
+                                              width: '55px',
+                                              textAlign: 'center',
+                                              borderRight: '2px solid #cbd5e1',
+                                              boxShadow: '4px 0 8px -2px rgba(0, 0, 0, 0.08)'
+                                            }}
+                                          >
+                                            <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: '6px', background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', fontWeight: '700' }}>
+                                              {st.division || 'A'}
+                                            </span>
+                                          </td>
+                                        )}
+
+                                        {/* Date + Subject Attendance Cells */}
+                                        {(matrixData?.columns || []).map((col) => {
+                                          const cell = matrixData.attendanceMatrix?.[String(st.id)]?.[col.columnKey];
+                                          const status = cell?.status;
+                                          const isBoundary = dateBoundaryKeys.has(col.columnKey);
+
+                                          return (
+                                            <td
+                                              key={col.columnKey}
+                                              className={isBoundary ? 'matrix-date-boundary' : ''}
+                                              style={{ textAlign: 'center', padding: '6px' }}
+                                            >
+                                              {status === 'P' ? (
+                                                <span
+                                                  className="matrix-badge-p"
+                                                  onClick={() => setSelectedCellInfo({ student: st, column: col, status: 'Present', cell })}
+                                                  title={`Present: ${st.name}\nSubject: ${col.subject}\nDate: ${col.date}\nTime: ${cell?.time || col.time}\nMethod: ${cell?.method || col.type}`}
+                                                >
+                                                  P
+                                                </span>
+                                              ) : status === 'NA' ? (
+                                                <span
+                                                  className="matrix-badge-na"
+                                                  onClick={() => setSelectedCellInfo({ student: st, column: col, status: 'Not Applicable', cell })}
+                                                  title={`Not Applicable: ${st.name} (Div ${st.division || 'A'})\nSession conducted for Division ${col.division || 'Other'}\nSubject: ${col.subject}\nDate: ${col.date}`}
+                                                >
+                                                  NA
+                                                </span>
+                                              ) : (
+                                                <span
+                                                  className="matrix-badge-a"
+                                                  onClick={() => setSelectedCellInfo({ student: st, column: col, status: 'Absent', cell })}
+                                                  title={`Absent: ${st.name}\nSubject: ${col.subject}\nDate: ${col.date}`}
+                                                >
+                                                  A
+                                                </span>
+                                              )}
+                                            </td>
+                                          );
+                                        })}
+
+                                        {/* Summary Col: Present */}
+                                        <td className="matrix-summary-cell-p" style={{ textAlign: 'center', fontWeight: '800', color: '#16a34a' }}>
+                                          {st.presentCount || 0}
+                                        </td>
+
+                                        {/* Summary Col: Absent */}
+                                        <td className="matrix-summary-cell-a" style={{ textAlign: 'center', fontWeight: '800', color: '#dc2626' }}>
+                                          {st.absentCount || 0}
+                                        </td>
+
+                                        {/* Summary Col: Percentage */}
+                                        <td className="matrix-summary-cell-pct" style={{ textAlign: 'center' }}>
+                                          <span
+                                            style={{
+                                              padding: '3px 8px',
+                                              borderRadius: '8px',
+                                              fontSize: '0.78rem',
+                                              fontWeight: '800',
+                                              background: (st.pct || 0) >= 75 ? '#dcfce7' : (st.pct || 0) >= 60 ? '#fef3c7' : '#fee2e2',
+                                              color: (st.pct || 0) >= 75 ? '#15803d' : (st.pct || 0) >= 60 ? '#b45309' : '#dc2626',
+                                              border: (st.pct || 0) >= 75 ? '1px solid #86efac' : (st.pct || 0) >= 60 ? '1px solid #fde68a' : '1px solid #fca5a5'
+                                            }}
+                                          >
+                                            {st.pct || 0}%
+                                          </span>
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+
+                                  {/* Table Footer: Total Present per Subject Lecture */}
+                                  {(matrixData?.columns?.length > 0 || processedMatrixStudents.length > 0) && (
+                                    <tfoot>
+                                      <tr>
+                                        <td className="matrix-sticky-col-1" style={{ textAlign: 'center', fontWeight: '800', color: '#0f172a' }}>
+                                          Total
+                                        </td>
+                                        <td
+                                          className="matrix-sticky-col-2"
+                                          style={{
+                                            textAlign: 'left',
+                                            fontWeight: '800',
+                                            color: '#0f172a',
+                                            ...((!showSemCol && !showDivCol) ? { borderRight: '2px solid #cbd5e1', boxShadow: '4px 0 8px -2px rgba(0, 0, 0, 0.08)' } : { borderRight: '1px solid #cbd5e1', boxShadow: 'none' })
+                                          }}
+                                        >
+                                          Present per Lecture
+                                        </td>
+                                        {showSemCol && (
+                                          <td
+                                            className="matrix-sticky-col-3"
+                                            style={{
+                                              left: '240px',
+                                              minWidth: '55px',
+                                              maxWidth: '55px',
+                                              width: '55px',
+                                              textAlign: 'center',
+                                              fontWeight: '800',
+                                              color: '#64748b',
+                                              ...(!showDivCol ? { borderRight: '2px solid #cbd5e1', boxShadow: '4px 0 8px -2px rgba(0, 0, 0, 0.08)' } : { borderRight: '1px solid #cbd5e1', boxShadow: 'none' })
+                                            }}
+                                          >
+                                            -
+                                          </td>
+                                        )}
+                                        {showDivCol && (
+                                          <td
+                                            className="matrix-sticky-col-3"
+                                            style={{
+                                              left: showSemCol ? '295px' : '240px',
+                                              minWidth: '55px',
+                                              maxWidth: '55px',
+                                              width: '55px',
+                                              textAlign: 'center',
+                                              fontWeight: '800',
+                                              color: '#64748b',
+                                              borderRight: '2px solid #cbd5e1',
+                                              boxShadow: '4px 0 8px -2px rgba(0, 0, 0, 0.08)'
+                                            }}
+                                          >
+                                            -
+                                          </td>
+                                        )}
+                                        {(matrixData?.columns || []).map((col) => {
+                                          const isBoundary = dateBoundaryKeys.has(col.columnKey);
+                                          let colPresentCount = 0;
+                                          processedMatrixStudents.forEach(st => {
+                                            if (matrixData.attendanceMatrix?.[String(st.id)]?.[col.columnKey]?.status === 'P') colPresentCount++;
+                                          });
+                                          return (
+                                            <td
+                                              key={col.columnKey}
+                                              className={isBoundary ? 'matrix-date-boundary' : ''}
+                                              style={{ textAlign: 'center', fontWeight: '800', color: '#16a34a' }}
+                                            >
+                                              {colPresentCount}
+                                            </td>
+                                          );
+                                        })}
+                                        <td className="matrix-summary-cell-p" style={{ textAlign: 'center', fontWeight: '800', color: '#16a34a' }}>
+                                          {processedMatrixStudents.reduce((a, b) => a + (b.presentCount || 0), 0)}
+                                        </td>
+                                        <td className="matrix-summary-cell-a" style={{ textAlign: 'center', fontWeight: '800', color: '#dc2626' }}>
+                                          {processedMatrixStudents.reduce((a, b) => a + (b.absentCount || 0), 0)}
+                                        </td>
+                                        <td className="matrix-summary-cell-pct" style={{ textAlign: 'center', fontWeight: '800', color: '#d97706' }}>
+                                          {matrixData.summary?.overallAttendancePct || 0}%
+                                        </td>
+                                      </tr>
+                                    </tfoot>
                                   )}
-                                </div>
-
-                                {/* Tab 1: Present Students Table */}
-                                {sessionFolderTab === 'present' && (
-                                  <div style={styles.tableScrollable} className="custom-table-container">
-                                    <table className="custom-table" style={styles.table}>
-                                      <thead>
-                                        <tr>
-                                          <th style={styles.tableTh}>Roll No</th>
-                                          <th style={styles.tableTh}>Student Name</th>
-                                          <th style={styles.tableTh}>Sem & Division</th>
-                                          <th style={styles.tableTh}>Status</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {(() => {
-                                          const filteredPresent = presentLogs.filter(st => {
-                                            return !folderSearchName ||
-                                              (st.name && st.name.toLowerCase().includes(folderSearchName.toLowerCase())) ||
-                                              (st.roll_no && String(st.roll_no).includes(folderSearchName)) ||
-                                              (st.enrollment_no && st.enrollment_no.toLowerCase().includes(folderSearchName.toLowerCase()));
-                                          });
-
-                                          if (filteredPresent.length === 0) {
-                                            return (
-                                              <tr>
-                                                <td colSpan={4} style={{ ...styles.noDataRow, textAlign: 'center' }}>
-                                                  No present student records found for this session.
-                                                </td>
-                                              </tr>
-                                            );
-                                          }
-
-                                          const sortedPresent = [...filteredPresent].sort((a, b) => {
-                                            const rA = parseInt(String(a.roll_no || '').replace(/\D/g, ''), 10);
-                                            const rB = parseInt(String(b.roll_no || '').replace(/\D/g, ''), 10);
-                                            if (!isNaN(rA) && !isNaN(rB)) return rA - rB;
-                                            return String(a.roll_no || '').localeCompare(String(b.roll_no || ''), undefined, { numeric: true });
-                                          });
-
-                                          return sortedPresent.map((st, idx) => (
-                                            <tr key={st.id || idx}>
-                                              <td style={{ ...styles.tableTd, fontWeight: '700', color: 'var(--primary)' }}>{st.roll_no || '-'}</td>
-                                              <td style={{ ...styles.tableTd, fontWeight: '600' }}>{st.name}</td>
-                                              <td style={styles.tableTd}>Sem {st.semester || selectedSemFolder} {st.division ? `(Div ${st.division})` : ''}</td>
-                                              <td style={styles.tableTd}>
-                                                <span style={{ padding: '4px 10px', borderRadius: '12px', background: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', fontWeight: '700', fontSize: '0.78rem' }}>
-                                                  ✓ Present
-                                                </span>
-                                              </td>
-                                            </tr>
-                                          ));
-                                        })()}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                )}
-
-                                {/* Tab 2: Absent Students Table */}
-                                {sessionFolderTab === 'absent' && (
-                                  <div style={styles.tableScrollable} className="custom-table-container">
-                                    <table className="custom-table" style={styles.table}>
-                                      <thead>
-                                        <tr>
-                                          <th style={styles.tableTh}>Roll No</th>
-                                          <th style={styles.tableTh}>Student Name</th>
-                                          <th style={styles.tableTh}>Sem & Division</th>
-                                          <th style={styles.tableTh}>Phone Number</th>
-                                          <th style={styles.tableTh}>Status</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        {(() => {
-                                          const filteredAbsent = absentStudents.filter(st => {
-                                            return !folderSearchName ||
-                                              (st.name && st.name.toLowerCase().includes(folderSearchName.toLowerCase())) ||
-                                              (st.roll_no && String(st.roll_no).includes(folderSearchName)) ||
-                                              (st.enrollment_no && st.enrollment_no.toLowerCase().includes(folderSearchName.toLowerCase()));
-                                          });
-
-                                          if (filteredAbsent.length === 0) {
-                                            return (
-                                              <tr>
-                                                <td colSpan={5} style={{ ...styles.noDataRow, textAlign: 'center' }}>
-                                                  All students in targeted class are present for this session!
-                                                </td>
-                                              </tr>
-                                            );
-                                          }
-
-                                          const sortedAbsent = [...filteredAbsent].sort((a, b) => {
-                                            const rA = parseInt(String(a.roll_no || '').replace(/\D/g, ''), 10);
-                                            const rB = parseInt(String(b.roll_no || '').replace(/\D/g, ''), 10);
-                                            if (!isNaN(rA) && !isNaN(rB)) return rA - rB;
-                                            return String(a.roll_no || '').localeCompare(String(b.roll_no || ''), undefined, { numeric: true });
-                                          });
-
-                                          return sortedAbsent.map((st, idx) => (
-                                            <tr key={st.id || idx}>
-                                              <td style={{ ...styles.tableTd, fontWeight: '700', color: '#f87171' }}>{st.roll_no || '-'}</td>
-                                              <td style={{ ...styles.tableTd, fontWeight: '600' }}>{st.name}</td>
-                                              <td style={styles.tableTd}>Sem {st.semester || selectedSemFolder} {st.division ? `(Div ${st.division})` : ''}</td>
-                                              <td style={styles.tableTd}>{st.mobile || st.phone || '-'}</td>
-                                              <td style={styles.tableTd}>
-                                                <span style={{ padding: '4px 10px', borderRadius: '12px', background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', fontWeight: '700', fontSize: '0.78rem' }}>
-                                                  ✕ Absent
-                                                </span>
-                                              </td>
-                                            </tr>
-                                          ));
-                                        })()}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                )}
+                                </table>
                               </div>
                             );
-                          })()
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* PANEL 2: STUDENT CRUD MANAGEMENT */}
-            {activeTab === 'students' && (
-              <div style={{ ...styles.tabPanel, ...styles.studentCrudPanel }} className="glass-panel">
-                <div style={styles.crudHeader}>
-                  <div className="student-search-bar-wrapper" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', width: '100%' }}>
-                    <div style={{ ...styles.searchContainer, flex: 1, margin: 0, minWidth: '200px' }}>
-                      <Search size={18} style={styles.searchIcon} />
-                      <input
-                        type="text"
-                        className="glass-input"
-                        placeholder="Search by Name or Enrollment No..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        style={{ paddingLeft: '40px' }}
-                      />
+                          })()}
+                        </div>
+                      )}
                     </div>
                   </div>
 
+                {/* Cell Details Modal Popup */}
+                {selectedCellInfo && (
+                  <div
+                    style={{
+                      position: 'fixed',
+                      inset: 0,
+                      background: 'rgba(0, 0, 0, 0.65)',
+                      backdropFilter: 'blur(4px)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      zIndex: 999999,
+                      padding: '16px'
+                    }}
+                    onClick={() => setSelectedCellInfo(null)}
+                  >
+                    <div
+                      className="glass-panel"
+                      style={{
+                        background: '#ffffff',
+                        color: '#1e293b',
+                        borderRadius: '16px',
+                        padding: '24px',
+                        maxWidth: '440px',
+                        width: '100%',
+                        boxShadow: '0 20px 40px rgba(0,0,0,0.3)',
+                        border: '1.5px solid #cbd5e1'
+                      }}
+                      onClick={e => e.stopPropagation()}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <FileText size={20} color="#f59e0b" />
+                          <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: '700', color: '#0f172a' }}>
+                            Lecture Attendance Details
+                          </h3>
+                        </div>
+                        <AdminModalCloseBtn
+                          onClick={() => setSelectedCellInfo(null)}
+                          title="Close Details"
+                        />
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '0.88rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
+                          <span style={{ color: '#64748b', fontWeight: '600' }}>Student Name:</span>
+                          <span style={{ fontWeight: '700', color: '#0f172a' }}>{selectedCellInfo.student.name}</span>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
+                          <span style={{ color: '#64748b', fontWeight: '600' }}>Roll No / Enrollment:</span>
+                          <span style={{ fontWeight: '700', color: '#0284c7' }}>
+                            Roll {selectedCellInfo.student.roll_no || '-'} ({selectedCellInfo.student.enrollment_no})
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
+                          <span style={{ color: '#64748b', fontWeight: '600' }}>Subject:</span>
+                          <span style={{ fontWeight: '700', color: '#0f172a' }}>{cleanSubjectTitle(selectedCellInfo.column.subject)}</span>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
+                          <span style={{ color: '#64748b', fontWeight: '600' }}>Date & Time:</span>
+                          <span style={{ fontWeight: '600' }}>
+                            {selectedCellInfo.column.date} ({selectedCellInfo.cell?.time || selectedCellInfo.column.time})
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
+                          <span style={{ color: '#64748b', fontWeight: '600' }}>Faculty:</span>
+                          <span style={{ fontWeight: '600' }}>{selectedCellInfo.column.faculty_name}</span>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #f1f5f9' }}>
+                          <span style={{ color: '#64748b', fontWeight: '600' }}>Lecture Type / Mode:</span>
+                          <span style={{ fontWeight: '600' }}>{selectedCellInfo.column.type}</span>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', alignItems: 'center', marginTop: '6px' }}>
+                          <span style={{ color: '#64748b', fontWeight: '600' }}>Attendance Status:</span>
+                          {selectedCellInfo.status === 'Present' ? (
+                            <span style={{ padding: '4px 12px', borderRadius: '12px', background: '#dcfce7', color: '#15803d', fontWeight: '800', fontSize: '0.85rem' }}>
+                              ✓ PRESENT
+                            </span>
+                          ) : selectedCellInfo.status === 'Not Applicable' ? (
+                            <span style={{ padding: '4px 12px', borderRadius: '12px', background: '#f1f5f9', color: '#64748b', fontWeight: '800', fontSize: '0.82rem', border: '1px solid #cbd5e1' }}>
+                              — NOT APPLICABLE (Div {selectedCellInfo.column.division || 'Other'} Session)
+                            </span>
+                          ) : (
+                            <span style={{ padding: '4px 12px', borderRadius: '12px', background: '#fee2e2', color: '#b91c1c', fontWeight: '800', fontSize: '0.85rem' }}>
+                              ✕ ABSENT
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: '18px', textAlign: 'right' }}>
+                        <button
+                          onClick={() => setSelectedCellInfo(null)}
+                          className="btn btn-secondary"
+                          style={{ padding: '6px 18px', fontSize: '0.85rem', fontWeight: '600' }}
+                        >
+                          Close
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {activeTab === 'students' && (
+              <div style={styles.tabPanel}>
+                {/* CARD 1: ACTION BUTTONS CARD (TOP) */}
+                <div className="glass-panel desktop-student-action-card" style={{ padding: isMobile ? '14px 16px' : '18px 24px', borderRadius: '16px' }}>
                   <input
                     type="file"
                     accept=".csv,.xlsx"
@@ -8277,164 +8893,124 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     onChange={handleImportFile}
                     style={{ display: 'none' }}
                   />
-                  <div className="admin-action-btn-group desktop-student-action-group" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '10px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'nowrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', width: '100%' }}>
+                    {/* Left Actions Group */}
+                    <div className="admin-action-btn-group desktop-student-action-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       <button
+                        className="admin-glass-btn admin-glass-btn-blue"
                         onClick={() => { setShowStudentMobileActions(false); handleDownloadStudentSampleTemplate(); }}
-                        style={{
-                          padding: '8px 14px',
-                          fontSize: '0.85rem',
-                          fontWeight: '600',
-                          borderRadius: '8px',
-                          border: '1px solid rgba(168, 85, 247, 0.4)',
-                          background: 'rgba(168, 85, 247, 0.15)',
-                          color: '#c084fc',
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          transition: 'all 0.15s ease'
-                        }}
                         title="Download sample Excel file format for student import"
                       >
-                        <FileSpreadsheet size={16} color="#c084fc" />
+                        <FileSpreadsheet size={16} />
                         <span>Sample Format</span>
                       </button>
 
                       <button
+                        className="admin-glass-btn admin-glass-btn-purple"
                         onClick={() => { setShowStudentMobileActions(false); fileInputRef.current && fileInputRef.current.click(); }}
-                        style={{
-                          padding: '8px 16px',
-                          fontSize: '0.85rem',
-                          fontWeight: '700',
-                          borderRadius: '8px',
-                          border: 'none',
-                          background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
-                          color: '#ffffff',
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
-                          transition: 'all 0.15s ease'
-                        }}
                         title="Import student records batch from CSV/Excel"
                       >
-                        <Upload size={16} color="#ffffff" />
-                        <span style={{ color: '#ffffff' }}>Bulk Upload</span>
+                        <Upload size={16} />
+                        <span>Bulk Upload</span>
                       </button>
 
                       <button
+                        className="admin-glass-btn admin-glass-btn-green"
                         onClick={() => { setShowStudentMobileActions(false); handleExportStudentsData(); }}
-                        style={{
-                          padding: '8px 16px',
-                          fontSize: '0.85rem',
-                          fontWeight: '700',
-                          borderRadius: '8px',
-                          border: 'none',
-                          background: 'linear-gradient(135deg, #10b981, #059669)',
-                          color: '#ffffff',
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
-                          transition: 'all 0.15s ease'
-                        }}
                         title="Export all student records to Excel file"
                       >
-                        <Download size={16} color="#ffffff" />
-                        <span style={{ color: '#ffffff' }}>Export Data</span>
+                        <Download size={16} />
+                        <span>Export Data</span>
                       </button>
 
                       <button
+                        className="admin-glass-btn admin-glass-btn-amber"
                         onClick={() => { setShowStudentMobileActions(false); setPromoteStep(1); }}
-                        style={{
-                          padding: '8px 16px',
-                          fontSize: '0.85rem',
-                          fontWeight: '700',
-                          borderRadius: '8px',
-                          border: 'none',
-                          background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                          color: '#ffffff',
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
-                          transition: 'all 0.15s ease'
-                        }}
                         title="Promote all students to next semester (Sem 1..7 -> +1, Sem 8 -> Graduate & Remove)"
                       >
-                        <TrendingUp size={16} color="#ffffff" />
-                        <span style={{ color: '#ffffff' }}>Promote</span>
+                        <TrendingUp size={16} />
+                        <span>Promote</span>
                       </button>
 
-                      <button className="btn btn-primary full-width-mobile" onClick={() => { setShowStudentMobileActions(false); openAddModal(); }} style={{ color: '#ffffff' }}>
-                        <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Student</span>
-                      </button>
+                      {selectedStudentIds.length > 0 && (
+                        <>
+                          <button
+                            className="admin-glass-btn admin-glass-btn-amber"
+                            onClick={handleBulkResetDeviceId}
+                            title={`Reset Device ID for ${selectedStudentIds.length} selected student(s)`}
+                          >
+                            <Unlock size={16} />
+                            <span>
+                              Reset Device ID ({selectedStudentIds.length})
+                            </span>
+                          </button>
+
+                          <button
+                            className="admin-glass-btn admin-glass-btn-rose"
+                            onClick={() => handleBulkDeleteStudents(selectedStudentIds)}
+                            title={`Delete ${selectedStudentIds.length} selected student(s)`}
+                          >
+                            <Trash2 size={16} />
+                            <span>
+                              Delete ({selectedStudentIds.length})
+                            </span>
+                          </button>
+                        </>
+                      )}
                     </div>
 
-                    {selectedStudentIds.length > 0 && (
-                      <div className="desktop-only-bulk-delete-wrapper" style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '10px', width: '100%', marginTop: '6px' }}>
-                        <button
-                          onClick={handleBulkResetDeviceId}
-                          style={{
-                            padding: '9px 18px',
-                            fontSize: '0.86rem',
-                            fontWeight: '700',
-                            borderRadius: '8px',
-                            border: '1px solid #fcd34d',
-                            background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                            color: '#ffffff',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            boxShadow: '0 4px 14px rgba(245, 158, 11, 0.35)',
-                            transition: 'all 0.15s ease'
-                          }}
-                          title={`Reset Device ID for ${selectedStudentIds.length} selected student(s)`}
-                        >
-                          <Unlock size={16} color="#ffffff" />
-                          <span style={{ color: '#ffffff' }}>
-                            Reset Device ID ({selectedStudentIds.length})
-                          </span>
-                        </button>
+                    {/* Right Action Group */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
+                      <button
+                        className="admin-glass-btn admin-glass-btn-amber full-width-mobile"
+                        onClick={() => { setShowStudentMobileActions(false); openAddModal(); }}
+                      >
+                        <Plus size={16} /> <span>Add Student</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
 
-                        <button
-                          onClick={() => handleBulkDeleteStudents(selectedStudentIds)}
-                          style={{
-                            padding: '9px 20px',
-                            fontSize: '0.86rem',
-                            fontWeight: '700',
-                            borderRadius: '8px',
-                            border: 'none',
-                            background: 'linear-gradient(135deg, #ef4444, #dc2626)',
-                            color: '#ffffff',
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '8px',
-                            boxShadow: '0 4px 14px rgba(239, 68, 68, 0.4)',
-                            transition: 'all 0.15s ease'
-                          }}
-                          title={`Delete ${selectedStudentIds.length} selected student(s)`}
-                        >
-                          <Trash2 size={16} color="#ffffff" />
-                          <span style={{ color: '#ffffff' }}>
-                            Delete Selected ({selectedStudentIds.length})
-                          </span>
-                        </button>
-                      </div>
+                {/* CARD 2: SEARCH / FILTER BAR CARD (BELOW BUTTONS) */}
+                <div className="glass-panel" style={{ padding: isMobile ? '14px 16px' : '18px 24px', borderRadius: '16px' }}>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <Search size={18} style={styles.searchIcon} />
+                    <input
+                      type="text"
+                      className="glass-input"
+                      placeholder="Search by Name or Enrollment No..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      style={{ paddingLeft: '40px', paddingRight: searchQuery ? '36px' : '14px', width: '100%' }}
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => setSearchQuery('')}
+                        style={{
+                          position: 'absolute',
+                          right: '12px',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-muted)',
+                          cursor: 'pointer',
+                          padding: '4px',
+                          display: 'flex',
+                          alignItems: 'center'
+                        }}
+                        title="Clear search"
+                      >
+                        <X size={16} />
+                      </button>
                     )}
                   </div>
                 </div>
 
-                {/* Paginated Student Table Rendering */}
-                {(() => {
-                  const PAGE_SIZE = 50;
-                  const totalCount = filteredStudents.length;
+                {/* CARD 3: STUDENT DATA TABLE CARD */}
+                <div className="glass-panel" style={{ ...styles.studentCrudPanel, padding: isMobile ? '14px 10px' : '24px', borderRadius: '16px' }}>
+                  {/* Paginated Student Table Rendering */}
+                  {(() => {
+                    const PAGE_SIZE = 50;
+                    const totalCount = filteredStudents.length;
                   const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
                   const currentPage = Math.min(stuPage, totalPages);
                   const startIdx = (currentPage - 1) * PAGE_SIZE;
@@ -8464,11 +9040,9 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                                 <th>Enrollment No</th>
                                 <th>Gmail ID</th>
                                 <th>Name</th>
-                                <th>Course</th>
-                                <th>Semester</th>
-                                <th>Division</th>
+                                <th>Sem / Div</th>
                                 <th>Mobile</th>
-                                <th>Device Binding</th>
+                                <th style={{ textAlign: 'center' }}>Device Binding</th>
                                 <th>Actions</th>
                               </tr>
                             </thead>
@@ -8489,23 +9063,24 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                                     <td>{student.enrollment_no}</td>
                                     <td style={{ color: 'var(--text-secondary)', fontSize: '0.86rem' }}>{student.email || '—'}</td>
                                     <td style={{ fontWeight: 600 }}>{student.name}</td>
-                                    <td>{student.course}</td>
-                                    <td>Sem {student.semester}</td>
-                                    <td style={{ fontWeight: 600 }}>{student.division || '-'}</td>
+                                    <td style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>
+                                      Sem {student.semester} - {student.division || '-'}
+                                    </td>
                                     <td>{student.mobile}</td>
-                                    <td>
+                                    <td style={{ textAlign: 'center' }}>
                                       {student.device_id ? (
                                         <span 
                                           title={`Bound Device ID: ${student.device_id}`}
-                                          style={{ background: '#e6f4ea', color: '#137333', border: '1px solid #ceead6', padding: '3px 8px', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '700', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                          style={{ fontSize: '1.25rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', lineHeight: 1 }}
                                         >
-                                          🔒 Bound
+                                          🔒
                                         </span>
                                       ) : (
                                         <span 
-                                          style={{ background: '#fff7ed', color: '#c2410c', border: '1px solid #ffedd5', padding: '3px 8px', borderRadius: '6px', fontSize: '0.76rem', fontWeight: '700', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                          title="Unlocked / No device bound"
+                                          style={{ fontSize: '1.25rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', lineHeight: 1 }}
                                         >
-                                          🔓 Unlocked
+                                          🔓
                                         </span>
                                       )}
                                     </td>
@@ -8573,26 +9148,15 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     </>
                   );
                 })()}
+                </div>
               </div>
             )}
 
             {/* PANEL 2b: FACULTY CRUD MANAGEMENT */}
             {activeTab === 'faculty' && (
-              <div style={{ ...styles.tabPanel, ...styles.studentCrudPanel }} className="glass-panel">
-                <div style={styles.crudHeader}>
-                  <div className="student-search-bar-wrapper" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', width: '100%' }}>
-                    <div style={{ ...styles.searchContainer, flex: 1, margin: 0, minWidth: '200px' }}>
-                      <Search size={18} style={styles.searchIcon} />
-                      <input
-                        type="text"
-                        className="glass-input"
-                        placeholder="Search faculty by Name or Email..."
-                        value={facultySearchQuery}
-                        onChange={(e) => setFacultySearchQuery(e.target.value)}
-                        style={{ paddingLeft: '40px' }}
-                      />
-                    </div>
-                  </div>
+              <div style={styles.tabPanel}>
+                {/* CARD 1: ACTION BUTTONS CARD (TOP) */}
+                <div className="glass-panel desktop-student-action-card" style={{ padding: isMobile ? '14px 16px' : '18px 24px', borderRadius: '16px' }}>
                   <input
                     type="file"
                     accept=".csv,.xlsx"
@@ -8600,150 +9164,236 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     onChange={handleFacultyImportFile}
                     style={{ display: 'none' }}
                   />
-                  <div className="admin-action-btn-group desktop-student-action-group">
-                    <button
-                      onClick={() => { setShowFacultyMobileActions(false); handleDownloadFacultySampleTemplate(); }}
-                      style={{
-                        padding: '8px 14px',
-                        fontSize: '0.85rem',
-                        fontWeight: '600',
-                        borderRadius: '8px',
-                        border: '1px solid rgba(168, 85, 247, 0.4)',
-                        background: 'rgba(168, 85, 247, 0.15)',
-                        color: '#c084fc',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        transition: 'all 0.15s ease'
-                      }}
-                      title="Download sample Excel file format for faculty import"
-                    >
-                      <FileSpreadsheet size={16} color="#c084fc" />
-                      <span>Sample Format</span>
-                    </button>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', width: '100%' }}>
+                    {/* Left Actions Group */}
+                    <div className="admin-action-btn-group desktop-student-action-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        className="admin-glass-btn admin-glass-btn-blue"
+                        onClick={() => { setShowFacultyMobileActions(false); handleDownloadFacultySampleTemplate(); }}
+                        title="Download sample Excel file format for faculty import"
+                      >
+                        <FileSpreadsheet size={16} />
+                        <span>Sample Format</span>
+                      </button>
 
-                    <button
-                      onClick={() => { setShowFacultyMobileActions(false); facultyFileInputRef.current && facultyFileInputRef.current.click(); }}
-                      style={{
-                        padding: '8px 16px',
-                        fontSize: '0.85rem',
-                        fontWeight: '700',
-                        borderRadius: '8px',
-                        border: 'none',
-                        background: 'linear-gradient(135deg, #a855f7, #7e22ce)',
-                        color: '#ffffff',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        boxShadow: '0 4px 14px rgba(168, 85, 247, 0.35)',
-                        transition: 'all 0.15s ease'
-                      }}
-                      title="Import faculty batch from CSV or Excel"
-                    >
-                      <Upload size={16} color="#ffffff" />
-                      <span style={{ color: '#ffffff' }}>Bulk Upload</span>
-                    </button>
+                      <button
+                        className="admin-glass-btn admin-glass-btn-purple"
+                        onClick={() => { setShowFacultyMobileActions(false); facultyFileInputRef.current && facultyFileInputRef.current.click(); }}
+                        title="Import faculty batch from CSV or Excel"
+                      >
+                        <Upload size={16} />
+                        <span>Bulk Upload</span>
+                      </button>
 
-                    <button
-                      onClick={() => { setShowFacultyMobileActions(false); handleExportFacultyData(); }}
-                      style={{
-                        padding: '8px 16px',
-                        fontSize: '0.85rem',
-                        fontWeight: '700',
-                        borderRadius: '8px',
-                        border: 'none',
-                        background: 'linear-gradient(135deg, #10b981, #059669)',
-                        color: '#ffffff',
-                        cursor: 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        boxShadow: '0 4px 14px rgba(16, 185, 129, 0.35)',
-                        transition: 'all 0.15s ease'
-                      }}
-                      title="Export faculty records to Excel file"
-                    >
-                      <Download size={16} color="#ffffff" />
-                      <span style={{ color: '#ffffff' }}>Export</span>
-                    </button>
+                      <button
+                        className="admin-glass-btn admin-glass-btn-green"
+                        onClick={() => { setShowFacultyMobileActions(false); handleExportFacultyData(); }}
+                        title="Export faculty records to Excel file"
+                      >
+                        <Download size={16} />
+                        <span>Export</span>
+                      </button>
 
-                    <button className="btn btn-primary" onClick={() => { setShowFacultyMobileActions(false); openAddFacultyModal(); }} style={{ color: '#ffffff' }}>
-                      <Plus size={16} color="#ffffff" /> <span style={{ color: '#ffffff' }}>Add Faculty</span>
-                    </button>
+                      {selectedFacultyIds.length > 0 && (
+                        <button
+                          className="admin-glass-btn admin-glass-btn-rose"
+                          onClick={() => handleBulkDeleteFaculty(selectedFacultyIds)}
+                          title={`Delete ${selectedFacultyIds.length} selected faculty member(s)`}
+                        >
+                          <Trash2 size={16} />
+                          <span>
+                            Delete ({selectedFacultyIds.length})
+                          </span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Right Action Group */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
+                      <button
+                        className="admin-glass-btn admin-glass-btn-amber full-width-mobile"
+                        onClick={() => { setShowFacultyMobileActions(false); openAddFacultyModal(); }}
+                      >
+                        <Plus size={16} /> <span>Add Faculty</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
-                <div className="custom-table-container">
-                  {facultyLoading ? (
-                    <div style={{ textAlign: 'center', padding: '40px' }}>Loading faculty lists...</div>
-                  ) : faculties.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No faculty members found.</div>
-                  ) : (
-                    (() => {
-                      const filteredFaculties = faculties.filter(f =>
-                        (f.name && f.name.toLowerCase().includes(facultySearchQuery.toLowerCase())) ||
-                        (f.email && f.email.toLowerCase().includes(facultySearchQuery.toLowerCase()))
-                      );
+                {/* CARD 2: SEARCH / FILTER BAR CARD (BELOW BUTTONS) */}
+                <div className="glass-panel" style={{ padding: isMobile ? '14px 16px' : '18px 24px', borderRadius: '16px' }}>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <Search size={18} style={styles.searchIcon} />
+                    <input
+                      type="text"
+                      className="glass-input"
+                      placeholder="Search faculty by Name or Email..."
+                      value={facultySearchQuery}
+                      onChange={(e) => setFacultySearchQuery(e.target.value)}
+                      style={{ paddingLeft: '40px', paddingRight: facultySearchQuery ? '36px' : '14px', width: '100%' }}
+                    />
+                    {facultySearchQuery && (
+                      <button
+                        onClick={() => setFacultySearchQuery('')}
+                        style={{
+                          position: 'absolute',
+                          right: '12px',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-muted)',
+                          cursor: 'pointer',
+                          padding: '4px',
+                          display: 'flex',
+                          alignItems: 'center'
+                        }}
+                        title="Clear search"
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
+                  </div>
+                </div>
 
-                      return (
-                        <table className="custom-table">
-                          <thead>
-                            <tr>
-                              <th style={{ width: '40px', textAlign: 'center' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={filteredFaculties.length > 0 && filteredFaculties.every(f => selectedFacultyIds.includes(f.id))}
-                                  onChange={toggleSelectAllFaculty}
-                                  title="Select / Unselect All"
-                                  style={{ cursor: 'pointer', width: '16px', height: '16px' }}
-                                />
-                              </th>
-                              <th>Name</th>
-                              <th>Gmail ID</th>
-                              <th>Department</th>
-                              <th>Mobile</th>
-                              <th>Password</th>
-                              <th>Actions</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {filteredFaculties.map((fac) => {
-                              const isChecked = selectedFacultyIds.includes(fac.id);
-                              return (
-                                <tr key={fac.id} style={{ background: isChecked ? 'rgba(147, 51, 234, 0.08)' : 'transparent' }}>
-                                  <td style={{ textAlign: 'center' }}>
-                                    <input
-                                      type="checkbox"
-                                      checked={isChecked}
-                                      onChange={() => toggleSelectFaculty(fac.id)}
-                                      style={{ cursor: 'pointer', width: '16px', height: '16px' }}
-                                    />
-                                  </td>
-                                  <td style={{ fontWeight: 600 }}>{fac.name}</td>
-                                  <td style={{ color: 'var(--text-secondary)', fontSize: '0.86rem' }}>{fac.email || '—'}</td>
-                                  <td>{fac.department}</td>
-                                  <td>{fac.mobile}</td>
-                                  <td><code>{fac.plain_password}</code></td>
-                                  <td>
-                                    <div style={styles.actionButtonContainer}>
-                                      <button className="btn btn-secondary" onClick={() => openEditFacultyModal(fac)} style={styles.actionBtn} title="Edit Details">
-                                        <Edit size={14} />
-                                      </button>
-                                      <button className="btn btn-danger" onClick={() => handleDeleteFaculty(fac.id)} style={styles.actionBtn} title="Delete">
-                                        <Trash2 size={14} />
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      );
-                    })()
-                  )}
+                {/* CARD 3: FACULTY DATA TABLE CARD */}
+                <div className="glass-panel" style={{ ...styles.studentCrudPanel, padding: isMobile ? '14px 10px' : '24px', borderRadius: '16px' }}>
+                  <div className="custom-table-container">
+                    {facultyLoading ? (
+                      <div style={{ textAlign: 'center', padding: '40px' }}>Loading faculty lists...</div>
+                    ) : faculties.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No faculty members found.</div>
+                    ) : (
+                      (() => {
+                        const filteredFaculties = faculties.filter(f =>
+                          (f.name && f.name.toLowerCase().includes(facultySearchQuery.toLowerCase())) ||
+                          (f.email && f.email.toLowerCase().includes(facultySearchQuery.toLowerCase()))
+                        );
+
+                        return (
+                          <table className="custom-table">
+                            <thead>
+                              <tr>
+                                <th style={{ width: '40px', textAlign: 'center' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={filteredFaculties.length > 0 && filteredFaculties.every(f => selectedFacultyIds.includes(f.id))}
+                                    onChange={toggleSelectAllFaculty}
+                                    title="Select / Unselect All"
+                                    style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                  />
+                                </th>
+                                <th>Name</th>
+                                <th>Gmail ID</th>
+                                <th>Department</th>
+                                <th>Mobile</th>
+                                <th>Password</th>
+                                <th>Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredFaculties.map((fac) => {
+                                const isChecked = selectedFacultyIds.includes(fac.id);
+                                return (
+                                  <tr key={fac.id} style={{ background: isChecked ? 'rgba(147, 51, 234, 0.08)' : 'transparent' }}>
+                                    <td style={{ textAlign: 'center' }}>
+                                      {fac.isPrimaryAdmin || fac.id === 'admin_primary' ? (
+                                        <span title="Primary Admin Account (Protected)" style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: 'bold' }}>—</span>
+                                      ) : (
+                                        <input
+                                          type="checkbox"
+                                          checked={isChecked}
+                                          onChange={() => toggleSelectFaculty(fac.id)}
+                                          style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                        />
+                                      )}
+                                    </td>
+                                    <td style={{ fontWeight: 600 }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                        <span>{fac.name}</span>
+                                        {(fac.isPrimaryAdmin || fac.id === 'admin_primary' || String(fac.id) === '78' || (fac.email && fac.email.toLowerCase() === 'admin@ljcca.edu')) ? (
+                                          <span style={{
+                                            fontSize: '0.68rem',
+                                            fontWeight: '800',
+                                            padding: '2px 7px',
+                                            borderRadius: '6px',
+                                            background: '#fef3c7',
+                                            color: '#92400e',
+                                            border: '1px solid #fde68a',
+                                            letterSpacing: '0.04em'
+                                          }}>
+                                            {(fac.roles || []).includes('faculty') ? 'ORG ADMIN + FACULTY' : 'ORG ADMIN'}
+                                          </span>
+                                        ) : fac.roles?.includes('admin') ? (
+                                          <span style={{
+                                            fontSize: '0.68rem',
+                                            fontWeight: '800',
+                                            padding: '2px 7px',
+                                            borderRadius: '6px',
+                                            background: '#fef3c7',
+                                            color: '#92400e',
+                                            border: '1px solid #fde68a',
+                                            letterSpacing: '0.04em'
+                                          }}>
+                                            {fac.roles?.includes('faculty') ? 'FACULTY + ADMIN' : 'ADMIN'}
+                                          </span>
+                                        ) : null}
+                                      </div>
+                                    </td>
+                                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.86rem' }}>{fac.email || '—'}</td>
+                                    <td>{fac.department}</td>
+                                    <td>{fac.mobile}</td>
+                                    <td>
+                                      {(fac.isPrimaryAdmin || fac.id === 'admin_primary') ? (
+                                        <span style={{
+                                          fontSize: '0.76rem',
+                                          fontWeight: '600',
+                                          color: '#d97706',
+                                          background: 'rgba(245, 158, 11, 0.12)',
+                                          padding: '3px 8px',
+                                          borderRadius: '6px',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '5px'
+                                        }}>
+                                          <Shield size={12} /> Same as Admin Login
+                                        </span>
+                                      ) : (
+                                        <code>{fac.plain_password}</code>
+                                      )}
+                                    </td>
+                                    <td>
+                                      <div style={styles.actionButtonContainer}>
+                                        <button className="btn btn-secondary" onClick={() => openEditFacultyModal(fac)} style={styles.actionBtn} title="Edit Details">
+                                          <Edit size={14} />
+                                        </button>
+                                        <button
+                                          className="btn btn-danger"
+                                          onClick={() => {
+                                            if (fac.isPrimaryAdmin || fac.id === 'admin_primary') {
+                                              showToast('Primary Admin account cannot be deleted', 'warning');
+                                              return;
+                                            }
+                                            handleDeleteFaculty(fac.id);
+                                          }}
+                                          style={{
+                                            ...styles.actionBtn,
+                                            opacity: (fac.isPrimaryAdmin || fac.id === 'admin_primary') ? 0.35 : 1,
+                                            cursor: (fac.isPrimaryAdmin || fac.id === 'admin_primary') ? 'not-allowed' : 'pointer'
+                                          }}
+                                          title={(fac.isPrimaryAdmin || fac.id === 'admin_primary') ? "Primary Admin cannot be deleted" : "Delete"}
+                                        >
+                                          <Trash2 size={14} />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        );
+                      })()
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -8945,8 +9595,13 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       />
                     </div>
 
-                    <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '12px' }}>
-                      Save Location Coordinates
+                    <button
+                      type="submit"
+                      className="btn btn-primary"
+                      style={{ width: '100%', marginTop: '12px', opacity: locationSaving ? 0.7 : 1, cursor: locationSaving ? 'not-allowed' : 'pointer' }}
+                      disabled={locationSaving}
+                    >
+                      {locationSaving ? 'Saving Location...' : 'Save Location Coordinates'}
                     </button>
                   </form>
 
@@ -8995,7 +9650,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     </div>
 
                     <button
-                      onClick={() => setShowAddRuleModal(true)}
+                      onClick={handleOpenAddRuleModal}
                       style={{
                         padding: '10px 18px',
                         fontSize: '0.88rem',
@@ -9064,23 +9719,49 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                             </div>
                           </div>
 
-                          <button
-                            onClick={() => handleDeleteRule(rule.id)}
-                            style={{
-                              background: 'transparent',
-                              border: 'none',
-                              color: '#94a3b8',
-                              cursor: 'pointer',
-                              padding: '6px',
-                              borderRadius: '8px',
-                              transition: 'all 0.15s ease'
-                            }}
-                            onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.background = 'rgba(239, 68, 68, 0.1)'; }}
-                            onMouseLeave={(e) => { e.currentTarget.style.color = '#94a3b8'; e.currentTarget.style.background = 'transparent'; }}
-                            title="Delete Rule"
-                          >
-                            <Trash2 size={16} />
-                          </button>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <button
+                              onClick={() => handleEditRule(rule)}
+                              style={{
+                                background: 'rgba(15, 23, 42, 0.06)',
+                                border: '1px solid rgba(15, 23, 42, 0.18)',
+                                color: '#000000',
+                                cursor: 'pointer',
+                                padding: '7px 8px',
+                                borderRadius: '8px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                transition: 'all 0.15s ease'
+                              }}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = '#2563eb'; e.currentTarget.style.background = 'rgba(37, 99, 235, 0.12)'; e.currentTarget.style.borderColor = 'rgba(37, 99, 235, 0.3)'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.color = '#000000'; e.currentTarget.style.background = 'rgba(15, 23, 42, 0.06)'; e.currentTarget.style.borderColor = 'rgba(15, 23, 42, 0.18)'; }}
+                              title="Edit Rule"
+                            >
+                              <Edit size={16} color="#000000" />
+                            </button>
+
+                            <button
+                              onClick={() => handleDeleteRule(rule.id)}
+                              style={{
+                                background: 'rgba(15, 23, 42, 0.06)',
+                                border: '1px solid rgba(15, 23, 42, 0.18)',
+                                color: '#000000',
+                                cursor: 'pointer',
+                                padding: '7px 8px',
+                                borderRadius: '8px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                transition: 'all 0.15s ease'
+                              }}
+                              onMouseEnter={(e) => { e.currentTarget.style.color = '#ef4444'; e.currentTarget.style.background = 'rgba(239, 68, 68, 0.12)'; e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.3)'; }}
+                              onMouseLeave={(e) => { e.currentTarget.style.color = '#000000'; e.currentTarget.style.background = 'rgba(15, 23, 42, 0.06)'; e.currentTarget.style.borderColor = 'rgba(15, 23, 42, 0.18)'; }}
+                              title="Delete Rule"
+                            >
+                              <Trash2 size={16} color="#000000" />
+                            </button>
+                          </div>
                         </div>
                       ))
                     )}
@@ -9150,7 +9831,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     flexWrap: 'wrap',
                     gap: '16px'
                   }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', width: '100%' }}>
                       {/* Filter 1: Semester Filter */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '180px', flex: 1 }}>
                         <label style={{ fontSize: '0.82rem', fontWeight: '700', color: '#475569' }}>
@@ -9158,7 +9839,10 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         </label>
                         <select
                           value={defaulterSemFilter}
-                          onChange={(e) => setDefaulterSemFilter(e.target.value)}
+                          onChange={(e) => {
+                            setDefaulterSemFilter(e.target.value);
+                            setDefaulterPage(1);
+                          }}
                           style={{
                             padding: '10px 14px',
                             borderRadius: '10px',
@@ -9191,7 +9875,10 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         </label>
                         <select
                           value={defaulterDivFilter}
-                          onChange={(e) => setDefaulterDivFilter(e.target.value)}
+                          onChange={(e) => {
+                            setDefaulterDivFilter(e.target.value);
+                            setDefaulterPage(1);
+                          }}
                           style={{
                             padding: '10px 14px',
                             borderRadius: '10px',
@@ -9214,14 +9901,17 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         </select>
                       </div>
 
-                      {/* Filter 2: Status Filter */}
+                      {/* Filter 3: Status Filter */}
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '200px', flex: 1 }}>
                         <label style={{ fontSize: '0.82rem', fontWeight: '700', color: '#475569' }}>
                           Filter by Status
                         </label>
                         <select
                           value={defaulterStatusFilter}
-                          onChange={(e) => setDefaulterStatusFilter(e.target.value)}
+                          onChange={(e) => {
+                            setDefaulterStatusFilter(e.target.value);
+                            setDefaulterPage(1);
+                          }}
                           style={{
                             padding: '10px 14px',
                             borderRadius: '10px',
@@ -9240,31 +9930,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           <option value="CRITICAL">Defaulters Only</option>
                         </select>
                       </div>
-                    </div>
-
-                    {/* Apply Filters Button */}
-                    <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-                      <button
-                        onClick={handleApplyDefaulterFilters}
-                        style={{
-                          padding: '11px 24px',
-                          fontSize: '0.88rem',
-                          fontWeight: '700',
-                          borderRadius: '12px',
-                          border: 'none',
-                          background: 'linear-gradient(135deg, #042e6f, #09355c)',
-                          color: '#ffffff',
-                          cursor: 'pointer',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          boxShadow: '0 4px 14px rgba(4, 46, 111, 0.35)',
-                          transition: 'all 0.15s ease'
-                        }}
-                      >
-                        <Search size={16} color="#ffffff" style={{ strokeWidth: 2.5 }} />
-                        <span style={{ color: '#ffffff', fontWeight: '700', letterSpacing: '0.02em' }}>Apply Filters</span>
-                      </button>
                     </div>
                   </div>
 
@@ -9318,21 +9983,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                                 }
                               });
                             }}
-                            style={{
-                              padding: '8px 18px',
-                              fontSize: '0.82rem',
-                              fontWeight: '700',
-                              borderRadius: '8px',
-                              border: '1px solid rgba(225, 29, 72, 0.4)',
-                              background: 'rgba(225, 29, 72, 0.1)',
-                              color: '#e11d48',
-                              cursor: 'pointer',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              boxShadow: '0 2px 8px rgba(225, 29, 72, 0.15)',
-                              transition: 'all 0.15s ease'
-                            }}
+                            className="admin-glass-btn admin-glass-btn-rose"
                             title="Send SMS Notice to all listed students at once"
                           >
                             <Send size={15} />
@@ -9356,21 +10007,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                               XLSX.writeFile(workbook, `Defaulters_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
                               showToast(`Exported ${filteredDefaulterList.length} defaulters to Excel!`, 'success');
                             }}
-                            style={{
-                              padding: '8px 18px',
-                              fontSize: '0.82rem',
-                              fontWeight: '700',
-                              borderRadius: '8px',
-                              border: '1px solid rgba(16, 185, 129, 0.4)',
-                              background: 'rgba(16, 185, 129, 0.1)',
-                              color: '#059669',
-                              cursor: 'pointer',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              boxShadow: '0 2px 8px rgba(16, 185, 129, 0.15)',
-                              transition: 'all 0.15s ease'
-                            }}
+                            className="admin-glass-btn admin-glass-btn-green"
                           >
                             <Download size={15} />
                             <span>Export List</span>
@@ -9964,6 +10601,242 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     </div>
                   </div>
                 </div>
+
+                {/* VISUAL CHARTS: Attendance Overview & Students by Division */}
+                {(() => {
+                  // 1. Calculate Attendance Overview
+                  const allLogsMap = new Map();
+                  [...(liveLogs || []), ...(dateLogs || []), ...(reportData || [])].forEach(log => {
+                    if (!log) return;
+                    const key = log.id || `${log.student_id || log.enrollment_no}_${log.date}_${log.time || ''}`;
+                    if (!allLogsMap.has(key)) {
+                      allLogsMap.set(key, log);
+                    }
+                  });
+
+                  const allLogsList = Array.from(allLogsMap.values());
+                  let presentCount = 0;
+                  let absentCount = 0;
+                  let totalRecords = 0;
+
+                  if (allLogsList.length > 0) {
+                    allLogsList.forEach(l => {
+                      const status = String(l.status || '').toLowerCase();
+                      if (status === 'success' || status === 'present') {
+                        presentCount++;
+                      } else {
+                        absentCount++;
+                      }
+                    });
+                    totalRecords = allLogsList.length;
+                  } else if (defaulterStudentList && defaulterStudentList.length > 0) {
+                    defaulterStudentList.forEach(std => {
+                      if (std.hasSession) {
+                        presentCount += (std.attendedLectures || 0);
+                        absentCount += (std.absent || 0);
+                        totalRecords += (std.totalLectures || 0);
+                      }
+                    });
+                  }
+
+                  if (totalRecords === 0 && stats && (stats.totalAttendance || stats.totalLectures)) {
+                    presentCount = stats.presentToday || stats.totalAttendance || 0;
+                    totalRecords = stats.totalLectures || stats.totalStudents || (presentCount > 0 ? presentCount : 0);
+                    absentCount = Math.max(0, totalRecords - presentCount);
+                  }
+
+                  const attendanceRate = totalRecords > 0
+                    ? ((presentCount / totalRecords) * 100).toFixed(1)
+                    : '0.0';
+
+                  // 2. Calculate Students by Semester
+                  const semMap = {};
+                  (students || []).forEach(std => {
+                    let sem = String(std.semester || '1').replace(/\D/g, '') || '1';
+                    semMap[sem] = (semMap[sem] || 0) + 1;
+                  });
+
+                  const totalStudentsCount = students?.length || 0;
+                  const allSemKeys = Object.keys(semMap).map(Number).sort((a, b) => a - b);
+
+                  let semList = [];
+                  if (allSemKeys.length > 0) {
+                    semList = allSemKeys.map(semNum => {
+                      const count = semMap[semNum] || 0;
+                      const pct = totalStudentsCount > 0 ? ((count / totalStudentsCount) * 100) : 0;
+                      return {
+                        sem: semNum,
+                        label: `Semester ${semNum} (Sem ${semNum})`,
+                        count: count,
+                        pct: pct,
+                        pctFormatted: pct.toFixed(1)
+                      };
+                    });
+                  } else {
+                    semList = [1, 2, 3].map(semNum => ({
+                      sem: semNum,
+                      label: `Semester ${semNum} (Sem ${semNum})`,
+                      count: 0,
+                      pct: 0,
+                      pctFormatted: '0.0'
+                    }));
+                  }
+
+                  return (
+                    <div className="admin-reports-charts-container">
+                      {/* CARD 1: Attendance Overview */}
+                      <div className="report-chart-card">
+                        {/* Header */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                          <ClipboardList size={22} color="var(--text-primary, #0f172a)" style={{ strokeWidth: 2 }} />
+                          <h3 style={{ fontSize: '1.15rem', fontWeight: '700', color: 'var(--text-primary, #0f172a)', margin: 0, letterSpacing: '-0.01em' }}>
+                            Attendance Overview
+                          </h3>
+                        </div>
+
+                        {/* Top Large Card: Overall Attendance Rate */}
+                        <div style={{
+                          background: 'rgba(34, 197, 94, 0.12)',
+                          borderRadius: '14px',
+                          padding: '24px 16px',
+                          textAlign: 'center',
+                          marginBottom: '16px',
+                          border: '1px solid rgba(34, 197, 94, 0.18)'
+                        }}>
+                          <div style={{
+                            fontSize: '2.8rem',
+                            fontWeight: '800',
+                            color: '#16a34a',
+                            lineHeight: 1.1,
+                            letterSpacing: '-0.02em',
+                            fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
+                          }}>
+                            {attendanceRate}%
+                          </div>
+                          <div style={{
+                            fontSize: '0.95rem',
+                            fontWeight: '600',
+                            color: '#15803d',
+                            marginTop: '8px'
+                          }}>
+                            Overall Attendance Rate
+                          </div>
+                          <div style={{
+                            fontSize: '0.85rem',
+                            fontWeight: '500',
+                            color: '#16a34a',
+                            marginTop: '4px',
+                            opacity: 0.9
+                          }}>
+                            {totalRecords.toLocaleString()} total records
+                          </div>
+                        </div>
+
+                        {/* Bottom Two Mini Cards: Present & Absent */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                          {/* Present */}
+                          <div style={{
+                            background: 'rgba(34, 197, 94, 0.08)',
+                            border: '1px solid rgba(34, 197, 94, 0.18)',
+                            borderRadius: '12px',
+                            padding: '16px 18px'
+                          }}>
+                            <div style={{
+                              fontSize: '1.65rem',
+                              fontWeight: '800',
+                              color: '#16a34a',
+                              lineHeight: 1.1,
+                              letterSpacing: '-0.02em',
+                              fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
+                            }}>
+                              {presentCount.toLocaleString()}
+                            </div>
+                            <div style={{
+                              fontSize: '0.85rem',
+                              fontWeight: '600',
+                              color: '#15803d',
+                              marginTop: '4px'
+                            }}>
+                              Present
+                            </div>
+                          </div>
+
+                          {/* Absent */}
+                          <div style={{
+                            background: 'rgba(239, 68, 68, 0.08)',
+                            border: '1px solid rgba(239, 68, 68, 0.18)',
+                            borderRadius: '12px',
+                            padding: '16px 18px'
+                          }}>
+                            <div style={{
+                              fontSize: '1.65rem',
+                              fontWeight: '800',
+                              color: '#dc2626',
+                              lineHeight: 1.1,
+                              letterSpacing: '-0.02em',
+                              fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
+                            }}>
+                              {absentCount.toLocaleString()}
+                            </div>
+                            <div style={{
+                              fontSize: '0.85rem',
+                              fontWeight: '600',
+                              color: '#b91c1c',
+                              marginTop: '4px'
+                            }}>
+                              Absent
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* CARD 2: Students by Semester */}
+                      <div className="report-chart-card" style={{ display: 'flex', flexDirection: 'column' }}>
+                        {/* Header */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
+                          <GraduationCap size={22} color="var(--text-primary, #0f172a)" style={{ strokeWidth: 2 }} />
+                          <h3 style={{ fontSize: '1.15rem', fontWeight: '700', color: 'var(--text-primary, #0f172a)', margin: 0, letterSpacing: '-0.01em' }}>
+                            Students by Semester
+                          </h3>
+                        </div>
+
+                        {/* Semester Progress Rows */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', flex: 1, justifyContent: semList.length <= 3 ? 'flex-start' : 'space-between' }}>
+                          {semList.map((semItem, idx) => (
+                            <div key={'sem_' + semItem.sem + '_' + idx} style={{ width: '100%' }}>
+                              {/* Row Label & Percentage */}
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                                <span style={{ fontSize: '0.95rem', fontWeight: '600', color: 'var(--text-primary, #0f172a)' }}>
+                                  {semItem.label}
+                                </span>
+                                <span style={{ fontSize: '0.9rem', fontWeight: '500', color: 'var(--text-secondary, #64748b)' }}>
+                                  {semItem.count} ({semItem.pctFormatted}%)
+                                </span>
+                              </div>
+
+                              {/* Progress Bar Track & Fill */}
+                              <div style={{
+                                width: '100%',
+                                height: '8px',
+                                backgroundColor: 'rgba(226, 232, 240, 0.8)',
+                                borderRadius: '9999px',
+                                overflow: 'hidden'
+                              }}>
+                                <div style={{
+                                  height: '100%',
+                                  width: `${Math.min(100, Math.max(0, semItem.pct))}%`,
+                                  backgroundColor: '#3b82f6',
+                                  borderRadius: '9999px',
+                                  transition: 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)'
+                                }} />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
@@ -10110,6 +10983,95 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     </form>
                   </div>
 
+                  {/* CARD: APPEARANCE & THEME SETTINGS */}
+                  {/* CARD: THEME SETTINGS (DARK / LIGHT MODE) */}
+                  <div className="glass-panel" style={{ padding: '30px', display: 'flex', flexDirection: 'column', gap: '18px', gridColumn: '1 / -1' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '14px' }}>
+                      <div style={{
+                        background: theme === 'dark' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                        padding: '10px',
+                        borderRadius: '12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        {theme === 'dark' ? <Moon size={24} color="#818cf8" /> : <Sun size={24} color="#f59e0b" />}
+                      </div>
+                      <div>
+                        <h3 style={{ ...styles.cardTitle, margin: 0 }}>Theme & Appearance Settings</h3>
+                        <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0, marginTop: '4px' }}>
+                          Toggle between Dark Mode and Light Mode interface
+                        </p>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderRadius: '12px', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid var(--border-light)', flexWrap: 'wrap', gap: '12px' }}>
+                      <div>
+                        <div style={{ fontWeight: '700', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                          Dark Mode Theme
+                        </div>
+                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                          ON: Deep royal navy dark theme | OFF: Crisp bright light theme
+                        </div>
+                      </div>
+
+                      {/* Toggle Switch matching user photo with Moon icon inside sliding knob */}
+                      <div
+                        onClick={toggleTheme}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '12px',
+                          cursor: 'pointer',
+                          userSelect: 'none'
+                        }}
+                      >
+                        <span style={{
+                          fontSize: '0.95rem',
+                          fontWeight: '800',
+                          color: theme === 'dark' ? '#38bdf8' : '#8898aa',
+                          minWidth: '32px',
+                          textAlign: 'right'
+                        }}>
+                          {theme === 'dark' ? 'ON' : 'OFF'}
+                        </span>
+
+                        <div
+                          style={{
+                            width: '58px',
+                            height: '30px',
+                            borderRadius: '9999px',
+                            backgroundColor: theme === 'dark' ? '#1e293b' : '#334155',
+                            border: theme === 'dark' ? '1.5px solid #38bdf8' : '1.5px solid rgba(255, 255, 255, 0.15)',
+                            padding: '3px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            transition: 'all 0.25s ease',
+                            boxShadow: theme === 'dark' ? '0 0 12px rgba(56, 189, 248, 0.35)' : 'inset 0 1px 3px rgba(0,0,0,0.3)',
+                            position: 'relative'
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: '22px',
+                              height: '22px',
+                              borderRadius: '50%',
+                              backgroundColor: '#ffffff',
+                              transform: theme === 'dark' ? 'translateX(28px)' : 'translateX(0px)',
+                              transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              boxShadow: '0 2px 5px rgba(0, 0, 0, 0.35)'
+                            }}
+                          >
+                            <Moon size={13} color="#1e293b" strokeWidth={2.5} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   {/* CARD 3: MOBILE NAVIGATION SETTINGS */}
                   <div className="glass-panel" style={{ padding: '30px', display: 'flex', flexDirection: 'column', gap: '18px', gridColumn: '1 / -1' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '14px' }}>
@@ -10122,32 +11084,117 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       </div>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderRadius: '12px', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid var(--border-light)', flexWrap: 'wrap', gap: '12px' }}>
-                      <div>
-                        <div style={{ fontWeight: '700', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
-                          Bottom Floating Hamburger Button
-                        </div>
-                        <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                          ON: Bottom floating menu button | OFF: Top header banner menu button
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '16px 20px',
+                      borderRadius: '14px',
+                      background: showFloatingMobileMenu ? '#fffbeb' : '#f8fafc',
+                      border: showFloatingMobileMenu ? '1.5px solid #fcd34d' : '1.5px solid #e2e8f0',
+                      boxShadow: showFloatingMobileMenu ? '0 4px 14px rgba(245, 158, 11, 0.12)' : 'none',
+                      flexWrap: 'wrap',
+                      gap: '14px',
+                      transition: 'all 0.25s ease'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                        {showFloatingMobileMenu && (
+                          <div style={{
+                            width: '42px',
+                            height: '42px',
+                            borderRadius: '12px',
+                            background: 'linear-gradient(135deg, #fef3c7, #fde68a)',
+                            border: '1px solid #fcd34d',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            boxShadow: '0 4px 10px rgba(245, 158, 11, 0.2)',
+                            flexShrink: 0
+                          }}>
+                            <Menu size={20} color="#d97706" />
+                          </div>
+                        )}
+
+                        <div>
+                          <div style={{ fontWeight: '700', fontSize: '0.96rem', color: '#0f172a', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <span>Bottom Floating Hamburger Button</span>
+                            {showFloatingMobileMenu && (
+                              <span style={{
+                                fontSize: '0.68rem',
+                                padding: '2px 8px',
+                                borderRadius: '6px',
+                                fontWeight: '800',
+                                background: '#fef3c7',
+                                color: '#d97706',
+                                border: '1px solid #fde68a',
+                                letterSpacing: '0.5px'
+                              }}>
+                                ENABLED
+                              </span>
+                            )}
+                          </div>
+                          <div style={{ fontSize: '0.82rem', color: '#64748b', marginTop: '4px' }}>
+                            {showFloatingMobileMenu
+                              ? 'ON: Bottom floating menu button enabled'
+                              : 'ON: Bottom floating menu button | OFF: Top header banner menu button'}
+                          </div>
                         </div>
                       </div>
 
-                      <label style={{ display: 'inline-flex', alignItems: 'center', cursor: 'pointer', gap: '10px' }}>
-                        <span style={{ fontSize: '0.85rem', fontWeight: '700', color: showFloatingMobileMenu ? '#10b981' : '#64748b' }}>
-                          {showFloatingMobileMenu ? 'ON (Show)' : 'OFF (Hide)'}
+                      {/* Single Interactive ON/OFF Pill Toggle Switch */}
+                      <div
+                        onClick={handleToggleFloatingMobileMenu}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '10px',
+                          cursor: 'pointer',
+                          userSelect: 'none'
+                        }}
+                      >
+                        <span style={{
+                          fontSize: '0.9rem',
+                          fontWeight: '800',
+                          color: showFloatingMobileMenu ? '#d97706' : '#64748b',
+                          minWidth: '30px',
+                          textAlign: 'right'
+                        }}>
+                          {showFloatingMobileMenu ? 'ON' : 'OFF'}
                         </span>
-                        <input
-                          type="checkbox"
-                          checked={showFloatingMobileMenu}
-                          onChange={handleToggleFloatingMobileMenu}
+
+                        <div
                           style={{
-                            width: '44px',
-                            height: '24px',
-                            cursor: 'pointer',
-                            accentColor: '#f59e0b'
+                            width: '58px',
+                            height: '30px',
+                            borderRadius: '9999px',
+                            background: showFloatingMobileMenu ? 'linear-gradient(135deg, #f59e0b, #d97706)' : '#334155',
+                            border: showFloatingMobileMenu ? '1.5px solid #d97706' : '1.5px solid #475569',
+                            padding: '3px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            transition: 'all 0.25s ease',
+                            boxShadow: showFloatingMobileMenu ? '0 3px 10px rgba(245, 158, 11, 0.4)' : 'inset 0 1px 3px rgba(0,0,0,0.3)',
+                            position: 'relative'
                           }}
-                        />
-                      </label>
+                        >
+                          <div
+                            style={{
+                              width: '22px',
+                              height: '22px',
+                              borderRadius: '50%',
+                              backgroundColor: '#ffffff',
+                              transform: showFloatingMobileMenu ? 'translateX(28px)' : 'translateX(0px)',
+                              transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              boxShadow: '0 2px 5px rgba(0, 0, 0, 0.3)'
+                            }}
+                          >
+                            <Menu size={13} color={showFloatingMobileMenu ? '#d97706' : '#475569'} strokeWidth={2.5} />
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -10200,29 +11247,10 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   <h3 style={{ ...styles.modalTitle, margin: 0 }}>
                     {modalMode === 'add' ? 'Add New Student' : 'Edit Student Details'}
                   </h3>
-                  <button
-                    type="button"
+                  <AdminModalCloseBtn
                     onClick={() => { setShowStudentModal(false); setCreatedStudentCredentials(null); }}
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.08)',
-                      border: '1px solid var(--border-light)',
-                      borderRadius: '50%',
-                      width: '32px',
-                      height: '32px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: 'var(--text-secondary)',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      padding: 0
-                    }}
                     title="Close Form"
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)'; e.currentTarget.style.color = '#ef4444'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
-                  >
-                    <X size={18} />
-                  </button>
+                  />
                 </div>
 
                 {createdStudentCredentials ? (
@@ -10283,18 +11311,6 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     </div>
 
                     <div style={styles.formGroup}>
-                      <label style={styles.formLabel}>Roll Number (Optional)</label>
-                      <input
-                        type="text"
-                        className="glass-input"
-                        placeholder="e.g. 101"
-                        value={studentForm.roll_no || ''}
-                        onChange={(e) => setStudentForm({ ...studentForm, roll_no: e.target.value })}
-                        tabIndex={2}
-                      />
-                    </div>
-
-                    <div style={styles.formGroup}>
                       <label style={styles.formLabel}>Student Full Name *</label>
                       <input
                         type="text"
@@ -10313,7 +11329,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                           setNameTouched(true);
                         }}
                         required
-                        tabIndex={3}
+                        tabIndex={2}
                         style={nameTouched && (!studentForm.name || !studentForm.name.trim() || !/^[A-Za-z\s.'-]+$/.test(studentForm.name.trim())) ? { borderColor: '#ff4d4f', boxShadow: '0 0 0 2px rgba(255, 77, 79, 0.2)' } : {}}
                       />
                       {nameTouched && (!studentForm.name || !studentForm.name.trim()) && (
@@ -10337,7 +11353,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         value={studentForm.email || ''}
                         onChange={(e) => setStudentForm({ ...studentForm, email: e.target.value })}
                         required
-                        tabIndex={4}
+                        tabIndex={3}
                         onBlur={(e) => {
                           const val = e.target.value.trim();
                           if (val && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(val)) {
@@ -10356,7 +11372,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         value={studentForm.course}
                         onChange={(e) => setStudentForm({ ...studentForm, course: e.target.value })}
                         required
-                        tabIndex={5}
+                        tabIndex={4}
                       />
                     </div>
 
@@ -10367,7 +11383,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         onChange={(val) => setStudentForm({ ...studentForm, semester: val })}
                         placeholder="Select Semester (1-8)"
                         isDark={false}
-                        tabIndex={6}
+                        tabIndex={5}
                       />
                     </div>
 
@@ -10379,6 +11395,18 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         placeholder="e.g. A, B, Div-1 (Leave blank if no division)"
                         value={studentForm.division || ''}
                         onChange={(e) => setStudentForm({ ...studentForm, division: e.target.value })}
+                        tabIndex={6}
+                      />
+                    </div>
+
+                    <div style={styles.formGroup}>
+                      <label style={styles.formLabel}>Roll Number (Optional)</label>
+                      <input
+                        type="text"
+                        className="glass-input"
+                        placeholder="e.g. 101"
+                        value={studentForm.roll_no || ''}
+                        onChange={(e) => setStudentForm({ ...studentForm, roll_no: e.target.value })}
                         tabIndex={7}
                       />
                     </div>
@@ -10420,30 +11448,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       )}
                     </div>
 
-                    {modalMode === 'edit' && (
-                      <div style={styles.formGroup}>
-                        <label style={styles.formLabel}>
-                          Set New Custom Password (Optional)
-                        </label>
-                        <input
-                          type="text"
-                          className="glass-input"
-                          placeholder="Keep current or set new (e.g. Pass@123)"
-                          value={studentForm.password || ''}
-                          onChange={(e) => setStudentForm({ ...studentForm, password: e.target.value })}
-                          tabIndex={9}
-                          onBlur={(e) => {
-                            const val = e.target.value;
-                            if (val && val.trim()) {
-                              const check = validateStrongPassword(val);
-                              if (!check.isValid) {
-                                showToast(`⚠️ ${check.message}`, 'warning', 4000);
-                              }
-                            }
-                          }}
-                        />
-                      </div>
-                    )}
+
 
                     {modalMode === 'edit' && (
                       <div style={styles.formGroup}>
@@ -10508,43 +11513,80 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                     )}
                     </div>
 
-                    <div style={styles.modalActions}>
+                    <div style={{ ...styles.modalActions, display: 'flex', gap: '12px', width: '100%', boxSizing: 'border-box' }}>
                       <button
                         type="button"
-                        className="btn btn-secondary"
                         onClick={() => setShowStudentModal(false)}
                         tabIndex={11}
-                        style={{ outline: 'none', transition: 'all 0.15s ease' }}
+                        style={{
+                          flex: 1,
+                          height: '42px',
+                          borderRadius: '8px',
+                          border: '1.5px solid #000000',
+                          background: '#ffffff',
+                          color: '#000000',
+                          fontWeight: '600',
+                          fontSize: '0.95rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          transition: 'all 0.15s ease',
+                          outline: 'none'
+                        }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.background = '#f8fafc';
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.background = '#ffffff';
+                        }}
                         onFocus={e => {
-                          e.currentTarget.style.border = '2px solid #2563eb';
-                          e.currentTarget.style.boxShadow = '0 0 0 4px rgba(37, 99, 235, 0.35)';
-                          e.currentTarget.style.background = '#dbeafe';
-                          e.currentTarget.style.color = '#1d4ed8';
+                          e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0, 0, 0, 0.2)';
                         }}
                         onBlur={e => {
-                          e.currentTarget.style.border = '1px solid var(--border-light)';
                           e.currentTarget.style.boxShadow = 'none';
-                          e.currentTarget.style.background = 'transparent';
-                          e.currentTarget.style.color = 'var(--text-primary)';
                         }}
                       >
                         Cancel
                       </button>
                       <button
                         type="submit"
-                        className="btn btn-primary"
                         tabIndex={12}
-                        style={{ outline: 'none', transition: 'all 0.15s ease' }}
+                        style={{
+                          flex: 1,
+                          height: '42px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
+                          color: '#ffffff',
+                          fontWeight: '700',
+                          fontSize: '0.95rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          boxShadow: '0 4px 14px rgba(0, 0, 0, 0.2)',
+                          transition: 'all 0.15s ease',
+                          outline: 'none'
+                        }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.filter = 'brightness(1.05)';
+                          e.currentTarget.style.transform = 'translateY(-1px)';
+                          e.currentTarget.style.boxShadow = '0 6px 18px rgba(0, 0, 0, 0.28)';
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.filter = 'none';
+                          e.currentTarget.style.transform = 'none';
+                          e.currentTarget.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.2)';
+                        }}
                         onFocus={e => {
-                          e.currentTarget.style.border = '2px solid #0f172a';
-                          e.currentTarget.style.boxShadow = '0 0 0 5px rgba(245, 158, 11, 0.6), 0 4px 14px rgba(245, 158, 11, 0.5)';
+                          e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.25)';
                         }}
                         onBlur={e => {
-                          e.currentTarget.style.border = 'none';
-                          e.currentTarget.style.boxShadow = 'none';
+                          e.currentTarget.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.2)';
                         }}
                       >
-                        {modalMode === 'add' ? 'Generate Credentials & Save' : 'Update Student'}
+                        {modalMode === 'add' ? 'Create' : 'Save Changes'}
                       </button>
                     </div>
                   </form>
@@ -10561,29 +11603,10 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                   <h3 style={{ ...styles.modalTitle, margin: 0 }}>
                     {facultyModalMode === 'add' ? 'Add New Faculty Member' : 'Edit Faculty Details'}
                   </h3>
-                  <button
-                    type="button"
+                  <AdminModalCloseBtn
                     onClick={() => { setShowFacultyModal(false); setCreatedFacultyCredentials(null); }}
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.08)',
-                      border: '1px solid var(--border-light)',
-                      borderRadius: '50%',
-                      width: '32px',
-                      height: '32px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: 'var(--text-secondary)',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease',
-                      padding: 0
-                    }}
                     title="Close Form"
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.2)'; e.currentTarget.style.color = '#ef4444'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255, 255, 255, 0.08)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
-                  >
-                    <X size={18} />
-                  </button>
+                  />
                 </div>
 
                 {createdFacultyCredentials ? (
@@ -10695,72 +11718,241 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
 
                     <div style={styles.formGroup}>
                       <label style={styles.formLabel}>
-                        Password {facultyModalMode === 'add' ? '(Optional - Auto-generated if blank)' : '(Optional - Set custom)'}
+                        Password {facultyForm.isPrimaryAdmin ? '(Managed by Admin Account)' : facultyModalMode === 'add' ? '(Optional - Auto-generated if blank)' : '(Optional - Set custom)'}
                       </label>
-                      <input
-                        type="text"
-                        className="glass-input"
-                        placeholder={facultyModalMode === 'add' ? 'Set custom password (e.g. Pass@123)' : 'Keep current or set new (e.g. Pass@123)'}
-                        value={facultyForm.password || ''}
-                        onChange={(e) => setFacultyForm({ ...facultyForm, password: e.target.value })}
-                        tabIndex={5}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleSaveFaculty(e);
-                          }
-                        }}
-                        onBlur={(e) => {
-                          const val = e.target.value;
-                          if (val && val.trim()) {
-                            const check = validateStrongPassword(val);
-                            if (!check.isValid) {
-                              showToast(`⚠️ ${check.message}`, 'warning', 4000);
+                      {facultyForm.isPrimaryAdmin ? (
+                        <div style={{
+                          padding: '12px 16px',
+                          borderRadius: '10px',
+                          background: 'rgba(245, 158, 11, 0.08)',
+                          border: '1px solid rgba(245, 158, 11, 0.25)',
+                          color: '#d97706',
+                          fontSize: '0.88rem',
+                          fontWeight: 500,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '10px'
+                        }}>
+                          <Shield size={18} color="#d97706" />
+                          <span>Admin credentials are used for login. No separate ID or password is required.</span>
+                        </div>
+                      ) : (
+                        <input
+                          type="text"
+                          className="glass-input"
+                          placeholder={facultyModalMode === 'add' ? 'Set custom password (e.g. Pass@123)' : 'Keep current or set new (e.g. Pass@123)'}
+                          value={facultyForm.password || ''}
+                          onChange={(e) => setFacultyForm({ ...facultyForm, password: e.target.value })}
+                          tabIndex={5}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSaveFaculty(e);
                             }
-                          }
+                          }}
+                          onBlur={(e) => {
+                            const val = e.target.value;
+                            if (val && val.trim()) {
+                              const check = validateStrongPassword(val);
+                              if (!check.isValid) {
+                                showToast(`⚠️ ${check.message}`, 'warning', 4000);
+                              }
+                            }
+                          }}
+                        />
+                      )}
+                    </div>
+
+                    {/* Roles Checkboxes (Roles * -> Faculty & Admin) */}
+                    <div style={styles.formGroup}>
+                      <label style={styles.formLabel}>
+                        Roles <span style={{ color: '#f59e0b' }}>*</span>
+                      </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '24px', marginTop: '6px', padding: '2px 0' }}>
+                        <label style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          cursor: 'pointer',
+                          fontSize: '0.96rem',
+                          fontWeight: '600',
+                          color: 'var(--text-primary)',
+                          userSelect: 'none'
+                        }}>
+                          <input
+                            type="checkbox"
+                            checked={(facultyForm.roles || ['faculty']).includes('faculty')}
+                            onChange={(e) => {
+                              const currentRoles = facultyForm.roles || ['faculty'];
+                              let updated;
+                              if (e.target.checked) {
+                                updated = Array.from(new Set([...currentRoles, 'faculty']));
+                              } else {
+                                updated = currentRoles.filter(r => r !== 'faculty');
+                              }
+                              // If not primary admin and all unchecked, prevent empty roles
+                              if (!facultyForm.isPrimaryAdmin && updated.length === 0) {
+                                showToast('At least one role must be selected (Faculty or Admin)', 'warning', 2500);
+                                return;
+                              }
+                              // For primary admin, ensure 'admin' role is always kept
+                              if (facultyForm.isPrimaryAdmin) {
+                                updated = Array.from(new Set([...updated, 'admin']));
+                              }
+                              setFacultyForm({ ...facultyForm, roles: updated });
+                            }}
+                            style={{
+                              width: '18px',
+                              height: '18px',
+                              cursor: 'pointer',
+                              accentColor: '#0066ff'
+                            }}
+                          />
+                          <span>Faculty</span>
+                        </label>
+
+                        <label style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          cursor: facultyForm.isPrimaryAdmin ? 'not-allowed' : 'pointer',
+                          fontSize: '0.96rem',
+                          fontWeight: '600',
+                          color: 'var(--text-primary)',
+                          userSelect: 'none',
+                          opacity: facultyForm.isPrimaryAdmin ? 0.9 : 1
                         }}
-                      />
+                        title={facultyForm.isPrimaryAdmin ? 'Primary Admin role cannot be removed' : ''}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={facultyForm.isPrimaryAdmin ? true : (facultyForm.roles || ['faculty']).includes('admin')}
+                            disabled={facultyForm.isPrimaryAdmin}
+                            onChange={(e) => {
+                              if (facultyForm.isPrimaryAdmin) return;
+                              const currentRoles = facultyForm.roles || ['faculty'];
+                              let updated;
+                              if (e.target.checked) {
+                                updated = Array.from(new Set([...currentRoles, 'admin']));
+                              } else {
+                                updated = currentRoles.filter(r => r !== 'admin');
+                              }
+                              if (updated.length === 0) {
+                                showToast('At least one role must be selected (Faculty or Admin)', 'warning', 2500);
+                                return;
+                              }
+                              setFacultyForm({ ...facultyForm, roles: updated });
+                            }}
+                            style={{
+                              width: '18px',
+                              height: '18px',
+                              cursor: facultyForm.isPrimaryAdmin ? 'not-allowed' : 'pointer',
+                              accentColor: '#0066ff'
+                            }}
+                          />
+                          <span>Admin</span>
+                          {facultyForm.isPrimaryAdmin && (
+                            <span style={{
+                              fontSize: '0.7rem',
+                              fontWeight: 700,
+                              background: '#fef3c7',
+                              color: '#92400e',
+                              border: '1px solid #fde68a',
+                              padding: '1px 6px',
+                              borderRadius: '4px'
+                            }}>
+                              Locked
+                            </span>
+                          )}
+                        </label>
+                      </div>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px', display: 'block' }}>
+                        {facultyForm.isPrimaryAdmin
+                          ? (facultyForm.roles || []).includes('faculty')
+                            ? 'Admin + Faculty access active. You can manage tasks in Admin Panel and switch to Faculty Dashboard.'
+                            : 'Admin access only. Faculty Dashboard access is paused, but your account remains visible here in the faculty list.'
+                          : (facultyForm.roles || ['faculty']).includes('admin')
+                            ? 'This faculty member will have full access to the Admin Panel to manage tasks on your behalf.'
+                            : 'Standard faculty access to conduct lectures and mark attendance.'}
+                      </span>
                     </div>
 
                     </div>
 
-                    <div style={styles.modalActions}>
+                    <div style={{ ...styles.modalActions, display: 'flex', gap: '12px', width: '100%', boxSizing: 'border-box' }}>
                       <button
                         type="button"
-                        className="btn btn-secondary"
                         onClick={() => setShowFacultyModal(false)}
                         tabIndex={6}
-                        style={{ outline: 'none', transition: 'all 0.15s ease' }}
+                        style={{
+                          flex: 1,
+                          height: '42px',
+                          borderRadius: '8px',
+                          border: '1.5px solid #000000',
+                          background: '#ffffff',
+                          color: '#000000',
+                          fontWeight: '600',
+                          fontSize: '0.95rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          transition: 'all 0.15s ease',
+                          outline: 'none'
+                        }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.background = '#f8fafc';
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.background = '#ffffff';
+                        }}
                         onFocus={e => {
-                          e.currentTarget.style.border = '2px solid #2563eb';
-                          e.currentTarget.style.boxShadow = '0 0 0 4px rgba(37, 99, 235, 0.35)';
-                          e.currentTarget.style.background = '#dbeafe';
-                          e.currentTarget.style.color = '#1d4ed8';
+                          e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0, 0, 0, 0.2)';
                         }}
                         onBlur={e => {
-                          e.currentTarget.style.border = '1px solid var(--border-light)';
                           e.currentTarget.style.boxShadow = 'none';
-                          e.currentTarget.style.background = 'transparent';
-                          e.currentTarget.style.color = 'var(--text-primary)';
                         }}
                       >
                         Cancel
                       </button>
                       <button
                         type="submit"
-                        className="btn btn-primary"
                         tabIndex={7}
-                        style={{ outline: 'none', transition: 'all 0.15s ease' }}
+                        style={{
+                          flex: 1,
+                          height: '42px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
+                          color: '#ffffff',
+                          fontWeight: '700',
+                          fontSize: '0.95rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          boxShadow: '0 4px 14px rgba(0, 0, 0, 0.2)',
+                          transition: 'all 0.15s ease',
+                          outline: 'none'
+                        }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.filter = 'brightness(1.05)';
+                          e.currentTarget.style.transform = 'translateY(-1px)';
+                          e.currentTarget.style.boxShadow = '0 6px 18px rgba(0, 0, 0, 0.28)';
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.filter = 'none';
+                          e.currentTarget.style.transform = 'none';
+                          e.currentTarget.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.2)';
+                        }}
                         onFocus={e => {
-                          e.currentTarget.style.border = '2px solid #0f172a';
-                          e.currentTarget.style.boxShadow = '0 0 0 5px rgba(245, 158, 11, 0.6), 0 4px 14px rgba(245, 158, 11, 0.5)';
+                          e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.25)';
                         }}
                         onBlur={e => {
-                          e.currentTarget.style.border = 'none';
-                          e.currentTarget.style.boxShadow = 'none';
+                          e.currentTarget.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.2)';
                         }}
                       >
-                        {facultyModalMode === 'add' ? 'Generate Credentials & Save' : 'Update Faculty'}
+                        {facultyModalMode === 'add' ? 'Create' : 'Save Changes'}
                       </button>
                     </div>
                   </form>
@@ -11145,16 +12337,18 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                       <ShieldAlert size={20} color="#ffffff" />
                     </div>
                     <div>
-                      <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>Add Blacklist Rule</h3>
-                      <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '2px 0 0 0' }}>Configure new attendance defaulter policy</p>
+                      <h3 style={{ fontSize: '1.1rem', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+                        {editingRuleId ? 'Edit Blacklist Rule' : 'Add Blacklist Rule'}
+                      </h3>
+                      <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '2px 0 0 0' }}>
+                        {editingRuleId ? 'Modify existing attendance threshold policy' : 'Configure new attendance defaulter policy'}
+                      </p>
                     </div>
                   </div>
-                  <button
+                  <AdminModalCloseBtn
                     onClick={() => setShowAddRuleModal(false)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b', padding: '4px' }}
-                  >
-                    <X size={20} />
-                  </button>
+                    title="Close Form"
+                  />
                 </div>
 
                 {/* Modal Form */}
@@ -11371,7 +12565,7 @@ export default function AdminDashboard({ user, token, onLogout, theme, toggleThe
                         e.currentTarget.style.boxShadow = '0 4px 14px rgba(225, 29, 72, 0.4)';
                       }}
                     >
-                      Apply Rule
+                      {editingRuleId ? 'Update Rule' : 'Apply Rule'}
                     </button>
                   </div>
                 </form>

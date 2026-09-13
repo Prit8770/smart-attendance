@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
+const { notifyChange } = require('../syncEmitter');
 
 // Helper to generate a strong password meeting policy (min 8 chars, 1 uppercase, 1 digit, 1 special character)
 function generatePassword() {
@@ -48,6 +49,7 @@ const fs = require('fs');
 const path = require('path');
 
 const subjectsFilePath = path.join(__dirname, '../data/faculty_subjects.json');
+const rolesFilePath = path.join(__dirname, '../data/faculty_roles.json');
 
 const ensureSubjectsFile = () => {
   const dir = path.dirname(subjectsFilePath);
@@ -70,6 +72,43 @@ const saveFacultySubjectsMap = (map) => {
   fs.writeFileSync(subjectsFilePath, JSON.stringify(map, null, 2), 'utf8');
 };
 
+const ensureRolesFile = () => {
+  const dir = path.dirname(rolesFilePath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(rolesFilePath)) fs.writeFileSync(rolesFilePath, JSON.stringify({}), 'utf8');
+};
+
+const loadFacultyRolesMap = () => {
+  ensureRolesFile();
+  try {
+    const raw = fs.readFileSync(rolesFilePath, 'utf8');
+    return JSON.parse(raw);
+  } catch (e) {
+    return {};
+  }
+};
+
+const saveFacultyRolesMap = (map) => {
+  ensureRolesFile();
+  fs.writeFileSync(rolesFilePath, JSON.stringify(map, null, 2), 'utf8');
+};
+
+const overrideFile = path.join(__dirname, '../admin_profile_override.json');
+const getAdminOverride = () => {
+  try {
+    if (fs.existsSync(overrideFile)) {
+      return JSON.parse(fs.readFileSync(overrideFile, 'utf8'));
+    }
+  } catch (e) {}
+  return null;
+};
+
+const setAdminOverride = (data) => {
+  try {
+    fs.writeFileSync(overrideFile, JSON.stringify(data, null, 2));
+  } catch (e) {}
+};
+
 // GET all faculty
 router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
   try {
@@ -77,6 +116,12 @@ router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
     if (error) throw error;
 
     const subjectsMap = loadFacultySubjectsMap();
+    const rolesMap = loadFacultyRolesMap();
+    const override = getAdminOverride();
+
+    const adminEmail = (override?.email || 'admin@ljcca.edu').toLowerCase();
+    const adminName = override?.name || 'Administrative';
+    const adminMobile = override?.mobile || '9510479002';
 
     const formatted = (faculty || []).map(f => {
       let deptName = f.department || '';
@@ -93,24 +138,73 @@ router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
 
       const fileSubjects = subjectsMap[f.id] || subjectsMap[f.employee_no] || subjectsMap[String(f.id)] || subjectsMap[String(f.employee_no)] || [];
       const subMap = new Map();
-      if (Array.isArray(fileSubjects)) {
-        fileSubjects.forEach(s => {
-          if (s && s.subjectName) subMap.set(String(s.subjectName).trim().toLowerCase(), s);
+      const mergeSub = (s) => {
+        if (!s || (!s.subjectName && !s.name)) return;
+        const name = String(s.subjectName || s.name).trim();
+        const sem = String(s.semester || '1').replace(/\D/g, '') || '1';
+        const key = `${name.toLowerCase()}_sem_${sem}`;
+        const existing = subMap.get(key) || {};
+        const mergedCode = (s.code || s.subjectCode || s.subject_code || s.subCode || existing.code || existing.subjectCode || '').toString().trim();
+        const mergedShort = (s.shortName || s.shortCode || existing.shortName || '').toString().trim();
+        const mergedType = (s.type || s.subjectType || existing.type || 'Theory').toString().trim();
+        subMap.set(key, {
+          ...existing,
+          ...s,
+          subjectName: name,
+          shortName: mergedShort,
+          code: mergedCode,
+          subjectCode: mergedCode,
+          semester: sem,
+          type: mergedType
         });
-      }
-      if (Array.isArray(embeddedSubjects)) {
-        embeddedSubjects.forEach(s => {
-          if (s && s.subjectName) subMap.set(String(s.subjectName).trim().toLowerCase(), s);
-        });
+      };
+      const hasFileRecord = subjectsMap[f.id] !== undefined || subjectsMap[String(f.id)] !== undefined || (f.employee_no && subjectsMap[f.employee_no] !== undefined) || (f.email && subjectsMap[f.email.toLowerCase()] !== undefined);
+      if (hasFileRecord) {
+        if (Array.isArray(fileSubjects)) fileSubjects.forEach(mergeSub);
+      } else {
+        if (Array.isArray(embeddedSubjects)) embeddedSubjects.forEach(mergeSub);
       }
       const finalSubjects = Array.from(subMap.values());
+      const fRoles = rolesMap[f.id] || rolesMap[String(f.id)] || (f.email ? rolesMap[f.email.toLowerCase()] : null) || (f.username ? rolesMap[f.username.toLowerCase()] : null) || (f.employee_no ? rolesMap[f.employee_no] : null) || (f.role === 'admin' ? ['admin', 'faculty'] : ['faculty']);
+
+      const isThisAdmin = (f.email && f.email.toLowerCase() === adminEmail) || (f.username && f.username.toLowerCase() === adminEmail) || String(f.id) === '78';
+      const assignedAdminRoles = rolesMap['admin_primary'] || rolesMap[adminEmail] || rolesMap['78'] || (Array.isArray(fRoles) ? fRoles : ['admin', 'faculty']);
 
       return {
         ...f,
+        name: isThisAdmin ? adminName : f.name,
         department: deptName || 'BCA',
-        subjects: Array.isArray(finalSubjects) ? finalSubjects : []
+        mobile: isThisAdmin ? adminMobile : f.mobile,
+        subjects: Array.isArray(finalSubjects) ? finalSubjects : [],
+        roles: isThisAdmin ? assignedAdminRoles : fRoles,
+        isPrimaryAdmin: isThisAdmin,
+        plain_password: isThisAdmin ? 'Uses Admin Account (No separate password needed)' : f.plain_password
       };
     });
+
+    // Auto-include Admin as a primary faculty member so they automatically appear in faculty options
+    const hasAdminInFaculty = formatted.some(f => f.isPrimaryAdmin || (f.email && f.email.toLowerCase() === adminEmail) || (f.username && f.username.toLowerCase() === adminEmail));
+    if (!hasAdminInFaculty) {
+      const adminSubs = subjectsMap['admin_primary'] || subjectsMap[adminEmail] || [];
+      const assignedAdminRoles = rolesMap['admin_primary'] || rolesMap[adminEmail] || ['admin', 'faculty'];
+      const adminFacultyRecord = {
+        id: 'admin_primary',
+        employee_no: 'ADMIN-01',
+        name: adminName,
+        email: adminEmail,
+        department: 'BCA',
+        mobile: adminMobile,
+        username: adminEmail,
+        roles: assignedAdminRoles,
+        isPrimaryAdmin: true,
+        plain_password: 'Uses Admin Account (No separate password needed)',
+        subjects: Array.isArray(adminSubs) ? adminSubs : []
+      };
+      formatted.unshift(adminFacultyRecord);
+    } else {
+      // Sort primary admin to the very top
+      formatted.sort((a, b) => (b.isPrimaryAdmin ? 1 : 0) - (a.isPrimaryAdmin ? 1 : 0));
+    }
 
     res.json(formatted);
   } catch (err) {
@@ -121,23 +215,33 @@ router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
 
 // POST add new faculty
 router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
-  const { name, email, department, mobile, subjects, password: customPassword, employee_no: inputEmpNo, employeeNo } = req.body;
+  const { name, email, department, mobile, subjects, roles, password: customPassword, employee_no: inputEmpNo, employeeNo } = req.body;
 
   if (!name || !email || !department || !mobile) {
     return res.status(400).json({ error: 'Name, Email ID, Department, and Mobile are required' });
   }
+
+  const cleanRoles = Array.isArray(roles) && roles.length > 0
+    ? Array.from(new Set(roles.map(r => String(r).toLowerCase().trim())))
+    : ['faculty'];
 
   const employee_no = String(inputEmpNo || employeeNo || `EMP${String(Date.now()).slice(-6)}${Math.floor(100 + Math.random() * 900)}`).trim();
 
   // Clean subjects list with optional shortName support
   const cleanSubjects = Array.isArray(subjects)
     ? subjects
-        .filter(s => s && s.subjectName && String(s.subjectName).trim() !== '')
-        .map(s => ({
-          subjectName: String(s.subjectName).trim(),
-          shortName: s.shortName ? String(s.shortName).trim() : '',
-          semester: String(s.semester || '1').trim()
-        }))
+        .filter(s => s && (s.subjectName || s.name) && String(s.subjectName || s.name).trim() !== '')
+        .map(s => {
+          const c = (s.code || s.subjectCode || s.subject_code || s.subCode) ? String(s.code || s.subjectCode || s.subject_code || s.subCode).trim() : '';
+          return {
+            subjectName: String(s.subjectName || s.name).trim(),
+            shortName: s.shortName ? String(s.shortName).trim() : '',
+            code: c,
+            subjectCode: c,
+            semester: String(s.semester || '1').trim(),
+            type: (s.type || s.subjectType) ? String(s.type || s.subjectType).trim() : 'Theory'
+          };
+        })
     : [];
 
   if (customPassword && customPassword.trim() !== '') {
@@ -202,6 +306,20 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
     }
     saveFacultySubjectsMap(map);
 
+    // Save roles in persistent map
+    const rolesMap = loadFacultyRolesMap();
+    if (result && result.id) {
+      rolesMap[result.id] = cleanRoles;
+      rolesMap[String(result.id)] = cleanRoles;
+    }
+    if (cleanEmail) rolesMap[cleanEmail.toLowerCase()] = cleanRoles;
+    if (username) rolesMap[username.toLowerCase()] = cleanRoles;
+    if (employee_no) rolesMap[employee_no] = cleanRoles;
+    saveFacultyRolesMap(rolesMap);
+
+    // Emit real-time synchronization event
+    notifyChange('FACULTY_CHANGED', { action: 'create', facultyId: result ? result.id : null });
+
     res.status(201).json({
       message: 'Faculty added successfully',
       faculty: {
@@ -212,6 +330,7 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
         mobile,
         username,
         subjects: cleanSubjects,
+        roles: cleanRoles,
         plain_password: rawPassword,
         generatedPassword: rawPassword
       }
@@ -265,6 +384,9 @@ router.put('/my-subjects', authenticateJWT, async (req, res) => {
     }
     saveFacultySubjectsMap(map);
 
+    // Emit real-time synchronization event
+    notifyChange('FACULTY_CHANGED', { action: 'subjects', facultyId });
+
     res.json({
       success: true,
       message: 'Subjects updated successfully',
@@ -279,7 +401,82 @@ router.put('/my-subjects', authenticateJWT, async (req, res) => {
 // PUT edit faculty
 router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { name, email, department, mobile, subjects, resetPassword, password } = req.body;
+  const { name, email, department, mobile, subjects, roles, resetPassword, password } = req.body;
+
+  // Handle Admin's faculty details update
+  const override = getAdminOverride() || {};
+  const adminEmail = (override.email || 'admin@ljcca.edu').toLowerCase();
+  const isAdminTarget = id === 'admin_primary' || String(id).startsWith('admin') || String(id) === '78' || (req.body && req.body.isPrimaryAdmin) || (email && String(email).toLowerCase() === adminEmail);
+
+  if (isAdminTarget) {
+    const cleanDeptName = department ? String(department).split('||SUB:')[0].trim() : 'BCA';
+    const cleanSubjects = Array.isArray(subjects)
+      ? subjects
+          .filter(s => s && (s.subjectName || s.name) && String(s.subjectName || s.name).trim() !== '')
+          .map(s => {
+            const c = (s.code || s.subjectCode || s.subject_code || s.subCode) ? String(s.code || s.subjectCode || s.subject_code || s.subCode).trim() : '';
+            return {
+              subjectName: String(s.subjectName || s.name).trim(),
+              shortName: s.shortName ? String(s.shortName).trim() : '',
+              code: c,
+              subjectCode: c,
+              semester: String(s.semester || '1').trim(),
+              type: (s.type || s.subjectType) ? String(s.type || s.subjectType).trim() : 'Theory'
+            };
+          })
+      : [];
+
+    if (name && name.trim()) override.name = name.trim();
+    if (mobile && mobile.trim()) override.mobile = mobile.trim();
+    setAdminOverride(override);
+
+    const map = loadFacultySubjectsMap();
+    map['admin_primary'] = cleanSubjects;
+    map[adminEmail] = cleanSubjects;
+    map['78'] = cleanSubjects;
+    saveFacultySubjectsMap(map);
+
+    // Save roles: Admin role CANNOT be removed from primary admin, but faculty role can be toggled!
+    const passedRoles = Array.isArray(roles) ? roles : ['admin', 'faculty'];
+    const finalRoles = Array.from(new Set([...passedRoles.filter(r => r === 'faculty' || r === 'admin'), 'admin']));
+
+    const rolesMap = loadFacultyRolesMap();
+    rolesMap['admin_primary'] = finalRoles;
+    rolesMap[adminEmail] = finalRoles;
+    rolesMap['78'] = finalRoles;
+    saveFacultyRolesMap(rolesMap);
+
+    // Also update row in Supabase faculty table (id 78) if it exists
+    const encodedAdminDept = cleanSubjects.length > 0 
+      ? `${cleanDeptName}||SUB:${JSON.stringify(cleanSubjects)}||`
+      : cleanDeptName;
+    try {
+      await supabase.from('faculty').update({
+        name: override.name || 'Administrative',
+        department: encodedAdminDept,
+        mobile: override.mobile || '9510479002'
+      }).or(`id.eq.78,email.eq.${adminEmail}`);
+    } catch(e) {}
+
+    // Emit real-time synchronization event
+    notifyChange('FACULTY_CHANGED', { action: 'admin_faculty_update' });
+
+    return res.json({
+      message: 'Admin faculty details updated successfully',
+      faculty: {
+        id: id === 'admin_primary' ? 'admin_primary' : (id || '78'),
+        name: override.name || 'Administrative',
+        email: adminEmail,
+        department: cleanDeptName,
+        mobile: override.mobile || '9510479002',
+        username: adminEmail,
+        subjects: cleanSubjects,
+        roles: finalRoles,
+        isPrimaryAdmin: true,
+        plain_password: 'Uses Admin Account (No separate password needed)'
+      }
+    });
+  }
 
   if (!name || !email || !department || !mobile) {
     return res.status(400).json({ error: 'Name, Email ID, Department, and Mobile are required' });
@@ -291,13 +488,17 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const cleanSubjects = Array.isArray(subjects)
     ? subjects
         .filter(s => s && (s.subjectName || s.name) && String(s.subjectName || s.name).trim() !== '')
-        .map(s => ({
-          subjectName: String(s.subjectName || s.name).trim(),
-          shortName: s.shortName ? String(s.shortName).trim() : '',
-          code: s.code || s.subjectCode ? String(s.code || s.subjectCode).trim() : '',
-          semester: String(s.semester || '1').trim(),
-          type: s.type || s.subjectType ? String(s.type || s.subjectType).trim() : 'Theory'
-        }))
+        .map(s => {
+          const c = (s.code || s.subjectCode || s.subject_code || s.subCode) ? String(s.code || s.subjectCode || s.subject_code || s.subCode).trim() : '';
+          return {
+            subjectName: String(s.subjectName || s.name).trim(),
+            shortName: s.shortName ? String(s.shortName).trim() : '',
+            code: c,
+            subjectCode: c,
+            semester: String(s.semester || '1').trim(),
+            type: (s.type || s.subjectType) ? String(s.type || s.subjectType).trim() : 'Theory'
+          };
+        })
     : (subjects === undefined ? existingSubs : []);
 
   const cleanDeptName = String(department).split('||SUB:')[0].trim();
@@ -355,6 +556,27 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
     }
     saveFacultySubjectsMap(map);
 
+    // Save roles in persistent map if provided
+    let updatedRoles = ['faculty'];
+    if (roles !== undefined) {
+      updatedRoles = Array.isArray(roles) && roles.length > 0
+        ? Array.from(new Set(roles.map(r => String(r).toLowerCase().trim())))
+        : ['faculty'];
+      const rolesMap = loadFacultyRolesMap();
+      rolesMap[id] = updatedRoles;
+      rolesMap[String(id)] = updatedRoles;
+      if (email) rolesMap[String(email).trim().toLowerCase()] = updatedRoles;
+      if (faculty.username) rolesMap[faculty.username.toLowerCase()] = updatedRoles;
+      if (faculty.employee_no) rolesMap[faculty.employee_no] = updatedRoles;
+      saveFacultyRolesMap(rolesMap);
+    } else {
+      const rolesMap = loadFacultyRolesMap();
+      updatedRoles = rolesMap[id] || rolesMap[String(id)] || (faculty.email ? rolesMap[faculty.email.toLowerCase()] : null) || ['faculty'];
+    }
+
+    // Emit real-time synchronization event
+    notifyChange('FACULTY_CHANGED', { action: 'update', facultyId: id });
+
     res.json({
       message: 'Faculty updated successfully',
       faculty: {
@@ -363,6 +585,7 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
         department: cleanDeptName,
         mobile,
         subjects: cleanSubjects,
+        roles: updatedRoles,
         plain_password: newPassword || faculty.plain_password,
         generatedPassword: newPassword
       }
@@ -370,6 +593,117 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error('Error updating faculty:', err);
     res.status(500).json({ error: 'Failed to update faculty' });
+  }
+});
+
+// POST delete one or more subjects assigned to a faculty member
+router.post('/:id/delete-subject', authenticateJWT, requireAdmin, async (req, res) => {
+  const { id } = req.params;
+  const { subject, subjects, subKeys, subKey } = req.body;
+
+  const targetList = [];
+  if (subject && typeof subject === 'object') targetList.push(subject);
+  if (Array.isArray(subjects)) targetList.push(...subjects);
+  if (subKey) targetList.push({ subKey });
+  if (Array.isArray(subKeys)) subKeys.forEach(k => targetList.push({ subKey: k }));
+
+  if (targetList.length === 0) {
+    return res.status(400).json({ error: 'No subject specified for deletion.' });
+  }
+
+  try {
+    const override = getAdminOverride() || {};
+    const adminEmail = (override.email || 'admin@ljcca.edu').toLowerCase();
+    const isAdminTarget = id === 'admin_primary' || String(id).startsWith('admin') || String(id) === '78' || (req.body && req.body.isPrimaryAdmin);
+
+    const map = loadFacultySubjectsMap();
+    let currentSubs = [];
+    let aliasKeys = [];
+
+    let facultyRow = null;
+    if (isAdminTarget) {
+      aliasKeys = ['admin_primary', '78', adminEmail];
+      currentSubs = map['admin_primary'] || map['78'] || map[adminEmail] || [];
+    } else {
+      const { data: fac } = await supabase.from('faculty').select('*').eq('id', id).maybeSingle();
+      facultyRow = fac;
+      aliasKeys = [String(id), id];
+      if (fac?.employee_no) aliasKeys.push(fac.employee_no, String(fac.employee_no));
+      if (fac?.email) aliasKeys.push(fac.email.toLowerCase());
+      if (fac?.username) aliasKeys.push(fac.username.toLowerCase());
+
+      for (const k of aliasKeys) {
+        if (Array.isArray(map[k]) && map[k].length > 0) {
+          currentSubs = map[k];
+          break;
+        }
+      }
+      if (currentSubs.length === 0 && fac?.department && fac.department.includes('||SUB:')) {
+        try {
+          const jsonStr = fac.department.split('||SUB:')[1].split('||')[0];
+          currentSubs = JSON.parse(jsonStr);
+        } catch (e) {}
+      }
+    }
+
+    const matchesTarget = (s, idx) => {
+      const sName = String(s.subjectName || s.name || '').trim().toLowerCase();
+      const sSem = String(s.semester || '1').replace(/\D/g, '');
+      const sCode = String(s.code || s.subjectCode || s.subject_code || s.subCode || '').trim().toLowerCase();
+      const generatedKey1 = s.id || (sCode ? `${id}_${sCode}` : null) || `${id}_${sName}_${idx}`;
+      const generatedKey2 = s.id || (sCode ? `admin_primary_${sCode}` : null) || `admin_primary_${sName}_${idx}`;
+      const generatedKey3 = s.id || (sCode ? `78_${sCode}` : null) || `78_${sName}_${idx}`;
+
+      for (const t of targetList) {
+        if (!t) continue;
+        const tKey = t.subKey || t.id || t.key;
+        if (tKey && (tKey === generatedKey1 || tKey === generatedKey2 || tKey === generatedKey3 || tKey === sCode || tKey === s.id)) {
+          return true;
+        }
+        const tName = String(t.subjectName || t.name || '').trim().toLowerCase();
+        const tSem = String(t.semester || '1').replace(/\D/g, '');
+        const tCode = String(t.code || t.subjectCode || t.subject_code || t.subCode || '').trim().toLowerCase();
+        if (tName && sName === tName) {
+          if (!tSem || sSem === tSem) {
+            if (!tCode || !sCode || sCode === tCode) return true;
+          }
+        }
+        if (tCode && sCode && sCode === tCode) return true;
+      }
+      return false;
+    };
+
+    const remainingSubs = currentSubs.filter((s, idx) => !matchesTarget(s, idx));
+
+    // Update faculty_subjects.json for all alias keys
+    aliasKeys.forEach(k => {
+      map[k] = remainingSubs;
+    });
+    saveFacultySubjectsMap(map);
+
+    // Update Supabase department column
+    if (isAdminTarget) {
+      const cleanDept = 'BCA';
+      const encodedDept = remainingSubs.length > 0 ? `${cleanDept}||SUB:${JSON.stringify(remainingSubs)}||` : cleanDept;
+      try {
+        await supabase.from('faculty').update({ department: encodedDept }).or(`id.eq.78,email.eq.${adminEmail}`);
+      } catch (e) {}
+    } else if (facultyRow) {
+      const cleanDept = String(facultyRow.department || 'BCA').split('||SUB:')[0].trim();
+      const encodedDept = remainingSubs.length > 0 ? `${cleanDept}||SUB:${JSON.stringify(remainingSubs)}||` : cleanDept;
+      await supabase.from('faculty').update({ department: encodedDept }).eq('id', id);
+    }
+
+    notifyChange('FACULTY_CHANGED', { action: 'delete_subject', facultyId: id });
+
+    res.json({
+      success: true,
+      message: 'Subject(s) deleted successfully',
+      subjects: remainingSubs
+    });
+  } catch (err) {
+    console.error('Error deleting subject:', err);
+    res.status(500).json({ error: 'Failed to delete subject' });
   }
 });
 
@@ -382,7 +716,8 @@ router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
   }
 
   try {
-    for (const id of facultyIds) {
+    const targetIds = (facultyIds || []).filter(id => id !== 'admin_primary' && !String(id).startsWith('admin') && String(id) !== '78');
+    for (const id of targetIds) {
       const { data: qrSessions } = await supabase.from('qr_sessions').select('id').eq('created_by_faculty_id', id);
       const qrIds = (qrSessions || []).map(q => q.id);
 
@@ -401,6 +736,9 @@ router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
       await supabase.from('faculty').delete().eq('id', id);
     }
 
+    // Emit real-time synchronization event
+    notifyChange('FACULTY_CHANGED', { action: 'bulk_delete' });
+
     res.json({ success: true, message: `Successfully deleted ${facultyIds.length} faculty member(s).` });
   } catch (err) {
     console.error('Bulk delete faculty error:', err);
@@ -414,6 +752,10 @@ router.delete('/:id', authenticateJWT, requireAdmin, async (req, res) => {
 
   if (!id) {
     return res.status(400).json({ error: 'Faculty ID is required.' });
+  }
+
+  if (id === 'admin_primary' || String(id).startsWith('admin') || String(id) === '78') {
+    return res.status(400).json({ error: 'Primary Admin account cannot be deleted.' });
   }
 
   try {
@@ -461,6 +803,9 @@ router.delete('/:id', authenticateJWT, requireAdmin, async (req, res) => {
     } catch (e) {
       console.error('Error updating subjects map after deletion:', e);
     }
+
+    // Emit real-time synchronization event
+    notifyChange('FACULTY_CHANGED', { action: 'delete', facultyId: id });
 
     res.json({ success: true, message: 'Faculty member deleted successfully.' });
   } catch (err) {
@@ -537,6 +882,9 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
     }
 
     saveFacultySubjectsMap(subjectsMap);
+
+    // Emit real-time synchronization event
+    notifyChange('FACULTY_CHANGED', { action: 'import' });
 
     res.json({ success: true, successCount, errors });
   } catch (err) {
