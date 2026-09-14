@@ -44,9 +44,9 @@ export default function SemesterAttendanceMatrix({
   dateLogs = [],
   qrSessionHistory = []
 }) {
-  // Semester State (default to first available semester)
+  // Semester State
   const [selectedSem, setSelectedSem] = useState(() => {
-    return semNumber ? String(semNumber) : (availableSemesters && availableSemesters[0] ? String(availableSemesters[0]) : '1');
+    return semNumber ? String(semNumber) : '1';
   });
 
   // Keep selectedSem synced if parent prop semNumber changes
@@ -252,12 +252,15 @@ export default function SemesterAttendanceMatrix({
     return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
   }, [availableSemesters, studentsList]);
 
-  // Auto-sync selectedSem to first available semester if invalid or not set
+  // Auto-sync selectedSem so a valid semester is always selected (never 'ALL')
   useEffect(() => {
-    if (allSemestersList.length > 0 && (!selectedSem || selectedSem === 'ALL' || !allSemestersList.includes(selectedSem))) {
-      setSelectedSem(allSemestersList[0]);
+    if (allSemestersList && allSemestersList.length > 0) {
+      if (!selectedSem || selectedSem === 'ALL' || !allSemestersList.includes(selectedSem)) {
+        const defaultSem = allSemestersList.includes('1') ? '1' : allSemestersList[0];
+        setSelectedSem(defaultSem);
+      }
     }
-  }, [allSemestersList]);
+  }, [allSemestersList, selectedSem]);
 
   // Dynamic list of available subjects for subject filter dropdown (Strictly assigned subjects for this faculty)
   const availableFilterSubjects = useMemo(() => {
@@ -508,7 +511,8 @@ export default function SemesterAttendanceMatrix({
     setMatrixStartDate('');
     setMatrixEndDate('');
     setMatrixSingleDate('');
-    setSelectedSem(allSemestersList[0] || '1');
+    const defaultSem = (allSemestersList && allSemestersList.length > 0) ? (allSemestersList.includes('1') ? '1' : allSemestersList[0]) : '1';
+    setSelectedSem(defaultSem);
     setMatrixDivFilter('ALL');
     setMatrixSubjectFilter('ALL');
     setMatrixStatusFilter('ALL');
@@ -629,7 +633,7 @@ export default function SemesterAttendanceMatrix({
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Folder size={14} color="#f59e0b" />
               <select
-                value={selectedSem || (allSemestersList[0] || '1')}
+                value={selectedSem || (allSemestersList && allSemestersList.length > 0 ? (allSemestersList.includes('1') ? '1' : allSemestersList[0]) : '1')}
                 onChange={e => {
                   setSelectedSem(e.target.value);
                   setMatrixSearch('');
@@ -639,7 +643,7 @@ export default function SemesterAttendanceMatrix({
                 }}
                 style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
               >
-                {allSemestersList.map(sem => (
+                {(allSemestersList.length > 0 ? allSemestersList : ['1', '2', '3', '4', '5', '6', '7', '8']).map(sem => (
                   <option key={sem} value={sem}>Semester {sem}</option>
                 ))}
               </select>

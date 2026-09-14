@@ -438,9 +438,22 @@ export default function AdminDashboard({
 
   useEffect(() => {
     if (activeTab === 'attendance_logs') {
-      fetchSemesterMatrix(selectedSemFolder || 'ALL');
+      const targetSem = (selectedSemFolder && selectedSemFolder !== 'ALL')
+        ? selectedSemFolder
+        : (availableSemesters && availableSemesters.length > 0 ? (availableSemesters.includes('1') ? '1' : availableSemesters[0]) : '1');
+      fetchSemesterMatrix(targetSem);
     }
   }, [activeTab, selectedSemFolder, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
+
+  // Ensure a valid semester is always selected in attendance logs (never 'ALL')
+  useEffect(() => {
+    if (availableSemesters && availableSemesters.length > 0) {
+      if (!selectedSemFolder || selectedSemFolder === 'ALL' || !availableSemesters.includes(selectedSemFolder)) {
+        const defaultSem = availableSemesters.includes('1') ? '1' : availableSemesters[0];
+        setSelectedSemFolder(defaultSem);
+      }
+    }
+  }, [availableSemesters, selectedSemFolder]);
 
 
   const handleReloadDirectory = async () => {
@@ -8225,7 +8238,7 @@ export default function AdminDashboard({
                               }}
                               style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
                             >
-                              {availableSemesters.map(sem => (
+                              {(availableSemesters && availableSemesters.length > 0 ? availableSemesters : ['1', '2', '3', '4', '5', '6', '7', '8']).map(sem => (
                                 <option key={sem} value={sem}>Semester {sem}</option>
                               ))}
                             </select>
