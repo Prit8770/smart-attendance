@@ -415,6 +415,7 @@ router.post('/submit', authenticateJWT, async (req, res) => {
     insertPayload[attendanceLinkCol] = attendanceLinkId;
 
     await supabase.from('attendance').insert([insertPayload]);
+    invalidateMatrixCache();
 
     if (status === 'Success') {
       res.json({
@@ -546,6 +547,7 @@ router.post('/manual', authenticateJWT, requireAdmin, async (req, res) => {
 
     const { error } = await supabase.from('attendance').insert([insertPayload]);
     if (error) throw error;
+    invalidateMatrixCache();
 
     res.json({ success: true, message: 'Manual attendance recorded successfully.' });
   } catch (err) {
@@ -583,6 +585,7 @@ router.post('/manual/undo', authenticateJWT, requireAdmin, async (req, res) => {
 
     const { error } = await supabase.from('attendance').delete().eq('id', toDelete.id);
     if (error) throw error;
+    invalidateMatrixCache();
 
     res.json({ success: true, message: 'Attendance removed / set to Absent.' });
   } catch (err) {
@@ -1665,6 +1668,34 @@ router.get('/subject-breakdown', authenticateJWT, async (req, res) => {
   }
 });
 
+// In-Memory Cache for Semester Attendance Matrix to eliminate DB aggregation delays
+const semesterMatrixCache = new Map();
+const SEMESTER_MATRIX_CACHE_TTL = 45000; // 45 seconds cache
+
+function getMatrixCache(key) {
+  const cached = semesterMatrixCache.get(key);
+  if (cached && (Date.now() - cached.timestamp < SEMESTER_MATRIX_CACHE_TTL)) {
+    return cached.data;
+  }
+  semesterMatrixCache.delete(key);
+  return null;
+}
+
+function setMatrixCache(key, data) {
+  semesterMatrixCache.set(key, {
+    timestamp: Date.now(),
+    data
+  });
+  if (semesterMatrixCache.size > 50) {
+    const oldestKey = semesterMatrixCache.keys().next().value;
+    semesterMatrixCache.delete(oldestKey);
+  }
+}
+
+function invalidateMatrixCache() {
+  semesterMatrixCache.clear();
+}
+
 // GET Semester Master Attendance Matrix (Date-Wise Subject Grid)
 router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) => {
   const { semester, division, startDate, endDate, date, subject } = req.query;
@@ -1672,6 +1703,13 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
   const semParam = semester ? String(semester).trim() : 'ALL';
   const isAllSem = semParam === 'ALL' || semParam === '' || semParam.toLowerCase() === 'all';
   const semNum = isAllSem ? 'ALL' : semParam.replace(/\D/g, '').trim();
+
+  // Return cached result if available to make sidebar switching instantaneous (< 5ms)
+  const cacheKey = req.originalUrl || req.url;
+  const cachedData = getMatrixCache(cacheKey);
+  if (cachedData) {
+    return res.json(cachedData);
+  }
 
   try {
     const localMeta = getLocalSessionMetaMap();
@@ -2030,7 +2068,7 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
     });
     const availableDivisions = Array.from(availableDivsSet).sort();
 
-    res.json({
+    const responsePayload = {
       success: true,
       semester: semNum,
       students: studentMatrixRows,
@@ -2046,7 +2084,10 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
         highAttendanceCount: studentMatrixRows.filter(s => s.pct >= 75).length,
         lowAttendanceCount: studentMatrixRows.filter(s => s.pct < 75).length
       }
-    });
+    };
+
+    setMatrixCache(cacheKey, responsePayload);
+    res.json(responsePayload);
   } catch (err) {
     console.error('Error fetching semester attendance matrix:', err);
     res.status(500).json({ error: 'Failed to generate semester attendance matrix.' });
