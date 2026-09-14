@@ -240,8 +240,8 @@ export default function AdminDashboard({
     showToast('Functionality available in Faculty Dashboard', 'error');
   };
 
-  // Master Attendance Matrix States
-  const [selectedSemFolder, setSelectedSemFolder] = useState('ALL');
+  // Master Attendance Matrix States (default to first available semester)
+  const [selectedSemFolder, setSelectedSemFolder] = useState('1');
   const [matrixData, setMatrixData] = useState(null);
   const [matrixLoading, setMatrixLoading] = useState(false);
   const [matrixPage, setMatrixPage] = useState(1);
@@ -442,10 +442,17 @@ export default function AdminDashboard({
     }
   }, [activeTab, selectedSemFolder, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
 
+  // Keep selectedSemFolder aligned with availableSemesters
+  useEffect(() => {
+    if (availableSemesters.length > 0 && (!selectedSemFolder || selectedSemFolder === 'ALL' || !availableSemesters.includes(selectedSemFolder))) {
+      setSelectedSemFolder(availableSemesters[0]);
+    }
+  }, [availableSemesters]);
+
   // Automatically reset matrix filters when navigating away from attendance logs
   useEffect(() => {
     if (activeTab !== 'attendance_logs') {
-      setSelectedSemFolder('ALL');
+      setSelectedSemFolder(availableSemesters[0] || '1');
       setMatrixSearch('');
     }
   }, [activeTab]);
@@ -8207,7 +8214,7 @@ export default function AdminDashboard({
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <Folder size={14} color="#f59e0b" />
                             <select
-                              value={selectedSemFolder || 'ALL'}
+                              value={selectedSemFolder || (availableSemesters[0] || '1')}
                               onChange={e => {
                                 setSelectedSemFolder(e.target.value);
                                 setMatrixSearch('');
@@ -8217,7 +8224,6 @@ export default function AdminDashboard({
                               }}
                               style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
                             >
-                              <option value="ALL">All Semesters</option>
                               {availableSemesters.map(sem => (
                                 <option key={sem} value={sem}>Semester {sem}</option>
                               ))}
@@ -8281,7 +8287,7 @@ export default function AdminDashboard({
                             setMatrixStartDate('');
                             setMatrixEndDate('');
                             setMatrixSingleDate('');
-                            setSelectedSemFolder('ALL');
+                            setSelectedSemFolder(availableSemesters[0] || '1');
                             setMatrixDivFilter('ALL');
                             setMatrixSubjectFilter('ALL');
                             setMatrixStatusFilter('ALL');

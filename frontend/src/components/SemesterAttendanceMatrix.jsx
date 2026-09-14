@@ -44,9 +44,9 @@ export default function SemesterAttendanceMatrix({
   dateLogs = [],
   qrSessionHistory = []
 }) {
-  // Semester State
+  // Semester State (default to first available semester)
   const [selectedSem, setSelectedSem] = useState(() => {
-    return semNumber ? String(semNumber) : 'ALL';
+    return semNumber ? String(semNumber) : (availableSemesters && availableSemesters[0] ? String(availableSemesters[0]) : '1');
   });
 
   // Keep selectedSem synced if parent prop semNumber changes
@@ -252,9 +252,9 @@ export default function SemesterAttendanceMatrix({
     return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
   }, [availableSemesters, studentsList]);
 
-  // Auto-sync selectedSem if allSemestersList has exactly 1 semester
+  // Auto-sync selectedSem to first available semester if invalid or not set
   useEffect(() => {
-    if (allSemestersList.length === 1 && selectedSem !== allSemestersList[0]) {
+    if (allSemestersList.length > 0 && (!selectedSem || selectedSem === 'ALL' || !allSemestersList.includes(selectedSem))) {
       setSelectedSem(allSemestersList[0]);
     }
   }, [allSemestersList]);
@@ -508,7 +508,7 @@ export default function SemesterAttendanceMatrix({
     setMatrixStartDate('');
     setMatrixEndDate('');
     setMatrixSingleDate('');
-    setSelectedSem(allSemestersList.length === 1 ? allSemestersList[0] : 'ALL');
+    setSelectedSem(allSemestersList[0] || '1');
     setMatrixDivFilter('ALL');
     setMatrixSubjectFilter('ALL');
     setMatrixStatusFilter('ALL');
@@ -629,7 +629,7 @@ export default function SemesterAttendanceMatrix({
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Folder size={14} color="#f59e0b" />
               <select
-                value={selectedSem || 'ALL'}
+                value={selectedSem || (allSemestersList[0] || '1')}
                 onChange={e => {
                   setSelectedSem(e.target.value);
                   setMatrixSearch('');
@@ -639,11 +639,6 @@ export default function SemesterAttendanceMatrix({
                 }}
                 style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
               >
-                {allSemestersList.length > 1 && (
-                  <option value="ALL">
-                    {availableSemesters && availableSemesters.length > 0 ? 'All Assigned Semesters' : 'All Semesters'}
-                  </option>
-                )}
                 {allSemestersList.map(sem => (
                   <option key={sem} value={sem}>Semester {sem}</option>
                 ))}
