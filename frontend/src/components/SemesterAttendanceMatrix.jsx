@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Search, X, RotateCcw, RefreshCw, Folder, Layers, BookOpen,
   Filter, Calendar, Users, TrendingUp, CheckCircle, AlertTriangle,
-  Clock, FileText, ArrowLeft, ArrowUpDown
+  Clock, FileText, ArrowLeft
 } from 'lucide-react';
 import AdminModalCloseBtn from './AdminModalCloseBtn';
 
@@ -696,22 +696,6 @@ export default function SemesterAttendanceMatrix({
               </select>
             </div>
 
-            {/* Sort Selector */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <ArrowUpDown size={14} color="#64748b" />
-              <select
-                value={matrixSortBy}
-                onChange={e => setMatrixSortBy(e.target.value)}
-                style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
-              >
-                <option value="roll_asc">Roll No (Ascending)</option>
-                <option value="roll_desc">Roll No (Descending)</option>
-                <option value="name_asc">Name (A-Z)</option>
-                <option value="name_desc">Name (Z-A)</option>
-                <option value="pct_desc">Attendance % (High to Low)</option>
-                <option value="pct_asc">Attendance % (Low to High)</option>
-              </select>
-            </div>
           </div>
 
           {/* Reset Filters Button */}

@@ -89,11 +89,26 @@ router.post('/login', async (req, res) => {
   try {
     const cleanId = rawId.toLowerCase();
 
+    // Helper with single quick auto-retry for Supabase cold start / network blips
+    const queryWithRetry = async (queryFn) => {
+      try {
+        const res = await queryFn();
+        if (res && res.error && (res.error.message?.includes('fetch') || res.error.message?.includes('timeout') || res.error.code === '57014')) {
+          await new Promise(r => setTimeout(r, 100));
+          return await queryFn();
+        }
+        return res;
+      } catch (err) {
+        await new Promise(r => setTimeout(r, 100));
+        return await queryFn();
+      }
+    };
+
     // Query admin, faculty, and student tables concurrently in parallel for maximum speed
     const [adminRes, facultyRes, studentRes] = await Promise.all([
-      supabase.from('admin').select('*').eq('email', cleanId).maybeSingle(),
-      supabase.from('faculty').select('*').or(`email.eq.${cleanId},username.eq.${rawId}`).maybeSingle(),
-      supabase.from('students').select('*').or(`email.eq.${cleanId},username.eq.${rawId},enrollment_no.eq.${rawId}`).maybeSingle()
+      queryWithRetry(() => supabase.from('admin').select('*').eq('email', cleanId).maybeSingle()),
+      queryWithRetry(() => supabase.from('faculty').select('*').or(`email.eq.${cleanId},username.eq.${rawId}`).maybeSingle()),
+      queryWithRetry(() => supabase.from('students').select('*').or(`email.eq.${cleanId},username.eq.${rawId},enrollment_no.eq.${rawId}`).maybeSingle())
     ]);
 
     const admin = adminRes?.data;

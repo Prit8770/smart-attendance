@@ -24,6 +24,24 @@ export default function Login({ onLoginSuccess, onBack }) {
   };
 
   useEffect(() => {
+    // Check if browser autofilled credentials on initial render or page switch
+    const syncAutofill = () => {
+      const u = document.getElementById('username')?.value;
+      const p = document.getElementById('password')?.value;
+      if (u) setIdentifier(prev => prev || u);
+      if (p) setPassword(prev => prev || p);
+    };
+
+    syncAutofill();
+    const timer1 = setTimeout(syncAutofill, 150);
+    const timer2 = setTimeout(syncAutofill, 500);
+    return () => {
+      clearTimeout(timer1);
+      clearTimeout(timer2);
+    };
+  }, []);
+
+  useEffect(() => {
     const checkLock = () => {
       const lockUntil = localStorage.getItem('student_lockout_until');
       if (lockUntil) {
@@ -88,81 +106,132 @@ export default function Login({ onLoginSuccess, onBack }) {
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
+    if (e && typeof e.preventDefault === 'function') {
+      e.preventDefault();
+    }
     setError('');
+
+    // DOM Autofill Fallback: Ensure credentials are read even if browser password manager autofilled without firing onChange
+    const domUser = document.getElementById('username')?.value || '';
+    const domPass = document.getElementById('password')?.value || '';
+    const activeId = (identifier || domUser || '').trim();
+    const activePass = password || domPass || '';
+
+    // Synchronize React state so UI stays aligned
+    if (!identifier && activeId) setIdentifier(activeId);
+    if (!password && activePass) setPassword(activePass);
+
+    if (!activeId || !activePass) {
+      setError('Please enter your email and password.');
+      return;
+    }
+
+    setLoading(true);
 
     const devId = getOrCreateDeviceId();
     const devFp = getDeviceFingerprint();
 
-    const cleanId = identifier.trim();
     const payload = {
-      identifier: cleanId,
-      email: cleanId,
-      username: cleanId,
-      password,
+      identifier: activeId,
+      email: activeId,
+      username: activeId,
+      password: activePass,
       deviceId: devId,
       deviceFingerprint: devFp
     };
 
-    let response;
+    // Candidate endpoints: proxied route and direct backend port to bypass proxy idle socket resets
+    const host = window.location.hostname || 'localhost';
+    const endpoints = [
+      '/api/auth/login',
+      `http://${host}:5000/api/auth/login`
+    ];
+
+    let lastError = null;
     let data = null;
 
     try {
-      try {
-        response = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          cache: 'no-store',
-          body: JSON.stringify(payload)
-        });
-      } catch (netErr) {
-        const backendOrigin = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
-          ? `http://${window.location.hostname}:5000`
-          : 'http://127.0.0.1:5000';
-        response = await fetch(`${backendOrigin}/api/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          cache: 'no-store',
-          body: JSON.stringify(payload)
-        });
+      let loggedIn = false;
+
+      // Auto-retry loop (up to 3 attempts) to absorb idle proxy socket hangup (ECONNRESET) or initial cold handshake
+      for (let attempt = 0; attempt < 3 && !loggedIn; attempt++) {
+        for (const endpoint of endpoints) {
+          try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+            const response = await fetch(endpoint, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              cache: 'no-store',
+              body: JSON.stringify(payload),
+              signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+
+            const rawText = await response.text();
+            let parsed = null;
+            try {
+              if (rawText) parsed = JSON.parse(rawText);
+            } catch (pErr) {
+              parsed = null;
+            }
+
+            // 1. Success condition
+            if (response.ok && parsed && parsed.user && parsed.token) {
+              localStorage.removeItem('student_lockout_until');
+              localStorage.removeItem('student_lockout_user_id');
+              localStorage.setItem('attendance_token', parsed.token);
+              localStorage.setItem('attendance_user', JSON.stringify(parsed.user));
+              onLoginSuccess(parsed.user, parsed.token);
+              loggedIn = true;
+              return;
+            }
+
+            // 2. Legitimate business rejection from backend (e.g. lockout or invalid credentials)
+            if (parsed && (parsed.error || parsed.lockedUntil)) {
+              data = parsed;
+              if (data.lockedUntil) {
+                localStorage.setItem('student_lockout_until', String(data.lockedUntil));
+                if (activeId) localStorage.setItem('student_lockout_user_id', activeId.toLowerCase());
+                const remSec = data.remainingSeconds || Math.ceil((data.lockedUntil - Date.now()) / 1000);
+                setCooldownTime(remSec);
+              }
+              lastError = new Error(data.error || 'Login failed. Please check your credentials.');
+              break;
+            }
+
+            // 3. 401 Unauthorized or 400 Bad Request
+            if (response.status === 401 || response.status === 400) {
+              lastError = new Error(parsed?.error || 'Invalid Email Address (Gmail) or Password. Please check your credentials.');
+              break;
+            }
+
+            // 4. If status is 502, 503, 504, or non-JSON HTML error, retry on next endpoint / attempt
+          } catch (netErr) {
+            // Socket drop / connection timeout / abort -> continue to fallback endpoint or next attempt
+          }
+        }
+
+        // If legitimate credential failure or lockout occurred, do not keep retrying
+        if (lastError && (data?.lockedUntil || lastError.message.includes('Invalid') || lastError.message.includes('password') || lastError.message.includes('locked'))) {
+          break;
+        }
+
+        // Small 120ms pause before next attempt if transient proxy socket issue
+        if (attempt < 2 && !loggedIn) {
+          await new Promise((resolve) => setTimeout(resolve, 120));
+        }
       }
 
-      const rawText = await response.text();
-      try {
-        if (rawText) data = JSON.parse(rawText);
-      } catch (pErr) {
-        data = null;
-      }
-
-      if (response && response.ok && data && data.user && data.token) {
-        localStorage.removeItem('student_lockout_until');
-        localStorage.removeItem('student_lockout_user_id');
-        localStorage.setItem('attendance_token', data.token);
-        localStorage.setItem('attendance_user', JSON.stringify(data.user));
-        onLoginSuccess(data.user, data.token);
-        return;
-      }
-
-      if (data && data.lockedUntil) {
-        localStorage.setItem('student_lockout_until', String(data.lockedUntil));
-        if (cleanId) localStorage.setItem('student_lockout_user_id', cleanId.toLowerCase());
-        const remSec = data.remainingSeconds || Math.ceil((data.lockedUntil - Date.now()) / 1000);
-        setCooldownTime(remSec);
-      }
-
-      if (data && data.error) {
-        throw new Error(data.error);
-      }
-
-      if (response && (response.status === 401 || response.status === 400)) {
-        throw new Error('Invalid Email Address (Gmail) or Password. Please check your credentials.');
+      if (lastError) {
+        throw lastError;
       }
 
       throw new Error('Login failed. Please check your credentials.');
     } catch (err) {
       // Instant Admin Fallback if server is restarting or offline
-      if (cleanId.toLowerCase() === 'admin@ljcca.edu' && (password === 'ljcca@1999' || password === 'admin123')) {
+      if (activeId.toLowerCase() === 'admin@ljcca.edu' && (activePass === 'ljcca@1999' || activePass === 'admin123')) {
         const fallbackAdmin = {
           id: 3,
           name: 'Administrative',
@@ -238,7 +307,17 @@ export default function Login({ onLoginSuccess, onBack }) {
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={styles.form} autoComplete="on">
+        <form
+          onSubmit={handleSubmit}
+          style={styles.form}
+          autoComplete="on"
+          onFocusCapture={() => {
+            const u = document.getElementById('username')?.value;
+            const p = document.getElementById('password')?.value;
+            if (u) setIdentifier(prev => prev || u);
+            if (p) setPassword(prev => prev || p);
+          }}
+        >
           {getDisplayError() && <div style={styles.errorAlert}>{getDisplayError()}</div>}
 
           <div style={styles.inputGroup}>

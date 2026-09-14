@@ -50,8 +50,13 @@ app.use((err, req, res, next) => {
 });
 
 // Start Server
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`=================================================`);
   console.log(`  College Attendance Server running on port ${PORT}`);
   console.log(`=================================================`);
 });
+
+// Configure Keep-Alive timeout higher than reverse proxies (Vite/Nginx)
+// to prevent ECONNRESET on reused idle sockets
+server.keepAliveTimeout = 65000;
+server.headersTimeout = 66000;
