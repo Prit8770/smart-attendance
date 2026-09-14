@@ -442,20 +442,6 @@ export default function AdminDashboard({
     }
   }, [activeTab, selectedSemFolder, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
 
-  // Keep selectedSemFolder aligned with availableSemesters
-  useEffect(() => {
-    if (availableSemesters.length > 0 && (!selectedSemFolder || selectedSemFolder === 'ALL' || !availableSemesters.includes(selectedSemFolder))) {
-      setSelectedSemFolder(availableSemesters[0]);
-    }
-  }, [availableSemesters]);
-
-  // Automatically reset matrix filters when navigating away from attendance logs
-  useEffect(() => {
-    if (activeTab !== 'attendance_logs') {
-      setSelectedSemFolder(availableSemesters[0] || '1');
-      setMatrixSearch('');
-    }
-  }, [activeTab]);
 
   const handleReloadDirectory = async () => {
     setDirectoryReloading(true);
@@ -2219,6 +2205,21 @@ export default function AdminDashboard({
 
     return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
   }, [students]);
+
+  // Keep selectedSemFolder aligned with availableSemesters
+  useEffect(() => {
+    if (availableSemesters && availableSemesters.length > 0 && (!selectedSemFolder || selectedSemFolder === 'ALL' || !availableSemesters.includes(selectedSemFolder))) {
+      setSelectedSemFolder(availableSemesters[0]);
+    }
+  }, [availableSemesters]);
+
+  // Automatically reset matrix filters when navigating away from attendance logs
+  useEffect(() => {
+    if (activeTab !== 'attendance_logs') {
+      setSelectedSemFolder((availableSemesters && availableSemesters[0]) || '1');
+      setMatrixSearch('');
+    }
+  }, [activeTab, availableSemesters]);
 
   // Semesters that actually have registered student accounts
   const registeredSemesters = React.useMemo(() => {
