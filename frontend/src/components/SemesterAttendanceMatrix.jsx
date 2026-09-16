@@ -46,13 +46,12 @@ export default function SemesterAttendanceMatrix({
 }) {
   // Semester State
   const [selectedSem, setSelectedSem] = useState(() => {
-    if (semNumber && semNumber !== 'ALL') return String(semNumber);
-    return '1';
+    return semNumber ? String(semNumber) : 'ALL';
   });
 
   // Keep selectedSem synced if parent prop semNumber changes
   useEffect(() => {
-    if (semNumber && semNumber !== 'ALL') {
+    if (semNumber) {
       setSelectedSem(String(semNumber));
     }
   }, [semNumber]);
@@ -253,14 +252,12 @@ export default function SemesterAttendanceMatrix({
     return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
   }, [availableSemesters, studentsList]);
 
-  // Auto-sync selectedSem to always be a valid concrete semester from allSemestersList
+  // Auto-sync selectedSem if allSemestersList has exactly 1 semester
   useEffect(() => {
-    if (allSemestersList.length > 0) {
-      if (!selectedSem || selectedSem === 'ALL' || !allSemestersList.includes(selectedSem)) {
-        setSelectedSem(allSemestersList[0]);
-      }
+    if (allSemestersList.length === 1 && selectedSem !== allSemestersList[0]) {
+      setSelectedSem(allSemestersList[0]);
     }
-  }, [allSemestersList, selectedSem]);
+  }, [allSemestersList]);
 
   // Dynamic list of available subjects for subject filter dropdown (Strictly assigned subjects for this faculty)
   const availableFilterSubjects = useMemo(() => {
@@ -511,15 +508,15 @@ export default function SemesterAttendanceMatrix({
     setMatrixStartDate('');
     setMatrixEndDate('');
     setMatrixSingleDate('');
-    setSelectedSem(allSemestersList.length > 0 ? allSemestersList[0] : '1');
+    setSelectedSem(allSemestersList.length === 1 ? allSemestersList[0] : 'ALL');
     setMatrixDivFilter('ALL');
     setMatrixSubjectFilter('ALL');
     setMatrixStatusFilter('ALL');
     setMatrixSortBy('roll_asc');
   };
 
-  // Determine sticky column positions (matching Photo 2 exactly: Roll No, Name, Sem, Div)
-  const showSemCol = true;
+  // Determine sticky column positions (Sem column hidden as semester is selected via top filter)
+  const showSemCol = false;
   const showDivCol = true;
 
   return (
@@ -632,7 +629,7 @@ export default function SemesterAttendanceMatrix({
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Folder size={14} color="#f59e0b" />
               <select
-                value={selectedSem || (allSemestersList[0] || '1')}
+                value={selectedSem || 'ALL'}
                 onChange={e => {
                   setSelectedSem(e.target.value);
                   setMatrixSearch('');
@@ -642,6 +639,11 @@ export default function SemesterAttendanceMatrix({
                 }}
                 style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
               >
+                {allSemestersList.length > 1 && (
+                  <option value="ALL">
+                    {availableSemesters && availableSemesters.length > 0 ? 'All Assigned Semesters' : 'All Semesters'}
+                  </option>
+                )}
                 {allSemestersList.map(sem => (
                   <option key={sem} value={sem}>Semester {sem}</option>
                 ))}
@@ -917,7 +919,7 @@ export default function SemesterAttendanceMatrix({
                         rowSpan={2}
                         className="matrix-sticky-col-3"
                         style={{
-                          left: '295px',
+                          left: showSemCol ? '295px' : '240px',
                           minWidth: '55px',
                           maxWidth: '55px',
                           width: '55px',
@@ -1026,7 +1028,7 @@ export default function SemesterAttendanceMatrix({
                         <td
                           className="matrix-sticky-col-3"
                           style={{
-                            left: '295px',
+                            left: showSemCol ? '295px' : '240px',
                             minWidth: '55px',
                             maxWidth: '55px',
                             width: '55px',
@@ -1153,7 +1155,7 @@ export default function SemesterAttendanceMatrix({
                         <td
                           className="matrix-sticky-col-3"
                           style={{
-                            left: '295px',
+                            left: showSemCol ? '295px' : '240px',
                             minWidth: '55px',
                             maxWidth: '55px',
                             width: '55px',

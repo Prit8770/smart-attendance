@@ -240,12 +240,10 @@ export default function AdminDashboard({
     showToast('Functionality available in Faculty Dashboard', 'error');
   };
 
-  // Master Attendance Matrix States (default to first available semester)
-  const [selectedSemFolder, setSelectedSemFolder] = useState('1');
+  // Master Attendance Matrix States
+  const [selectedSemFolder, setSelectedSemFolder] = useState('ALL');
   const [matrixData, setMatrixData] = useState(null);
   const [matrixLoading, setMatrixLoading] = useState(false);
-  const [matrixPage, setMatrixPage] = useState(1);
-  const [matrixPageSize, setMatrixPageSize] = useState(50);
   const [matrixDateMode, setMatrixDateMode] = useState('all');
   const [matrixMonth, setMatrixMonth] = useState(() => {
     const d = new Date();
@@ -438,23 +436,17 @@ export default function AdminDashboard({
 
   useEffect(() => {
     if (activeTab === 'attendance_logs') {
-      const targetSem = (selectedSemFolder && selectedSemFolder !== 'ALL')
-        ? selectedSemFolder
-        : (availableSemesters && availableSemesters.length > 0 ? (availableSemesters.includes('1') ? '1' : availableSemesters[0]) : '1');
-      fetchSemesterMatrix(targetSem);
+      fetchSemesterMatrix(selectedSemFolder || 'ALL');
     }
   }, [activeTab, selectedSemFolder, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
 
-  // Ensure a valid semester is always selected in attendance logs (never 'ALL')
+  // Automatically reset matrix filters when navigating away from attendance logs
   useEffect(() => {
-    if (availableSemesters && availableSemesters.length > 0) {
-      if (!selectedSemFolder || selectedSemFolder === 'ALL' || !availableSemesters.includes(selectedSemFolder)) {
-        const defaultSem = availableSemesters.includes('1') ? '1' : availableSemesters[0];
-        setSelectedSemFolder(defaultSem);
-      }
+    if (activeTab !== 'attendance_logs') {
+      setSelectedSemFolder('ALL');
+      setMatrixSearch('');
     }
-  }, [availableSemesters, selectedSemFolder]);
-
+  }, [activeTab]);
 
   const handleReloadDirectory = async () => {
     setDirectoryReloading(true);
@@ -614,12 +606,7 @@ export default function AdminDashboard({
     setMatrixDivFilter('ALL');
     setMatrixSubjectFilter('ALL');
     setMatrixSearch('');
-    setMatrixPage(1);
   }, [selectedSemFolder]);
-
-  useEffect(() => {
-    setMatrixPage(1);
-  }, [matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter, matrixStatusFilter, matrixSearch]);
 
   // Leave Applications Management State
   const [allLeaves, setAllLeaves] = useState([]);
@@ -2218,21 +2205,6 @@ export default function AdminDashboard({
 
     return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
   }, [students]);
-
-  // Keep selectedSemFolder aligned with availableSemesters
-  useEffect(() => {
-    if (availableSemesters && availableSemesters.length > 0 && (!selectedSemFolder || selectedSemFolder === 'ALL' || !availableSemesters.includes(selectedSemFolder))) {
-      setSelectedSemFolder(availableSemesters[0]);
-    }
-  }, [availableSemesters]);
-
-  // Automatically reset matrix filters when navigating away from attendance logs
-  useEffect(() => {
-    if (activeTab !== 'attendance_logs') {
-      setSelectedSemFolder((availableSemesters && availableSemesters[0]) || '1');
-      setMatrixSearch('');
-    }
-  }, [activeTab, availableSemesters]);
 
   // Semesters that actually have registered student accounts
   const registeredSemesters = React.useMemo(() => {
@@ -5825,8 +5797,15 @@ export default function AdminDashboard({
             <button
               className={`admin-nav-item ${activeTab === 'attendance_logs' ? 'active' : ''}`}
               onClick={() => {
-                setActiveTab('attendance_logs');
+                setSelectedSemFolder(null);
+                setMatrixSearch('');
                 setMobileSidebarOpen(false);
+                React.startTransition(() => {
+                  setActiveTab('attendance_logs');
+                });
+                setTimeout(() => {
+                  fetchLiveLogs();
+                }, 0);
               }}
             >
               <ClipboardList size={19} />
@@ -8228,7 +8207,7 @@ export default function AdminDashboard({
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <Folder size={14} color="#f59e0b" />
                             <select
-                              value={selectedSemFolder || (availableSemesters[0] || '1')}
+                              value={selectedSemFolder || 'ALL'}
                               onChange={e => {
                                 setSelectedSemFolder(e.target.value);
                                 setMatrixSearch('');
@@ -8238,7 +8217,8 @@ export default function AdminDashboard({
                               }}
                               style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
                             >
-                              {(availableSemesters && availableSemesters.length > 0 ? availableSemesters : ['1', '2', '3', '4', '5', '6', '7', '8']).map(sem => (
+                              <option value="ALL">All Semesters</option>
+                              {availableSemesters.map(sem => (
                                 <option key={sem} value={sem}>Semester {sem}</option>
                               ))}
                             </select>
@@ -8301,7 +8281,7 @@ export default function AdminDashboard({
                             setMatrixStartDate('');
                             setMatrixEndDate('');
                             setMatrixSingleDate('');
-                            setSelectedSemFolder(availableSemesters[0] || '1');
+                            setSelectedSemFolder('ALL');
                             setMatrixDivFilter('ALL');
                             setMatrixSubjectFilter('ALL');
                             setMatrixStatusFilter('ALL');
@@ -8465,29 +8445,11 @@ export default function AdminDashboard({
 
                           {/* The Matrix Table Container */}
                           {(() => {
-                            const showSemCol = !selectedSemFolder || selectedSemFolder === 'ALL';
+                            const showSemCol = false;
                             const showDivCol = !matrixDivFilter || matrixDivFilter === 'ALL';
 
-                            const totalMatrixStudents = processedMatrixStudents.length;
-                            const totalMatrixPages = matrixPageSize === -1 ? 1 : (Math.ceil(totalMatrixStudents / matrixPageSize) || 1);
-                            const currentMatrixPage = Math.min(matrixPage, totalMatrixPages);
-                            const startMatrixIndex = matrixPageSize === -1 ? 0 : (currentMatrixPage - 1) * matrixPageSize;
-                            const paginatedMatrixStudents = matrixPageSize === -1
-                              ? processedMatrixStudents
-                              : processedMatrixStudents.slice(startMatrixIndex, startMatrixIndex + matrixPageSize);
-
-                            const colPresentCounts = {};
-                            (matrixData?.columns || []).forEach(col => {
-                              let count = 0;
-                              processedMatrixStudents.forEach(st => {
-                                if (matrixData.attendanceMatrix?.[String(st.id)]?.[col.columnKey]?.status === 'P') count++;
-                              });
-                              colPresentCounts[col.columnKey] = count;
-                            });
-
                             return (
-                              <>
-                                <div className="matrix-table-wrapper">
+                              <div className="matrix-table-wrapper">
                                 <table className="matrix-table">
                                   <thead>
                                     {/* Row 1: Roll No, Name, Sem (if All Sems), Div (if All Divs), Date Columns (spanning subjects), Summary Headers */}
@@ -8588,7 +8550,7 @@ export default function AdminDashboard({
                                   </thead>
 
                                   <tbody>
-                                    {paginatedMatrixStudents.map((st) => (
+                                    {processedMatrixStudents.map((st) => (
                                       <tr key={st.id}>
                                         {/* Col 1: Roll No */}
                                         <td className="matrix-sticky-col-1" style={{ fontWeight: '800', color: '#d97706', textAlign: 'center', fontSize: '0.86rem' }}>
@@ -8775,13 +8737,17 @@ export default function AdminDashboard({
                                         )}
                                         {(matrixData?.columns || []).map((col) => {
                                           const isBoundary = dateBoundaryKeys.has(col.columnKey);
+                                          let colPresentCount = 0;
+                                          processedMatrixStudents.forEach(st => {
+                                            if (matrixData.attendanceMatrix?.[String(st.id)]?.[col.columnKey]?.status === 'P') colPresentCount++;
+                                          });
                                           return (
                                             <td
                                               key={col.columnKey}
                                               className={isBoundary ? 'matrix-date-boundary' : ''}
                                               style={{ textAlign: 'center', fontWeight: '800', color: '#16a34a' }}
                                             >
-                                              {colPresentCounts[col.columnKey] || 0}
+                                              {colPresentCount}
                                             </td>
                                           );
                                         })}
@@ -8799,94 +8765,6 @@ export default function AdminDashboard({
                                   )}
                                 </table>
                               </div>
-
-                              {/* Pagination & Display Controls */}
-                              <div style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                marginTop: '14px',
-                                padding: '10px 16px',
-                                background: '#f8fafc',
-                                borderRadius: '10px',
-                                border: '1px solid #e2e8f0',
-                                flexWrap: 'wrap',
-                                gap: '12px'
-                              }}>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.85rem', color: '#64748b', flexWrap: 'wrap' }}>
-                                  <span>
-                                    Showing <strong>{totalMatrixStudents === 0 ? 0 : startMatrixIndex + 1}</strong> - <strong>{Math.min(startMatrixIndex + (matrixPageSize === -1 ? totalMatrixStudents : matrixPageSize), totalMatrixStudents)}</strong> of <strong>{totalMatrixStudents}</strong> students
-                                  </span>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                    <span style={{ fontSize: '0.8rem' }}>Rows per page:</span>
-                                    <select
-                                      value={matrixPageSize}
-                                      onChange={e => {
-                                        setMatrixPageSize(Number(e.target.value));
-                                        setMatrixPage(1);
-                                      }}
-                                      style={{
-                                        padding: '4px 8px',
-                                        borderRadius: '6px',
-                                        border: '1px solid #cbd5e1',
-                                        background: '#ffffff',
-                                        fontSize: '0.8rem',
-                                        color: '#1e293b',
-                                        cursor: 'pointer',
-                                        outline: 'none'
-                                      }}
-                                    >
-                                      <option value={25}>25</option>
-                                      <option value={50}>50</option>
-                                      <option value={100}>100</option>
-                                      <option value={-1}>All ({totalMatrixStudents})</option>
-                                    </select>
-                                  </div>
-                                </div>
-
-                                {totalMatrixPages > 1 && (
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <button
-                                      type="button"
-                                      onClick={() => setMatrixPage(prev => Math.max(1, prev - 1))}
-                                      disabled={currentMatrixPage <= 1}
-                                      style={{
-                                        padding: '5px 12px',
-                                        fontSize: '0.8rem',
-                                        fontWeight: '600',
-                                        borderRadius: '6px',
-                                        border: '1px solid #cbd5e1',
-                                        background: currentMatrixPage <= 1 ? '#f1f5f9' : '#ffffff',
-                                        color: currentMatrixPage <= 1 ? '#94a3b8' : '#1e293b',
-                                        cursor: currentMatrixPage <= 1 ? 'not-allowed' : 'pointer'
-                                      }}
-                                    >
-                                      ← Prev
-                                    </button>
-                                    <span style={{ fontSize: '0.85rem', color: '#1e293b', fontWeight: '700', padding: '0 6px' }}>
-                                      Page {currentMatrixPage} of {totalMatrixPages}
-                                    </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => setMatrixPage(prev => Math.min(totalMatrixPages, prev + 1))}
-                                      disabled={currentMatrixPage >= totalMatrixPages}
-                                      style={{
-                                        padding: '5px 12px',
-                                        fontSize: '0.8rem',
-                                        fontWeight: '600',
-                                        borderRadius: '6px',
-                                        border: '1px solid #cbd5e1',
-                                        background: currentMatrixPage >= totalMatrixPages ? '#f1f5f9' : '#ffffff',
-                                        color: currentMatrixPage >= totalMatrixPages ? '#94a3b8' : '#1e293b',
-                                        cursor: currentMatrixPage >= totalMatrixPages ? 'not-allowed' : 'pointer'
-                                      }}
-                                    >
-                                      Next →
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                              </>
                             );
                           })()}
                         </div>

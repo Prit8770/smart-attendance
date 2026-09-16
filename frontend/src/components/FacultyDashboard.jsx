@@ -3704,7 +3704,7 @@ export default function FacultyDashboard({
           {activeTab === 'attendance_logs' && (
             <div style={styles.tabContent}>
               <SemesterAttendanceMatrix
-                semNumber={facultyAssignedSemesters.length > 0 ? facultyAssignedSemesters[0] : "1"}
+                semNumber={facultyAssignedSemesters.length === 1 ? facultyAssignedSemesters[0] : "ALL"}
                 token={token}
                 isMobile={isMobile}
                 availableSemesters={facultyAssignedSemesters}
