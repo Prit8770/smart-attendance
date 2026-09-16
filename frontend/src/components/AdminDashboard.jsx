@@ -241,7 +241,7 @@ export default function AdminDashboard({
   };
 
   // Master Attendance Matrix States
-  const [selectedSemFolder, setSelectedSemFolder] = useState('1');
+  const [selectedSemFolder, setSelectedSemFolder] = useState('ALL');
   const [matrixData, setMatrixData] = useState(null);
   const [matrixLoading, setMatrixLoading] = useState(false);
   const [matrixDateMode, setMatrixDateMode] = useState('all');
@@ -257,6 +257,7 @@ export default function AdminDashboard({
   const [matrixStatusFilter, setMatrixStatusFilter] = useState('ALL');
   const [matrixSearch, setMatrixSearch] = useState('');
   const [matrixSortBy, setMatrixSortBy] = useState('roll_asc');
+  const [matrixSemPageIndex, setMatrixSemPageIndex] = useState(0);
   const [selectedCellInfo, setSelectedCellInfo] = useState(null);
   const [directoryReloading, setDirectoryReloading] = useState(false);
 
@@ -436,27 +437,17 @@ export default function AdminDashboard({
 
   useEffect(() => {
     if (activeTab === 'attendance_logs') {
-      const semToFetch = (selectedSemFolder && selectedSemFolder !== 'ALL') ? selectedSemFolder : (availableSemesters[0] || '1');
-      fetchSemesterMatrix(semToFetch);
+      fetchSemesterMatrix(selectedSemFolder || 'ALL');
     }
-  }, [activeTab, selectedSemFolder, availableSemesters, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
-
-  // Ensure selectedSemFolder is always a valid semester from availableSemesters
-  useEffect(() => {
-    if (availableSemesters.length > 0) {
-      if (!selectedSemFolder || selectedSemFolder === 'ALL' || !availableSemesters.includes(String(selectedSemFolder))) {
-        setSelectedSemFolder(availableSemesters[0]);
-      }
-    }
-  }, [availableSemesters, selectedSemFolder]);
+  }, [activeTab, selectedSemFolder, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
 
   // Automatically reset matrix filters when navigating away from attendance logs
   useEffect(() => {
     if (activeTab !== 'attendance_logs') {
-      setSelectedSemFolder(availableSemesters[0] || '1');
+      setSelectedSemFolder('ALL');
       setMatrixSearch('');
     }
-  }, [activeTab, availableSemesters]);
+  }, [activeTab]);
 
   const handleReloadDirectory = async () => {
     setDirectoryReloading(true);
@@ -585,13 +576,51 @@ export default function AdminDashboard({
     return keys;
   }, [matrixData?.dateGroups]);
 
+  // When selectedSemFolder is 'ALL', identify distinct semesters present
+  const matrixSemestersList = useMemo(() => {
+    const semSet = new Set();
+    (availableSemesters || []).forEach(s => {
+      const semNum = String(s).replace(/\D/g, '').trim();
+      if (semNum) semSet.add(semNum);
+    });
+    (students || []).forEach(s => {
+      const semNum = String(s.semester || '').replace(/\D/g, '').trim();
+      if (semNum) semSet.add(semNum);
+    });
+    (matrixData?.students || []).forEach(s => {
+      const semNum = String(s.semester || '').replace(/\D/g, '').trim();
+      if (semNum) semSet.add(semNum);
+    });
+    return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
+  }, [availableSemesters, students, matrixData?.students]);
+
+  const safeSemPageIndex = useMemo(() => {
+    if (!matrixSemestersList || matrixSemestersList.length === 0) return 0;
+    return Math.min(Math.max(0, matrixSemPageIndex), matrixSemestersList.length - 1);
+  }, [matrixSemPageIndex, matrixSemestersList]);
+
+  const currentActiveSemester = useMemo(() => {
+    if (matrixSemestersList.length === 0) return '1';
+    return matrixSemestersList[safeSemPageIndex] || matrixSemestersList[0];
+  }, [matrixSemestersList, safeSemPageIndex]);
+
+  // When All Semesters is chosen, filter students down to the active semester page to eliminate lag
+  const displayedMatrixStudents = useMemo(() => {
+    if (selectedSemFolder !== 'ALL' || matrixSemestersList.length <= 1) {
+      return processedMatrixStudents;
+    }
+    return processedMatrixStudents.filter(st =>
+      String(st.semester || '').replace(/\D/g, '').trim() === String(currentActiveSemester)
+    );
+  }, [processedMatrixStudents, selectedSemFolder, matrixSemestersList, currentActiveSemester]);
+
   // Dynamically compute available divisions for the selected semester
   const availableSemesterDivisions = useMemo(() => {
     if (matrixData?.availableDivisions && Array.isArray(matrixData.availableDivisions) && matrixData.availableDivisions.length > 0) {
       return matrixData.availableDivisions;
     }
     const divs = new Set();
-    const targetSem = String(selectedSemFolder || '').replace(/\D/g, '');
+    const targetSem = selectedSemFolder === 'ALL' ? String(currentActiveSemester) : String(selectedSemFolder || '').replace(/\D/g, '');
 
     (students || []).forEach(s => {
       const sSem = String(s.semester || '').replace(/\D/g, '');
@@ -601,7 +630,10 @@ export default function AdminDashboard({
     });
 
     (matrixData?.students || []).forEach(s => {
-      if (s.division && String(s.division).trim()) divs.add(String(s.division).trim().toUpperCase());
+      const sSem = String(s.semester || '').replace(/\D/g, '');
+      if (sSem === targetSem && s.division && String(s.division).trim()) {
+        divs.add(String(s.division).trim().toUpperCase());
+      }
     });
 
     (matrixData?.columns || []).forEach(c => {
@@ -610,13 +642,26 @@ export default function AdminDashboard({
 
     const sorted = Array.from(divs).sort();
     return sorted.length > 0 ? sorted : ['A', 'B'];
-  }, [matrixData, selectedSemFolder, students]);
+  }, [matrixData, selectedSemFolder, students, currentActiveSemester]);
 
   useEffect(() => {
     setMatrixDivFilter('ALL');
     setMatrixSubjectFilter('ALL');
     setMatrixSearch('');
+    setMatrixSemPageIndex(0);
   }, [selectedSemFolder]);
+
+  // If user searches while in All Semesters mode, jump to the first semester that matches
+  useEffect(() => {
+    if (matrixSearch && selectedSemFolder === 'ALL' && matrixSemestersList.length > 1) {
+      const firstSemWithMatch = matrixSemestersList.findIndex(sem =>
+        processedMatrixStudents.some(st => String(st.semester || '').replace(/\D/g, '').trim() === String(sem))
+      );
+      if (firstSemWithMatch !== -1 && firstSemWithMatch !== matrixSemPageIndex) {
+        setMatrixSemPageIndex(firstSemWithMatch);
+      }
+    }
+  }, [matrixSearch]);
 
   // Leave Applications Management State
   const [allLeaves, setAllLeaves] = useState([]);
@@ -8217,7 +8262,7 @@ export default function AdminDashboard({
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <Folder size={14} color="#f59e0b" />
                             <select
-                              value={selectedSemFolder || (availableSemesters[0] || '1')}
+                              value={selectedSemFolder || 'ALL'}
                               onChange={e => {
                                 setSelectedSemFolder(e.target.value);
                                 setMatrixSearch('');
@@ -8227,6 +8272,7 @@ export default function AdminDashboard({
                               }}
                               style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
                             >
+                              <option value="ALL">All Semesters</option>
                               {availableSemesters.map(sem => (
                                 <option key={sem} value={sem}>Semester {sem}</option>
                               ))}
@@ -8290,7 +8336,7 @@ export default function AdminDashboard({
                             setMatrixStartDate('');
                             setMatrixEndDate('');
                             setMatrixSingleDate('');
-                            setSelectedSemFolder(availableSemesters.length > 0 ? availableSemesters[0] : '1');
+                            setSelectedSemFolder('ALL');
                             setMatrixDivFilter('ALL');
                             setMatrixSubjectFilter('ALL');
                             setMatrixStatusFilter('ALL');
@@ -8410,7 +8456,7 @@ export default function AdminDashboard({
                             Compiling all student records, conducted lectures, and punch-in timestamps.
                           </div>
                         </div>
-                      ) : processedMatrixStudents.length === 0 ? (
+                      ) : displayedMatrixStudents.length === 0 ? (
                         <div style={{ textAlign: 'center', padding: '50px 20px', background: '#f8fafc', borderRadius: '14px', border: '1px solid #e2e8f0' }}>
                           <Users size={38} color="#64748b" style={{ marginBottom: '10px', opacity: 0.5 }} />
                           <div style={{ fontSize: '0.98rem', fontWeight: '700', color: '#0f172a', marginBottom: '4px' }}>
@@ -8458,7 +8504,8 @@ export default function AdminDashboard({
                             const showDivCol = !matrixDivFilter || matrixDivFilter === 'ALL';
 
                             return (
-                              <div className="matrix-table-wrapper">
+                              <>
+                                <div className="matrix-table-wrapper">
                                 <table className="matrix-table">
                                   <thead>
                                     {/* Row 1: Roll No, Name, Sem (if All Sems), Div (if All Divs), Date Columns (spanning subjects), Summary Headers */}
@@ -8559,7 +8606,7 @@ export default function AdminDashboard({
                                   </thead>
 
                                   <tbody>
-                                    {processedMatrixStudents.map((st) => (
+                                    {displayedMatrixStudents.map((st) => (
                                       <tr key={st.id}>
                                         {/* Col 1: Roll No */}
                                         <td className="matrix-sticky-col-1" style={{ fontWeight: '800', color: '#d97706', textAlign: 'center', fontSize: '0.86rem' }}>
@@ -8747,7 +8794,7 @@ export default function AdminDashboard({
                                         {(matrixData?.columns || []).map((col) => {
                                           const isBoundary = dateBoundaryKeys.has(col.columnKey);
                                           let colPresentCount = 0;
-                                          processedMatrixStudents.forEach(st => {
+                                          displayedMatrixStudents.forEach(st => {
                                             if (matrixData.attendanceMatrix?.[String(st.id)]?.[col.columnKey]?.status === 'P') colPresentCount++;
                                           });
                                           return (
@@ -8761,19 +8808,97 @@ export default function AdminDashboard({
                                           );
                                         })}
                                         <td className="matrix-summary-cell-p" style={{ textAlign: 'center', fontWeight: '800', color: '#16a34a' }}>
-                                          {processedMatrixStudents.reduce((a, b) => a + (b.presentCount || 0), 0)}
+                                          {displayedMatrixStudents.reduce((a, b) => a + (b.presentCount || 0), 0)}
                                         </td>
                                         <td className="matrix-summary-cell-a" style={{ textAlign: 'center', fontWeight: '800', color: '#dc2626' }}>
-                                          {processedMatrixStudents.reduce((a, b) => a + (b.absentCount || 0), 0)}
+                                          {displayedMatrixStudents.reduce((a, b) => a + (b.absentCount || 0), 0)}
                                         </td>
                                         <td className="matrix-summary-cell-pct" style={{ textAlign: 'center', fontWeight: '800', color: '#d97706' }}>
-                                          {matrixData.summary?.overallAttendancePct || 0}%
+                                          {displayedMatrixStudents.length > 0
+                                            ? Math.round(displayedMatrixStudents.reduce((a, b) => a + (b.pct || 0), 0) / displayedMatrixStudents.length)
+                                            : 0}%
                                         </td>
                                       </tr>
                                     </tfoot>
                                   )}
                                 </table>
                               </div>
+
+                              {/* Semester Pagination Bar for All Semesters Mode (matching Photo 2) */}
+                              {selectedSemFolder === 'ALL' && matrixSemestersList.length > 1 && (
+                                <div style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  marginTop: '16px',
+                                  padding: '12px 16px',
+                                  gap: '12px'
+                                }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => setMatrixSemPageIndex(prev => Math.max(0, prev - 1))}
+                                    disabled={safeSemPageIndex <= 0}
+                                    style={{
+                                      padding: '7px 16px',
+                                      fontSize: '0.85rem',
+                                      fontWeight: '700',
+                                      borderRadius: '10px',
+                                      border: '1.5px solid #cbd5e1',
+                                      background: safeSemPageIndex <= 0 ? '#f1f5f9' : '#ffffff',
+                                      color: safeSemPageIndex <= 0 ? '#94a3b8' : '#0f172a',
+                                      cursor: safeSemPageIndex <= 0 ? 'not-allowed' : 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      boxShadow: safeSemPageIndex <= 0 ? 'none' : '0 2px 4px rgba(0,0,0,0.04)'
+                                    }}
+                                  >
+                                    ← Previous
+                                  </button>
+
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ fontSize: '0.95rem', color: '#0f172a', fontWeight: '800', padding: '0 4px' }}>
+                                      Page {safeSemPageIndex + 1} of {matrixSemestersList.length}
+                                    </span>
+                                    <span style={{
+                                      fontSize: '0.78rem',
+                                      padding: '2px 8px',
+                                      borderRadius: '6px',
+                                      background: '#fef3c7',
+                                      color: '#92400e',
+                                      border: '1px solid #fde68a',
+                                      fontWeight: '800'
+                                    }}>
+                                      Semester {currentActiveSemester}
+                                    </span>
+                                  </div>
+
+                                  <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => setMatrixSemPageIndex(prev => Math.min(matrixSemestersList.length - 1, prev + 1))}
+                                    disabled={safeSemPageIndex >= matrixSemestersList.length - 1}
+                                    style={{
+                                      padding: '7px 16px',
+                                      fontSize: '0.85rem',
+                                      fontWeight: '700',
+                                      borderRadius: '10px',
+                                      border: '1.5px solid #cbd5e1',
+                                      background: safeSemPageIndex >= matrixSemestersList.length - 1 ? '#f1f5f9' : '#ffffff',
+                                      color: safeSemPageIndex >= matrixSemestersList.length - 1 ? '#94a3b8' : '#0f172a',
+                                      cursor: safeSemPageIndex >= matrixSemestersList.length - 1 ? 'not-allowed' : 'pointer',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      boxShadow: safeSemPageIndex >= matrixSemestersList.length - 1 ? 'none' : '0 2px 4px rgba(0,0,0,0.04)'
+                                    }}
+                                  >
+                                    Next →
+                                  </button>
+                                </div>
+                              )}
+                              </>
                             );
                           })()}
                         </div>
