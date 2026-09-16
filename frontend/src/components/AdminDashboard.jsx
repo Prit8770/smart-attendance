@@ -8501,7 +8501,7 @@ export default function AdminDashboard({
 
                           {/* The Matrix Table Container */}
                           {(() => {
-                            const showSemCol = false;
+                            const showSemCol = true;
                             const showDivCol = !matrixDivFilter || matrixDivFilter === 'ALL';
 
                             return (

@@ -552,8 +552,8 @@ export default function SemesterAttendanceMatrix({
     setMatrixSortBy('roll_asc');
   };
 
-  // Determine sticky column positions (Sem column hidden as semester is selected via top filter)
-  const showSemCol = false;
+  // Determine sticky column positions (matching Photo 2 exactly: Roll No, Name, Sem, Div)
+  const showSemCol = true;
   const showDivCol = true;
 
   return (
