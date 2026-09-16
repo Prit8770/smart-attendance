@@ -473,7 +473,8 @@ export default function SemesterAttendanceMatrix({
 
   // When All Semesters is chosen, filter students down to the active semester page
   const displayedMatrixStudents = useMemo(() => {
-    if (selectedSem !== 'ALL' || allSemestersList.length <= 1) {
+    const isAll = !selectedSem || selectedSem === 'ALL';
+    if (!isAll || allSemestersList.length <= 1) {
       return processedMatrixStudents;
     }
     return processedMatrixStudents.filter(st =>
@@ -552,8 +553,8 @@ export default function SemesterAttendanceMatrix({
     setMatrixSortBy('roll_asc');
   };
 
-  // Determine sticky column positions (matching Photo 2 exactly: Roll No, Name, Sem, Div)
-  const showSemCol = true;
+  // Determine sticky column positions (Sem column hidden as semester is selected via top filter)
+  const showSemCol = false;
   const showDivCol = true;
 
   return (
@@ -1238,7 +1239,7 @@ export default function SemesterAttendanceMatrix({
             </div>
 
             {/* Semester Pagination Bar for All Semesters Mode (matching Photo 2) */}
-            {selectedSem === 'ALL' && allSemestersList.length > 1 && (
+            {(!selectedSem || selectedSem === 'ALL') && allSemestersList.length > 1 && (
               <div style={{
                 display: 'flex',
                 alignItems: 'center',

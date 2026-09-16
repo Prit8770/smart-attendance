@@ -621,7 +621,8 @@ export default function AdminDashboard({
 
   // When All Semesters is chosen, filter students down to the active semester page to eliminate lag
   const displayedMatrixStudents = useMemo(() => {
-    if (selectedSemFolder !== 'ALL' || matrixSemestersList.length <= 1) {
+    const isAll = !selectedSemFolder || selectedSemFolder === 'ALL';
+    if (!isAll || matrixSemestersList.length <= 1) {
       return processedMatrixStudents;
     }
     return processedMatrixStudents.filter(st =>
@@ -635,7 +636,8 @@ export default function AdminDashboard({
       return matrixData.availableDivisions;
     }
     const divs = new Set();
-    const targetSem = selectedSemFolder === 'ALL' ? String(currentActiveSemester) : String(selectedSemFolder || '').replace(/\D/g, '');
+    const isAll = !selectedSemFolder || selectedSemFolder === 'ALL';
+    const targetSem = isAll ? String(currentActiveSemester) : String(selectedSemFolder || '').replace(/\D/g, '');
 
     (students || []).forEach(s => {
       const sSem = String(s.semester || '').replace(/\D/g, '');
@@ -668,7 +670,8 @@ export default function AdminDashboard({
 
   // If user searches while in All Semesters mode, jump to the first semester that matches
   useEffect(() => {
-    if (matrixSearch && selectedSemFolder === 'ALL' && matrixSemestersList.length > 1) {
+    const isAll = !selectedSemFolder || selectedSemFolder === 'ALL';
+    if (matrixSearch && isAll && matrixSemestersList.length > 1) {
       const firstSemWithMatch = matrixSemestersList.findIndex(sem =>
         processedMatrixStudents.some(st => String(st.semester || '').replace(/\D/g, '').trim() === String(sem))
       );
@@ -5853,7 +5856,7 @@ export default function AdminDashboard({
             <button
               className={`admin-nav-item ${activeTab === 'attendance_logs' ? 'active' : ''}`}
               onClick={() => {
-                setSelectedSemFolder(null);
+                setSelectedSemFolder('ALL');
                 setMatrixSearch('');
                 setMobileSidebarOpen(false);
                 React.startTransition(() => {
@@ -8501,7 +8504,7 @@ export default function AdminDashboard({
 
                           {/* The Matrix Table Container */}
                           {(() => {
-                            const showSemCol = true;
+                            const showSemCol = false;
                             const showDivCol = !matrixDivFilter || matrixDivFilter === 'ALL';
 
                             return (
@@ -8826,7 +8829,7 @@ export default function AdminDashboard({
                               </div>
 
                               {/* Semester Pagination Bar for All Semesters Mode (matching Photo 2) */}
-                              {selectedSemFolder === 'ALL' && matrixSemestersList.length > 1 && (
+                              {(!selectedSemFolder || selectedSemFolder === 'ALL') && matrixSemestersList.length > 1 && (
                                 <div style={{
                                   display: 'flex',
                                   alignItems: 'center',
