@@ -241,7 +241,7 @@ export default function AdminDashboard({
   };
 
   // Master Attendance Matrix States
-  const [selectedSemFolder, setSelectedSemFolder] = useState('ALL');
+  const [selectedSemFolder, setSelectedSemFolder] = useState('1');
   const [matrixData, setMatrixData] = useState(null);
   const [matrixLoading, setMatrixLoading] = useState(false);
   const [matrixDateMode, setMatrixDateMode] = useState('all');
@@ -436,17 +436,27 @@ export default function AdminDashboard({
 
   useEffect(() => {
     if (activeTab === 'attendance_logs') {
-      fetchSemesterMatrix(selectedSemFolder || 'ALL');
+      const semToFetch = (selectedSemFolder && selectedSemFolder !== 'ALL') ? selectedSemFolder : (availableSemesters[0] || '1');
+      fetchSemesterMatrix(semToFetch);
     }
-  }, [activeTab, selectedSemFolder, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
+  }, [activeTab, selectedSemFolder, availableSemesters, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
+
+  // Ensure selectedSemFolder is always a valid semester from availableSemesters
+  useEffect(() => {
+    if (availableSemesters.length > 0) {
+      if (!selectedSemFolder || selectedSemFolder === 'ALL' || !availableSemesters.includes(String(selectedSemFolder))) {
+        setSelectedSemFolder(availableSemesters[0]);
+      }
+    }
+  }, [availableSemesters, selectedSemFolder]);
 
   // Automatically reset matrix filters when navigating away from attendance logs
   useEffect(() => {
     if (activeTab !== 'attendance_logs') {
-      setSelectedSemFolder('ALL');
+      setSelectedSemFolder(availableSemesters[0] || '1');
       setMatrixSearch('');
     }
-  }, [activeTab]);
+  }, [activeTab, availableSemesters]);
 
   const handleReloadDirectory = async () => {
     setDirectoryReloading(true);
@@ -8207,7 +8217,7 @@ export default function AdminDashboard({
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <Folder size={14} color="#f59e0b" />
                             <select
-                              value={selectedSemFolder || 'ALL'}
+                              value={selectedSemFolder || (availableSemesters[0] || '1')}
                               onChange={e => {
                                 setSelectedSemFolder(e.target.value);
                                 setMatrixSearch('');
@@ -8217,7 +8227,6 @@ export default function AdminDashboard({
                               }}
                               style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
                             >
-                              <option value="ALL">All Semesters</option>
                               {availableSemesters.map(sem => (
                                 <option key={sem} value={sem}>Semester {sem}</option>
                               ))}
@@ -8281,7 +8290,7 @@ export default function AdminDashboard({
                             setMatrixStartDate('');
                             setMatrixEndDate('');
                             setMatrixSingleDate('');
-                            setSelectedSemFolder('ALL');
+                            setSelectedSemFolder(availableSemesters.length > 0 ? availableSemesters[0] : '1');
                             setMatrixDivFilter('ALL');
                             setMatrixSubjectFilter('ALL');
                             setMatrixStatusFilter('ALL');
