@@ -132,6 +132,21 @@ export default function AdminDashboard({
     } catch (e) { }
     return [];
   });
+
+  // Calculate available semesters (ONLY created for semesters that currently have active registered students)
+  const availableSemesters = useMemo(() => {
+    const semSet = new Set();
+
+    (students || []).forEach(s => {
+      if (s && s.semester) {
+        const semNum = String(s.semester).replace(/\D/g, '').trim();
+        if (semNum) semSet.add(semNum);
+      }
+    });
+
+    return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
+  }, [students]);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [totalListSemFilter, setTotalListSemFilter] = useState('');
   const [totalListDivFilter, setTotalListDivFilter] = useState('');
@@ -2246,20 +2261,6 @@ export default function AdminDashboard({
     });
     return Array.from(semSet).sort((a, b) => a - b);
   }, [reportData]);
-
-  // Calculate available semesters (ONLY created for semesters that currently have active registered students)
-  const availableSemesters = React.useMemo(() => {
-    const semSet = new Set();
-
-    (students || []).forEach(s => {
-      if (s && s.semester) {
-        const semNum = String(s.semester).replace(/\D/g, '').trim();
-        if (semNum) semSet.add(semNum);
-      }
-    });
-
-    return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
-  }, [students]);
 
   // Semesters that actually have registered student accounts
   const registeredSemesters = React.useMemo(() => {
