@@ -737,16 +737,19 @@ export default function AdminDashboard({
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
   const [savingSubjects, setSavingSubjects] = useState(false);
 
-  // Blacklist Rules State
+  // Blacklist Rules State (Strictly user-defined: NO fake/dummy rules auto-injected)
   const [blacklistRules, setBlacklistRules] = useState(() => {
     try {
       const saved = localStorage.getItem('admin_blacklist_rules');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          // Purge legacy hardcoded dummy rules so they never reappear
+          return parsed.filter(r => !(r.id === 1 && r.name === 'Engineering Theory Cutoff') && !(r.id === 2 && r.name === 'Critical Defaulter Threshold'));
+        }
+      }
     } catch (e) { }
-    return [
-      { id: 1, name: 'Engineering Theory Cutoff', minPercentage: 65, program: 'All Programs', semester: 'All Semesters', subject: 'All Subjects', subjectType: 'Theory', status: 'Active' },
-      { id: 2, name: 'Critical Defaulter Threshold', minPercentage: 75, program: 'All Programs', semester: 'All Semesters', subject: 'All Subjects', subjectType: 'All Types', status: 'Active' }
-    ];
+    return [];
   });
   const [showAddRuleModal, setShowAddRuleModal] = useState(false);
   const [editingRuleId, setEditingRuleId] = useState(null);
@@ -757,6 +760,28 @@ export default function AdminDashboard({
   const [newRuleSemester, setNewRuleSemester] = useState('All Semesters');
   const [newRuleSubject, setNewRuleSubject] = useState('All Subjects');
   const [newRuleSubjectType, setNewRuleSubjectType] = useState('All Types');
+
+  // Fetch rules from server on load
+  useEffect(() => {
+    const fetchRules = async () => {
+      try {
+        const res = await fetch('/api/rules', {
+          headers: token ? { Authorization: `Bearer ${token}` } : {}
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            const clean = data.filter(r => !(r.id === 1 && r.name === 'Engineering Theory Cutoff') && !(r.id === 2 && r.name === 'Critical Defaulter Threshold'));
+            setBlacklistRules(clean);
+            localStorage.setItem('admin_blacklist_rules', JSON.stringify(clean));
+          }
+        }
+      } catch (err) {
+        console.warn('Error fetching rules from server:', err);
+      }
+    };
+    fetchRules();
+  }, [token]);
 
   const handleOpenAddRuleModal = () => {
     setEditingRuleId(null);
@@ -789,8 +814,9 @@ export default function AdminDashboard({
       return;
     }
 
+    let updated;
     if (editingRuleId) {
-      const updated = blacklistRules.map(r => {
+      updated = blacklistRules.map(r => {
         if (r.id === editingRuleId) {
           return {
             ...r,
@@ -820,10 +846,22 @@ export default function AdminDashboard({
         subjectType: newRuleSubjectType,
         status: 'Active'
       };
-      const updated = [...blacklistRules, newRule];
+      updated = [...blacklistRules, newRule];
       setBlacklistRules(updated);
       localStorage.setItem('admin_blacklist_rules', JSON.stringify(updated));
       showToast('New Blacklist Rule added successfully!', 'success');
+    }
+
+    // Persist to server
+    if (token) {
+      fetch('/api/rules', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ rules: updated })
+      }).catch(err => console.error('Error saving rules to server:', err));
     }
 
     setNewRuleName('');
@@ -841,6 +879,23 @@ export default function AdminDashboard({
     const updated = blacklistRules.filter(r => r.id !== ruleId);
     setBlacklistRules(updated);
     localStorage.setItem('admin_blacklist_rules', JSON.stringify(updated));
+
+    if (token) {
+      fetch(`/api/rules/${ruleId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      }).catch(() => {
+        fetch('/api/rules', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ rules: updated })
+        }).catch(err => console.error('Error deleting rule from server:', err));
+      });
+    }
+
     showToast('Rule removed successfully.', 'info');
   };
 
@@ -1042,7 +1097,7 @@ export default function AdminDashboard({
         return matchSem && matchProg;
       }) || activeRules[activeRules.length - 1] || activeRules[0];
 
-      const defaulterThreshold = matchedRule ? (parseFloat(matchedRule.minPercentage) || 50) : 50;
+      const defaulterThreshold = matchedRule ? (parseFloat(matchedRule.minPercentage) || 75) : 75;
       const warningThreshold = matchedRule && matchedRule.warningPercentage !== undefined
         ? parseFloat(matchedRule.warningPercentage)
         : (defaulterThreshold < 75 ? 75 : 80);
@@ -9206,21 +9261,38 @@ export default function AdminDashboard({
                                     </td>
                                     <td>{student.mobile}</td>
                                     <td style={{ textAlign: 'center' }}>
-                                      {student.device_id ? (
-                                        <span 
-                                          title={`Bound Device ID: ${student.device_id}`}
-                                          style={{ fontSize: '1.25rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', lineHeight: 1 }}
-                                        >
-                                          🔒
-                                        </span>
-                                      ) : (
-                                        <span 
-                                          title="Unlocked / No device bound"
-                                          style={{ fontSize: '1.25rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'default', lineHeight: 1 }}
-                                        >
-                                          🔓
-                                        </span>
-                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={() => handleResetDeviceId(student.id, student.name)}
+                                        title={
+                                          student.device_id
+                                            ? `Bound Device ID: ${student.device_id} (Click to reset/unlock device)`
+                                            : 'Unlocked / No device bound (Click to reset device)'
+                                        }
+                                        style={{
+                                          background: 'transparent',
+                                          border: 'none',
+                                          cursor: 'pointer',
+                                          fontSize: '1.25rem',
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          padding: '4px 6px',
+                                          borderRadius: '6px',
+                                          lineHeight: 1,
+                                          transition: 'transform 0.15s ease, background 0.15s ease'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                          e.currentTarget.style.transform = 'scale(1.25)';
+                                          e.currentTarget.style.background = 'rgba(0, 0, 0, 0.05)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                          e.currentTarget.style.transform = 'scale(1)';
+                                          e.currentTarget.style.background = 'transparent';
+                                        }}
+                                      >
+                                        {student.device_id ? '🔒' : '🔓'}
+                                      </button>
                                     </td>
                                     <td>
                                       <div style={styles.actionButtonContainer}>
@@ -10088,28 +10160,48 @@ export default function AdminDashboard({
                                 confirmButtonText: `📱 Send SMS to All (${filteredDefaulterList.length})`
                               }).then((result) => {
                                 if (result.isConfirmed) {
+                                  const newNotices = filteredDefaulterList.map((s, idx) => {
+                                    const pct = parseFloat(s.percentage) || 0;
+                                    const ruleAction = pct < 60
+                                      ? 'Critical Defaulter Status. Please contact your HOD / Class Coordinator immediately along with your parent/guardian.'
+                                      : 'Attendance Warning Status. Please report to your Subject Faculty to make up for missed lectures.';
+                                    const msg = `Dear ${s.name}, your attendance is currently ${s.percentage}%, which is below the mandatory 75% requirement. ${ruleAction}`;
+
+                                    return {
+                                      id: 'notice_' + Date.now() + '_' + idx + '_' + Math.floor(Math.random() * 1000),
+                                      studentId: s.id || null,
+                                      studentEnrollment: s.enrollment_no || s.email || s.id,
+                                      studentName: s.name,
+                                      studentRollNo: s.roll_no || s.rollNo || '',
+                                      studentEmail: s.email || '',
+                                      semester: s.semester || '',
+                                      division: s.division || '',
+                                      title: s.statusKey === 'CRITICAL' ? '⚠️ Attendance Defaulter Critical Notice' : '⚠️ Low Attendance Warning Notice',
+                                      category: s.statusKey === 'CRITICAL' ? 'DEFAULTER NOTICE' : 'ATTENDANCE WARNING',
+                                      tagColor: s.statusKey === 'CRITICAL' ? '#ef4444' : '#f59e0b',
+                                      date: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
+                                      body: msg,
+                                      percentage: pct,
+                                      totalLectures: s.totalLectures || 0,
+                                      attendedLectures: s.attendedLectures || 0,
+                                      statusKey: s.statusKey || 'CRITICAL',
+                                      timestamp: Date.now()
+                                    };
+                                  });
+
+                                  // 1. Dispatch to server
+                                  fetch('/api/notices/bulk', {
+                                    method: 'POST',
+                                    headers: {
+                                      'Content-Type': 'application/json',
+                                      Authorization: `Bearer ${token}`
+                                    },
+                                    body: JSON.stringify({ notices: newNotices })
+                                  }).catch(err => console.error('Error dispatching notices to server:', err));
+
+                                  // 2. Cache in localStorage
                                   try {
                                     const existing = JSON.parse(localStorage.getItem('attendance_system_notices') || '[]');
-                                    const newNotices = filteredDefaulterList.map((s, idx) => {
-                                      const pct = parseFloat(s.percentage) || 0;
-                                      const ruleAction = pct < 60
-                                        ? 'Critical Defaulter Status. Please contact your HOD / Class Coordinator immediately along with your parent/guardian.'
-                                        : 'Attendance Warning Status. Please report to your Subject Faculty to make up for missed lectures.';
-                                      const msg = `Dear ${s.name}, your attendance is currently ${s.percentage}%, which is below the mandatory 75% requirement. ${ruleAction}`;
-
-                                      return {
-                                        id: 'notice_' + Date.now() + '_' + idx + '_' + Math.floor(Math.random() * 1000),
-                                        studentEnrollment: s.enrollment_no || s.email || s.id,
-                                        studentName: s.name,
-                                        title: s.statusKey === 'CRITICAL' ? '⚠️ Attendance Defaulter Critical Notice' : '⚠️ Low Attendance Warning Notice',
-                                        category: s.statusKey === 'CRITICAL' ? 'DEFAULTER NOTICE' : 'ATTENDANCE WARNING',
-                                        tagColor: s.statusKey === 'CRITICAL' ? '#ef4444' : '#f59e0b',
-                                        date: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
-                                        body: msg,
-                                        timestamp: Date.now()
-                                      };
-                                    });
-
                                     localStorage.setItem('attendance_system_notices', JSON.stringify([...newNotices, ...existing]));
                                     window.dispatchEvent(new Event('notices_updated'));
                                   } catch (e) {
@@ -10226,20 +10318,40 @@ export default function AdminDashboard({
                                             const ruleAction = matchedRule ? matchedRule.action : 'Dear Student, your attendance is below requirement. Please contact HOD immediately.';
                                             const smsMessage = `Dear ${s.name}, your attendance is currently ${s.percentage}%, which is below the mandatory 75% requirement. Action Required: ${ruleAction}`;
 
+                                            const newNotice = {
+                                              id: 'notice_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
+                                              studentId: s.id || null,
+                                              studentEnrollment: s.enrollment_no || s.email || s.id,
+                                              studentName: s.name,
+                                              studentRollNo: s.roll_no || s.rollNo || '',
+                                              studentEmail: s.email || '',
+                                              semester: s.semester || '',
+                                              division: s.division || '',
+                                              title: s.statusKey === 'CRITICAL' ? '⚠️ Attendance Defaulter Critical Notice' : '⚠️ Low Attendance Warning Notice',
+                                              category: s.statusKey === 'CRITICAL' ? 'DEFAULTER NOTICE' : 'ATTENDANCE WARNING',
+                                              tagColor: s.statusKey === 'CRITICAL' ? '#ef4444' : '#f59e0b',
+                                              date: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
+                                              body: smsMessage,
+                                              percentage: parseFloat(s.percentage) || 0,
+                                              totalLectures: s.totalLectures || 0,
+                                              attendedLectures: s.attendedLectures || 0,
+                                              statusKey: s.statusKey || 'CRITICAL',
+                                              timestamp: Date.now()
+                                            };
+
+                                            // 1. Dispatch to server
+                                            fetch('/api/notices', {
+                                              method: 'POST',
+                                              headers: {
+                                                'Content-Type': 'application/json',
+                                                Authorization: `Bearer ${token}`
+                                              },
+                                              body: JSON.stringify(newNotice)
+                                            }).catch(err => console.error('Error dispatching notice to server:', err));
+
+                                            // 2. Cache in localStorage
                                             try {
                                               const existing = JSON.parse(localStorage.getItem('attendance_system_notices') || '[]');
-                                              const newNotice = {
-                                                id: 'notice_' + Date.now() + '_' + Math.floor(Math.random() * 1000),
-                                                studentEnrollment: s.enrollment_no || s.email || s.id,
-                                                studentName: s.name,
-                                                title: s.statusKey === 'CRITICAL' ? '⚠️ Attendance Defaulter Critical Notice' : '⚠️ Low Attendance Warning Notice',
-                                                category: s.statusKey === 'CRITICAL' ? 'DEFAULTER NOTICE' : 'ATTENDANCE WARNING',
-                                                tagColor: s.statusKey === 'CRITICAL' ? '#ef4444' : '#f59e0b',
-                                                date: new Date().toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' }),
-                                                body: smsMessage,
-                                                timestamp: Date.now()
-                                              };
-
                                               localStorage.setItem('attendance_system_notices', JSON.stringify([newNotice, ...existing]));
                                               window.dispatchEvent(new Event('notices_updated'));
                                             } catch (e) {
@@ -10249,7 +10361,7 @@ export default function AdminDashboard({
                                             showToast(`📱 SMS Notice sent to ${s.name}`, 'success');
                                             Swal.fire({
                                               title: 'Notice Dispatched!',
-                                              text: `Attendance warning notice has been sent to ${s.name}. It is now live on their student notice board.`,
+                                              text: `Attendance warning notice has been sent to ${s.name}. It is now live on their student notice board & notification center.`,
                                               icon: 'success',
                                               confirmButtonColor: '#d97706'
                                             });

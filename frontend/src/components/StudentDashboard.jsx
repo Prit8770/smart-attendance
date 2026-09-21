@@ -9,6 +9,7 @@ import {
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
+import { Html5Qrcode } from 'html5-qrcode';
 import AttendanceNotification from './AttendanceNotification';
 import ToastContainer from './ToastContainer';
 import Swal from 'sweetalert2';
@@ -159,47 +160,148 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  // Dynamic Notices state (loaded from admin defaulters sent notices)
+  // Dynamic Notices state (loaded from server API + local fallback)
   const [studentNotices, setStudentNotices] = useState([]);
+  const [unreadNoticeCount, setUnreadNoticeCount] = useState(0);
+  const [noticesLoading, setNoticesLoading] = useState(false);
 
-  const loadStudentNotices = () => {
+  const loadStudentNotices = async () => {
+    // 1. Fetch from server API if token available
+    if (token) {
+      try {
+        setNoticesLoading(true);
+        const res = await fetch('/api/notices/my', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && Array.isArray(data.notices)) {
+            setStudentNotices(data.notices);
+            setUnreadNoticeCount(typeof data.unreadCount === 'number' ? data.unreadCount : 0);
+            try {
+              localStorage.setItem('attendance_system_notices', JSON.stringify(data.notices));
+            } catch (e) {}
+            setNoticesLoading(false);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Notice API fetch fallback to local storage:', err);
+      } finally {
+        setNoticesLoading(false);
+      }
+    }
+
+    // 2. Fallback to localStorage
     try {
       const allNotices = JSON.parse(localStorage.getItem('attendance_system_notices') || '[]');
       const filtered = allNotices.filter(n => {
         if (!n) return false;
-        if (n.studentEnrollment === 'ALL') return true;
+        const targetEnroll = String(n.studentEnrollment || n.student_enrollment || '').trim().toLowerCase();
+        if (targetEnroll === 'all') return true;
         if (!user) return false;
 
-        const uId = String(user.id || '').toLowerCase();
-        const uEnroll = String(user.enrollment_no || '').toLowerCase();
-        const uEmail = String(user.email || '').toLowerCase();
-        const uName = String(user.name || '').toLowerCase();
+        const uId = String(user.id || '').trim().toLowerCase();
+        const uEnroll = String(user.enrollment_no || '').trim().toLowerCase();
+        const uRoll = String(user.roll_no || user.roll || '').trim().toLowerCase();
+        const uEmail = String(user.email || '').trim().toLowerCase();
+        const uUser = String(user.username || '').trim().toLowerCase();
+        const uName = String(user.name || '').trim().toLowerCase();
 
-        const target = String(n.studentEnrollment || '').toLowerCase();
-        const targetName = String(n.studentName || '').toLowerCase();
+        const targetId = String(n.studentId || n.student_id || '').trim().toLowerCase();
+        const targetRoll = String(n.studentRollNo || n.roll_no || '').trim().toLowerCase();
+        const targetEmail = String(n.studentEmail || n.email || '').trim().toLowerCase();
+        const targetName = String(n.studentName || n.name || '').trim().toLowerCase();
 
         return (
-          (uEnroll && target === uEnroll) ||
-          (uEmail && target === uEmail) ||
-          (uId && target === uId) ||
+          (uEnroll && (targetEnroll === uEnroll || targetId === uEnroll)) ||
+          (uId && (targetEnroll === uId || targetId === uId)) ||
+          (uRoll && (targetEnroll === uRoll || targetRoll === uRoll)) ||
+          (uEmail && (targetEnroll === uEmail || targetEmail === uEmail)) ||
+          (uUser && (targetEnroll === uUser || targetId === uUser)) ||
           (uName && targetName === uName)
         );
       });
       setStudentNotices(filtered);
+      const studentIdentifier = String(user?.id || user?.enrollment_no || '').toLowerCase();
+      const unread = filtered.filter(n => {
+        const readBy = Array.isArray(n.readBy) ? n.readBy.map(x => String(x).toLowerCase()) : [];
+        return !readBy.includes(studentIdentifier);
+      }).length;
+      setUnreadNoticeCount(unread);
     } catch (err) {
       setStudentNotices([]);
+      setUnreadNoticeCount(0);
+    }
+  };
+
+  const handleMarkNoticeAsRead = async (noticeId) => {
+    try {
+      const studentIdentifier = String(user?.id || user?.enrollment_no || 'STUDENT');
+      setStudentNotices(prev => prev.map(n => {
+        if (String(n.id) === String(noticeId)) {
+          const currentRead = Array.isArray(n.readBy) ? n.readBy : [];
+          return { ...n, readBy: [...currentRead, studentIdentifier] };
+        }
+        return n;
+      }));
+      setUnreadNoticeCount(prev => Math.max(0, prev - 1));
+
+      if (token) {
+        await fetch(`/api/notices/${noticeId}/read`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` }
+        });
+      }
+    } catch (e) {
+      console.error('Error acknowledging notice:', e);
     }
   };
 
   useEffect(() => {
     loadStudentNotices();
+
+    // 1. Same-browser BroadcastChannel (0ms instant cross-tab sync)
+    let bc = null;
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        bc = new BroadcastChannel('attendance_system_sync');
+        bc.onmessage = (msg) => {
+          if (msg && msg.data && (msg.data.type === 'DATA_CHANGED' || msg.data.type === 'NOTICES_UPDATED')) {
+            loadStudentNotices();
+          }
+        };
+      } catch (e) {}
+    }
+
+    // 2. Server-Sent Events (SSE) across browsers/devices
+    let eventSource = null;
+    if (typeof window !== 'undefined' && 'EventSource' in window) {
+      try {
+        eventSource = new EventSource('/api/sync/events');
+        eventSource.onmessage = (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data && (data.type === 'DATA_CHANGED' || data.payload?.entity === 'notices')) {
+              loadStudentNotices();
+            }
+          } catch (err) {}
+        };
+      } catch (e) {}
+    }
+
     window.addEventListener('storage', loadStudentNotices);
     window.addEventListener('notices_updated', loadStudentNotices);
+    window.addEventListener('focus', loadStudentNotices);
+
     return () => {
       window.removeEventListener('storage', loadStudentNotices);
       window.removeEventListener('notices_updated', loadStudentNotices);
+      window.removeEventListener('focus', loadStudentNotices);
+      if (bc) bc.close();
+      if (eventSource) eventSource.close();
     };
-  }, [user]);
+  }, [user, token]);
   const [attendanceData, setAttendanceData] = useState(null);
   const [trendLoading, setTrendLoading] = useState(true);
   const [subjectBreakdown, setSubjectBreakdown] = useState([]);
@@ -209,6 +311,9 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   // Scanner States
   const [scannerOpen, setScannerOpen] = useState(false);
   const [scannerError, setScannerError] = useState('');
+  const [cameras, setCameras] = useState([]);
+  const [selectedCameraId, setSelectedCameraId] = useState('');
+  const [isSwitchingCamera, setIsSwitchingCamera] = useState(false);
   const html5QrCodeRef = useRef(null);
 
   // Zoom States
@@ -639,7 +744,124 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     }
   };
 
-  // Scanner Controls
+  // Scanner Controls & Camera Detection
+  const pickBestCamera = (devices) => {
+    if (!devices || devices.length === 0) return null;
+
+    const isVirtual = (d) => /virtual|vcam|obs|droidcam|software/i.test(d.label || '');
+    const isBack = (d) => /back|rear|environment/i.test(d.label || '');
+    const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+    // If mobile, prefer back/environment camera
+    if (isMobile) {
+      const backCam = devices.find(d => isBack(d));
+      if (backCam) return backCam.id;
+    }
+
+    // Filter out virtual cameras first
+    const physicalCams = devices.filter(d => !isVirtual(d));
+    if (physicalCams.length > 0) {
+      if (isMobile) {
+        const physicalBack = physicalCams.find(d => isBack(d));
+        if (physicalBack) return physicalBack.id;
+      }
+      return physicalCams[0].id;
+    }
+
+    return devices[0].id;
+  };
+
+  const setupZoomTrack = () => {
+    setTimeout(() => {
+      const videoEl = document.querySelector('#qr-reader-container video');
+      if (videoEl && videoEl.srcObject) {
+        const track = videoEl.srcObject.getVideoTracks()[0];
+        if (track) {
+          videoTrackRef.current = track;
+          const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+          if (capabilities.zoom) {
+            setZoomSupported(true);
+            setMinZoom(capabilities.zoom.min || 1.0);
+            setMaxZoom(capabilities.zoom.max || 3.0);
+            applyZoom(capabilities.zoom.min || 1.0);
+          } else {
+            setZoomSupported(false);
+            setMinZoom(1.0);
+            setMaxZoom(3.0);
+            applyZoom(1.0);
+          }
+        }
+      }
+    }, 600);
+  };
+
+  const startScanningWithCamera = async (scannerInstance, targetCameraId) => {
+    const scanConfig = {
+      fps: 10,
+      qrbox: { width: 250, height: 250 }
+    };
+
+    const handleScanSuccess = async (decodedText) => {
+      try {
+        let qrData;
+        if (decodedText.startsWith('{')) {
+          qrData = JSON.parse(decodedText);
+        } else {
+          const parts = decodedText.split(',');
+          qrData = {
+            sessionId: parseInt(parts[0], 10),
+            tokenIndex: parseInt(parts[1], 10),
+            tokenValue: parts[2]
+          };
+        }
+
+        if (qrData.sessionId && qrData.tokenIndex !== undefined && qrData.tokenValue) {
+          if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
+            await html5QrCodeRef.current.stop();
+          }
+          html5QrCodeRef.current = null;
+          setScannerOpen(false);
+          handleQrSubmit(qrData);
+        } else {
+          setScannerError('Invalid QR Code format scanned.');
+        }
+      } catch (e) {
+        setScannerError('Could not parse scanned QR Code.');
+      }
+    };
+
+    if (targetCameraId) {
+      await scannerInstance.start(
+        targetCameraId,
+        scanConfig,
+        handleScanSuccess,
+        () => {}
+      );
+      setupZoomTrack();
+      return;
+    }
+
+    // Fallback if no specific camera id available
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    try {
+      await scannerInstance.start(
+        { facingMode: isMobile ? 'environment' : 'user' },
+        scanConfig,
+        handleScanSuccess,
+        () => {}
+      );
+      setupZoomTrack();
+    } catch (err) {
+      await scannerInstance.start(
+        { facingMode: 'user' },
+        scanConfig,
+        handleScanSuccess,
+        () => {}
+      );
+      setupZoomTrack();
+    }
+  };
+
   const startScanner = () => {
     if (!sessionStatus.unlocked) {
       const msg = sessionStatus.message || `Attendance session is locked. Faculty has not started a Live QR session for Semester ${user.semester}${user.division ? ' - Div ' + user.division : ''} yet.`;
@@ -665,91 +887,56 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     setScannerError('');
     setScannerOpen(true);
 
-    setTimeout(() => {
+    setTimeout(async () => {
       const container = document.getElementById('qr-reader-container');
       if (!container) return;
 
-      const html5QrCode = new Html5Qrcode('qr-reader-container');
-      html5QrCodeRef.current = html5QrCode;
+      try {
+        const html5QrCode = new Html5Qrcode('qr-reader-container');
+        html5QrCodeRef.current = html5QrCode;
 
-      const scanConfig = {
-        fps: 10,
-        qrbox: { width: 250, height: 250 }
-      };
-
-      const handleScanSuccess = async (decodedText) => {
+        // Enumerate devices to pick the best physical camera
+        let availableDevices = [];
         try {
-          let qrData;
-          if (decodedText.startsWith('{')) {
-            qrData = JSON.parse(decodedText);
-          } else {
-            const parts = decodedText.split(',');
-            qrData = {
-              sessionId: parseInt(parts[0], 10),
-              tokenIndex: parseInt(parts[1], 10),
-              tokenValue: parts[2]
-            };
-          }
-
-          if (qrData.sessionId && qrData.tokenIndex !== undefined && qrData.tokenValue) {
-            if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
-              await html5QrCodeRef.current.stop();
-            }
-            html5QrCodeRef.current = null;
-            setScannerOpen(false);
-            handleQrSubmit(qrData);
-          } else {
-            setScannerError('Invalid QR Code format scanned.');
-          }
+          availableDevices = await Html5Qrcode.getCameras();
+          setCameras(availableDevices || []);
         } catch (e) {
-          setScannerError('Could not parse scanned QR Code.');
+          console.warn("Could not list cameras:", e);
         }
-      };
 
-      const setupZoomTrack = () => {
-        setTimeout(() => {
-          const videoEl = document.querySelector('#qr-reader-container video');
-          if (videoEl && videoEl.srcObject) {
-            const track = videoEl.srcObject.getVideoTracks()[0];
-            if (track) {
-              videoTrackRef.current = track;
-              const capabilities = track.getCapabilities ? track.getCapabilities() : {};
-              if (capabilities.zoom) {
-                setZoomSupported(true);
-                setMinZoom(capabilities.zoom.min || 1.0);
-                setMaxZoom(capabilities.zoom.max || 3.0);
-                applyZoom(capabilities.zoom.min || 1.0);
-              } else {
-                setZoomSupported(false);
-                setMinZoom(1.0);
-                setMaxZoom(3.0);
-                applyZoom(1.0);
-              }
-            }
-          }
-        }, 800);
-      };
+        const bestCamId = pickBestCamera(availableDevices);
+        if (bestCamId) {
+          setSelectedCameraId(bestCamId);
+        }
 
-      html5QrCode.start(
-        { facingMode: 'environment' },
-        scanConfig,
-        handleScanSuccess,
-        () => {}
-      ).then(() => {
-        setupZoomTrack();
-      }).catch(err => {
-        return html5QrCode.start(
-          { facingMode: 'user' },
-          scanConfig,
-          handleScanSuccess,
-          () => {}
-        ).then(() => {
-          setupZoomTrack();
-        });
-      }).catch(err2 => {
-        setScannerError('Camera access failed. Please ensure camera permissions are allowed.');
-      });
+        await startScanningWithCamera(html5QrCode, bestCamId);
+      } catch (err) {
+        console.error("Camera access error:", err);
+        setScannerError('Camera access failed. Please ensure camera permissions are allowed and select a working camera.');
+      }
     }, 300);
+  };
+
+  // Dynamic Camera Switcher
+  const handleCameraChange = async (newCameraId) => {
+    if (!newCameraId || newCameraId === selectedCameraId) return;
+    setSelectedCameraId(newCameraId);
+    if (!html5QrCodeRef.current || !scannerOpen) return;
+
+    try {
+      setIsSwitchingCamera(true);
+      setScannerError('');
+      if (html5QrCodeRef.current.isScanning) {
+        await html5QrCodeRef.current.stop();
+      }
+      videoTrackRef.current = null;
+      await startScanningWithCamera(html5QrCodeRef.current, newCameraId);
+    } catch (err) {
+      console.error("Error switching camera:", err);
+      setScannerError('Failed to switch camera: ' + (err.message || 'Device error'));
+    } finally {
+      setIsSwitchingCamera(false);
+    }
   };
 
   const stopScanner = async () => {
@@ -763,6 +950,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     html5QrCodeRef.current = null;
     videoTrackRef.current = null;
     setScannerOpen(false);
+    setIsSwitchingCamera(false);
   };
 
   // Auto-close scanner if session becomes locked while scanning is open
@@ -1312,19 +1500,74 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                 ref={scannerContainerRef}
                 style={{ width: '100%', maxWidth: '320px', display: 'flex', flexDirection: 'column', gap: '8px' }}
               >
-                <div id="qr-reader-container" style={{ width: '100%', aspectRatio: '1/1', borderRadius: '12px', overflow: 'hidden', border: '2px solid rgba(255,255,255,0.1)', background: '#000' }} />
+                {/* Camera Selector Dropdown */}
+                {cameras.length > 1 && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    padding: '8px 12px',
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    borderRadius: '10px',
+                    border: '1px solid rgba(255, 255, 255, 0.12)',
+                    boxSizing: 'border-box',
+                    width: '100%'
+                  }}>
+                    <Camera size={16} color="#fbbf24" style={{ flexShrink: 0 }} />
+                    <select
+                      value={selectedCameraId}
+                      onChange={(e) => handleCameraChange(e.target.value)}
+                      disabled={isSwitchingCamera}
+                      style={{
+                        background: 'transparent',
+                        color: 'var(--text-primary)',
+                        border: 'none',
+                        outline: 'none',
+                        fontSize: '0.82rem',
+                        fontWeight: '500',
+                        width: '100%',
+                        cursor: isSwitchingCamera ? 'not-allowed' : 'pointer'
+                      }}
+                    >
+                      {cameras.map((c, i) => (
+                        <option key={c.id || i} value={c.id} style={{ background: '#0f172a', color: '#f8fafc' }}>
+                          {c.label || `Camera ${i + 1}`}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div 
+                  id="qr-reader-container" 
+                  style={{ 
+                    width: '100%', 
+                    aspectRatio: '1/1', 
+                    borderRadius: '12px', 
+                    overflow: 'hidden', 
+                    border: '2px solid rgba(255,255,255,0.1)', 
+                    background: '#000',
+                    position: 'relative'
+                  }} 
+                />
                 
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
                   <button type="button" onClick={handleZoomOut} disabled={zoomLevel <= minZoom} style={{ background: 'transparent', border: 'none', color: zoomLevel <= minZoom ? 'var(--text-muted)' : 'var(--primary)', cursor: zoomLevel <= minZoom ? 'not-allowed' : 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <ZoomOut size={24} />
                   </button>
                   <span style={{ fontSize: '0.9rem', fontWeight: '600', color: 'var(--text-primary)', fontFamily: 'monospace' }}>
-                    {zoomLevel.toFixed(1)}x {zoomSupported ? '(Native)' : '(Digital)'}
+                    {isSwitchingCamera ? 'Switching...' : `${zoomLevel.toFixed(1)}x ${zoomSupported ? '(Native)' : '(Digital)'}`}
                   </span>
                   <button type="button" onClick={handleZoomIn} disabled={zoomLevel >= maxZoom} style={{ background: 'transparent', border: 'none', color: zoomLevel >= maxZoom ? 'var(--text-muted)' : 'var(--primary)', cursor: zoomLevel >= maxZoom ? 'not-allowed' : 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <ZoomIn size={24} />
                   </button>
                 </div>
+
+                {cameras.length > 1 && (
+                  <p style={{ margin: '2px 0 0 0', fontSize: '0.76rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                    💡 Agar screen black dikhe to upar dropdown se apna real webcam select karein.
+                  </p>
+                )}
               </div>
 
               <button className="btn btn-secondary" onClick={stopScanner} style={{ width: '100%', maxWidth: '320px' }}>
@@ -1579,12 +1822,26 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           <button 
             className={`admin-nav-item ${activeTab === 'notices' ? 'active' : ''}`}
             onClick={() => { setActiveTab('notices'); setMobileMenuOpen(false); }}
+            style={{ position: 'relative' }}
           >
             <Bell size={19} />
-            <span>Notice Board</span>
+            <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+              <span>Notice Board</span>
+              {unreadNoticeCount > 0 && (
+                <span style={{
+                  background: '#ef4444',
+                  color: '#ffffff',
+                  fontSize: '0.68rem',
+                  fontWeight: '800',
+                  padding: '2px 7px',
+                  borderRadius: '10px',
+                  marginLeft: 'auto'
+                }}>
+                  {unreadNoticeCount}
+                </span>
+              )}
+            </span>
           </button>
-
-
 
           <button 
             className={`admin-nav-item ${activeTab === 'profile' ? 'active' : ''}`}
@@ -1593,7 +1850,6 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             <User size={19} />
             <span>My Profile</span>
           </button>
-
 
         </nav>
 
@@ -1644,11 +1900,116 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             </p>
           </div>
 
-
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <button
+              onClick={() => { setActiveTab('notices'); setMobileMenuOpen(false); }}
+              className="student-header-bell-btn"
+              style={{
+                position: 'relative',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: '42px',
+                height: '42px',
+                borderRadius: '12px',
+                border: unreadNoticeCount > 0 ? '1.5px solid rgba(239, 68, 68, 0.45)' : '1px solid #cbd5e1',
+                background: unreadNoticeCount > 0 ? 'rgba(239, 68, 68, 0.08)' : '#f8fafc',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                boxShadow: unreadNoticeCount > 0 ? '0 2px 10px rgba(239, 68, 68, 0.2)' : 'none'
+              }}
+              title={unreadNoticeCount > 0 ? `${unreadNoticeCount} new notification(s)` : 'Notice Board'}
+            >
+              <Bell size={20} color={unreadNoticeCount > 0 ? '#ef4444' : '#475569'} />
+              {unreadNoticeCount > 0 && (
+                <span style={{
+                  position: 'absolute',
+                  top: '-4px',
+                  right: '-4px',
+                  background: '#ef4444',
+                  color: '#ffffff',
+                  fontSize: '0.68rem',
+                  fontWeight: '800',
+                  minWidth: '18px',
+                  height: '18px',
+                  padding: '0 4px',
+                  borderRadius: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: '2px solid #ffffff',
+                  boxShadow: '0 2px 5px rgba(0,0,0,0.2)'
+                }}>
+                  {unreadNoticeCount}
+                </span>
+              )}
+            </button>
+          </div>
         </header>
 
         {/* Scrollable Main Content Space */}
         <main className="admin-main-content student-main-content">
+          {/* Prominent Critical Defaulter Warning Banner */}
+          {(() => {
+            const criticalUnreadNotice = (studentNotices || []).find(n => {
+              const isCrit = n.tagColor === '#ef4444' || n.category === 'DEFAULTER NOTICE' || n.statusKey === 'CRITICAL';
+              if (!isCrit) return false;
+              const studentIdentifier = String(user?.id || user?.enrollment_no || '').toLowerCase();
+              const readBy = Array.isArray(n.readBy) ? n.readBy.map(x => String(x).toLowerCase()) : [];
+              return !readBy.includes(studentIdentifier);
+            });
+
+            if (!criticalUnreadNotice || activeTab === 'notices') return null;
+
+            return (
+              <div style={{
+                background: 'linear-gradient(135deg, #fee2e2 0%, #fef2f2 100%)',
+                border: '1.5px solid #f87171',
+                borderRadius: '16px',
+                padding: '16px 20px',
+                marginBottom: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: '12px',
+                boxShadow: '0 4px 16px rgba(239, 68, 68, 0.15)'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1, minWidth: '260px' }}>
+                  <div style={{
+                    width: '42px', height: '42px', borderRadius: '12px',
+                    background: '#ef4444', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                  }}>
+                    <ShieldAlert size={24} color="#ffffff" />
+                  </div>
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: '0.98rem', fontWeight: '800', color: '#991b1b' }}>
+                      {criticalUnreadNotice.title || 'Attendance Defaulter Warning Notice'}
+                    </h4>
+                    <p style={{ margin: '3px 0 0 0', fontSize: '0.84rem', color: '#b91c1c', fontWeight: '600' }}>
+                      {criticalUnreadNotice.body ? (criticalUnreadNotice.body.length > 120 ? criticalUnreadNotice.body.slice(0, 120) + '...' : criticalUnreadNotice.body) : 'Your attendance is critically below requirement.'}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setActiveTab('notices')}
+                  style={{
+                    padding: '8px 18px',
+                    borderRadius: '10px',
+                    background: '#ef4444',
+                    color: '#ffffff',
+                    border: 'none',
+                    fontWeight: '700',
+                    fontSize: '0.84rem',
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 8px rgba(239, 68, 68, 0.35)'
+                  }}
+                >
+                  View Notice
+                </button>
+              </div>
+            );
+          })()}
           
           {/* TAB 1: MARK ATTENDANCE */}
           {activeTab === 'mark-attendance' && (
@@ -2040,14 +2401,37 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           {activeTab === 'notices' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
               <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                   <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', fontWeight: 600, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
                     <Bell size={22} color="#fbbf24" />
                     Notice Board & Campus Announcements
                   </h2>
-                  <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
-                    {studentNotices.length > 0 ? `${studentNotices.length} Notice(s)` : 'Live Feed'}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                      {studentNotices.length > 0 ? `${studentNotices.length} Notice(s)` : 'Live Feed'}
+                    </span>
+                    <button
+                      onClick={loadStudentNotices}
+                      disabled={noticesLoading}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: '8px',
+                        background: '#f1f5f9',
+                        border: '1px solid #cbd5e1',
+                        color: '#334155',
+                        fontSize: '0.78rem',
+                        fontWeight: '700',
+                        cursor: noticesLoading ? 'default' : 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}
+                      title="Refresh Notices"
+                    >
+                      <RefreshCw size={13} className={noticesLoading ? 'spin-anim' : ''} />
+                      <span>{noticesLoading ? 'Checking...' : 'Refresh'}</span>
+                    </button>
+                  </div>
                 </div>
 
                 {studentNotices.length === 0 ? (
@@ -2063,7 +2447,11 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                     {studentNotices.map((notice) => {
-                      const isCritical = notice.tagColor === '#ef4444' || notice.category === 'DEFAULTER NOTICE';
+                      const isCritical = notice.tagColor === '#ef4444' || notice.category === 'DEFAULTER NOTICE' || notice.statusKey === 'CRITICAL';
+                      const studentIdentifier = String(user?.id || user?.enrollment_no || '').toLowerCase();
+                      const readBy = Array.isArray(notice.readBy) ? notice.readBy.map(x => String(x).toLowerCase()) : [];
+                      const isRead = readBy.includes(studentIdentifier);
+
                       return (
                         <div key={notice.id} style={{
                           background: '#ffffff',
@@ -2073,20 +2461,35 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                           display: 'flex',
                           flexDirection: 'column',
                           gap: '10px',
-                          boxShadow: '0 4px 14px rgba(0, 0, 0, 0.04)'
+                          boxShadow: isCritical ? '0 4px 16px rgba(239, 68, 68, 0.08)' : '0 4px 14px rgba(0, 0, 0, 0.04)',
+                          position: 'relative'
                         }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-                            <span style={{
-                              fontSize: '0.74rem',
-                              fontWeight: '800',
-                              color: isCritical ? '#dc2626' : '#d97706',
-                              background: isCritical ? '#fee2e2' : '#fef3c7',
-                              padding: '3px 10px',
-                              borderRadius: '6px',
-                              border: `1px solid ${isCritical ? '#fca5a5' : '#fcd34d'}`
-                            }}>
-                              {notice.category || 'ATTENDANCE WARNING'}
-                            </span>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{
+                                fontSize: '0.74rem',
+                                fontWeight: '800',
+                                color: isCritical ? '#dc2626' : '#d97706',
+                                background: isCritical ? '#fee2e2' : '#fef3c7',
+                                padding: '3px 10px',
+                                borderRadius: '6px',
+                                border: `1px solid ${isCritical ? '#fca5a5' : '#fcd34d'}`
+                              }}>
+                                {notice.category || (isCritical ? 'DEFAULTER NOTICE' : 'ATTENDANCE WARNING')}
+                              </span>
+                              {!isRead && (
+                                <span style={{
+                                  background: '#ef4444',
+                                  color: '#ffffff',
+                                  fontSize: '0.68rem',
+                                  fontWeight: '800',
+                                  padding: '2px 7px',
+                                  borderRadius: '6px'
+                                }}>
+                                  NEW
+                                </span>
+                              )}
+                            </div>
                             <span style={{ fontSize: '0.8rem', color: '#475569', fontWeight: '600' }}>{notice.date}</span>
                           </div>
                           <h4 style={{ fontSize: '1.02rem', fontWeight: '800', color: '#0f172a', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -2096,6 +2499,43 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                           <p style={{ fontSize: '0.92rem', color: '#0f172a', fontWeight: '600', margin: 0, lineHeight: '1.55' }}>
                             {notice.body}
                           </p>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '6px', paddingTop: '10px', borderTop: '1px solid #f1f5f9', flexWrap: 'wrap', gap: '8px' }}>
+                            {notice.attendancePercentage !== undefined || notice.percentage !== undefined ? (
+                              <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: '700' }}>
+                                Attendance: <span style={{ color: isCritical ? '#dc2626' : '#d97706', fontWeight: '800' }}>{notice.attendancePercentage ?? notice.percentage}%</span>
+                                {notice.attendedLectures !== undefined && notice.totalLectures !== undefined && (
+                                  <span style={{ color: '#94a3b8', fontWeight: '600', marginLeft: '6px' }}>
+                                    ({notice.attendedLectures}/{notice.totalLectures} lectures)
+                                  </span>
+                                )}
+                              </span>
+                            ) : <span />}
+                            {isRead ? (
+                              <span style={{ color: '#16a34a', fontSize: '0.78rem', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <CheckCircle2 size={14} /> Acknowledged
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => handleMarkNoticeAsRead(notice.id)}
+                                style={{
+                                  padding: '6px 14px',
+                                  borderRadius: '8px',
+                                  background: isCritical ? '#ef4444' : '#d97706',
+                                  color: '#ffffff',
+                                  border: 'none',
+                                  fontWeight: '700',
+                                  fontSize: '0.78rem',
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px',
+                                  boxShadow: isCritical ? '0 2px 8px rgba(239, 68, 68, 0.3)' : '0 2px 8px rgba(217, 119, 6, 0.3)'
+                                }}
+                              >
+                                <Check size={13} /> Mark as Read / Acknowledge
+                              </button>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
@@ -2280,8 +2720,32 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             type="button"
             className={`student-dock-item ${activeTab === 'notices' ? 'active' : ''}`}
             onClick={() => setActiveTab('notices')}
+            style={{ position: 'relative' }}
           >
-            <Bell size={21} />
+            <div style={{ position: 'relative', display: 'inline-flex' }}>
+              <Bell size={21} />
+              {unreadNoticeCount > 0 && (
+                <span style={{
+                  position: 'absolute',
+                  top: '-3px',
+                  right: '-6px',
+                  background: '#ef4444',
+                  color: '#ffffff',
+                  fontSize: '0.65rem',
+                  fontWeight: '800',
+                  minWidth: '15px',
+                  height: '15px',
+                  padding: '0 4px',
+                  borderRadius: '10px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: '1.5px solid #ffffff'
+                }}>
+                  {unreadNoticeCount}
+                </span>
+              )}
+            </div>
             <span>Notice</span>
           </button>
 

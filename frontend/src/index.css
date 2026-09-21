@@ -4823,4 +4823,21 @@ button.compact-date-btn {
   transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1), color 0.15s ease !important;
 }
 
+/* QR Scanner Container & Video Responsive Scaling */
+#qr-reader-container {
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: #000 !important;
+}
+
+#qr-reader-container video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 10px !important;
+  display: block !important;
+}
+
 
