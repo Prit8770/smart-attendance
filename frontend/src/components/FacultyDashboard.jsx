@@ -3632,24 +3632,54 @@ export default function FacultyDashboard({
                         Token index {(tokenIndex || 0) + 1} of {activeQrSessionDetails?.tokens?.length || 20} is active. Keep this screen visible to the class.
                       </p>
 
-                      {/* End Current Session Button */}
+                      {/* End Current Session Button (Red Glass Style) */}
                       <button
+                        type="button"
                         onClick={handleEndCurrentQrSession}
                         style={{
                           width: '100%',
                           maxWidth: '440px',
                           padding: '13px 24px',
-                          borderRadius: '12px',
-                          border: '1.5px solid rgba(226, 232, 240, 0.4)',
-                          background: 'rgba(255, 255, 255, 0.05)',
-                          color: 'var(--text-primary)',
-                          fontSize: '0.92rem',
+                          borderRadius: '14px',
+                          border: '1.5px solid rgba(239, 68, 68, 0.45)',
+                          background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.14) 0%, rgba(220, 38, 38, 0.26) 100%)',
+                          backdropFilter: 'blur(16px)',
+                          WebkitBackdropFilter: 'blur(16px)',
+                          color: '#ef4444',
+                          fontSize: '0.94rem',
                           fontWeight: '700',
+                          letterSpacing: '0.02em',
                           cursor: 'pointer',
-                          transition: 'all 0.2s ease',
-                          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.02)'
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                          transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                          boxShadow: '0 4px 20px -2px rgba(239, 68, 68, 0.22), inset 0 1px 1px 0 rgba(255, 255, 255, 0.35)'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 0.26) 0%, rgba(220, 38, 38, 0.42) 100%)';
+                          e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.75)';
+                          e.currentTarget.style.boxShadow = '0 6px 24px -2px rgba(239, 68, 68, 0.42), inset 0 1px 1px 0 rgba(255, 255, 255, 0.5)';
+                          e.currentTarget.style.transform = 'translateY(-1px)';
+                          e.currentTarget.style.color = '#ef4444';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'linear-gradient(135deg, rgba(239, 68, 68, 0.14) 0%, rgba(220, 38, 38, 0.26) 100%)';
+                          e.currentTarget.style.borderColor = 'rgba(239, 68, 68, 0.45)';
+                          e.currentTarget.style.boxShadow = '0 4px 20px -2px rgba(239, 68, 68, 0.22), inset 0 1px 1px 0 rgba(255, 255, 255, 0.35)';
+                          e.currentTarget.style.transform = 'translateY(0)';
+                          e.currentTarget.style.color = '#ef4444';
+                        }}
+                        onMouseDown={(e) => {
+                          e.currentTarget.style.transform = 'translateY(1px) scale(0.99)';
+                          e.currentTarget.style.color = '#ef4444';
+                        }}
+                        onFocus={(e) => {
+                          e.currentTarget.style.color = '#ef4444';
                         }}
                       >
+                        <XCircle size={17} style={{ strokeWidth: 2.3 }} />
                         End Current Session
                       </button>
                     </div>
