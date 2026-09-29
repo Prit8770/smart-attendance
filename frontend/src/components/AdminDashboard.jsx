@@ -3,7 +3,7 @@ import {
   Users, KeyRound, QrCode, MapPin, BarChart3, Download, Upload, TrendingUp, Plus, Search,
   Trash2, Edit, Check, CheckCircle, XCircle, Clock, Shield, ShieldAlert, LogOut, RefreshCw, Unlock,
   Sun, Moon, GraduationCap, User, Settings, Folder, FolderOpen, Calendar, Menu, RotateCcw, X,
-  LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileText, ClipboardList, AlertTriangle, UserPlus, BookOpen, FileSpreadsheet, Send, MessageSquare, ArrowLeft, Printer, Layers, SlidersHorizontal, Filter
+  LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileText, ClipboardList, AlertTriangle, UserPlus, BookOpen, FileSpreadsheet, Send, MessageSquare, ArrowLeft, Printer, Layers, SlidersHorizontal, Filter, Copy
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -71,10 +71,16 @@ export default function AdminDashboard({
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const roleMenuRef = useRef(null);
+  const profileCardRef = useRef(null);
 
   useEffect(() => {
     const handleOutsideClick = (e) => {
-      if (roleMenuRef.current && !roleMenuRef.current.contains(e.target)) {
+      if (
+        roleMenuRef.current &&
+        !roleMenuRef.current.contains(e.target) &&
+        profileCardRef.current &&
+        !profileCardRef.current.contains(e.target)
+      ) {
         setRoleMenuOpen(false);
       }
     };
@@ -158,11 +164,13 @@ export default function AdminDashboard({
   const [showStudentMobileActions, setShowStudentMobileActions] = useState(false);
   const [showFacultyMobileActions, setShowFacultyMobileActions] = useState(false);
   const [showSubjectMobileActions, setShowSubjectMobileActions] = useState(false);
+  const [showSemesterMobileActions, setShowSemesterMobileActions] = useState(false);
 
   useEffect(() => {
     setShowStudentMobileActions(false);
     setShowFacultyMobileActions(false);
     setShowSubjectMobileActions(false);
+    setShowSemesterMobileActions(false);
   }, [activeTab, mobileSidebarOpen]);
 
   useEffect(() => {
@@ -197,6 +205,7 @@ export default function AdminDashboard({
   const [selectedStudentIds, setSelectedStudentIds] = useState([]);
   const [selectedFacultyIds, setSelectedFacultyIds] = useState([]);
   const [selectedSubjectIds, setSelectedSubjectIds] = useState([]);
+  const [selectedSemesterIds, setSelectedSemesterIds] = useState([]);
 
   // Custom React Delete Confirmation Modal State (No Browser Thread Blocking)
   const [deleteConfirmState, setDeleteConfirmState] = useState({
@@ -236,6 +245,339 @@ export default function AdminDashboard({
   const [createdFacultyCredentials, setCreatedFacultyCredentials] = useState(null); // Save generated credentials
   const [facultyLoading, setFacultyLoading] = useState(false);
 
+  // Semester CRUD / Management State
+  const [customSemesters, setCustomSemesters] = useState(() => {
+    try {
+      const saved = localStorage.getItem('admin_custom_semesters');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+  const [showAddSemesterModal, setShowAddSemesterModal] = useState(false);
+  const [isEditingSemester, setIsEditingSemester] = useState(false);
+  const [editingSemId, setEditingSemId] = useState(null);
+  const [semesterFormData, setSemesterFormData] = useState({
+    semNumber: '',
+    name: '',
+    program: "Bachelor's of Computer Applications",
+    term: 'Odd'
+  });
+  const [semesterSearchQuery, setSemesterSearchQuery] = useState('');
+
+  const defaultSemestersList = useMemo(() => [], []);
+
+  const allSemestersList = useMemo(() => {
+    return [...defaultSemestersList, ...customSemesters];
+  }, [defaultSemestersList, customSemesters]);
+
+  const handleOpenAddSemesterModal = () => {
+    setIsEditingSemester(false);
+    setEditingSemId(null);
+    const nextSemNum = String(allSemestersList.length + 1);
+    setSemesterFormData({
+      semNumber: nextSemNum,
+      name: `Semester ${nextSemNum}`,
+      program: "Bachelor's of Computer Applications",
+      term: (allSemestersList.length + 1) % 2 === 1 ? 'Odd' : 'Even'
+    });
+    setShowAddSemesterModal(true);
+  };
+
+  const handleOpenEditSemesterModal = (sem) => {
+    setIsEditingSemester(true);
+    setEditingSemId(sem.id);
+    setSemesterFormData({
+      semNumber: sem.semNumber || sem.id,
+      name: sem.name || `Semester ${sem.id}`,
+      program: sem.program || sem.department || "Bachelor's of Computer Applications",
+      term: sem.term || 'Odd'
+    });
+    setShowAddSemesterModal(true);
+  };
+
+  const handleSaveSemester = async (e) => {
+    if (e) e.preventDefault();
+    const cleanNum = semesterFormData.semNumber.trim();
+    const cleanName = semesterFormData.name.trim() || `Semester ${cleanNum}`;
+
+    if (!cleanNum) {
+      showToast('Please enter a semester number or title', 'error');
+      return;
+    }
+
+    const payload = {
+      semester_number: parseInt(cleanNum.replace(/\D/g, ''), 10) || 1,
+      semester_display_name: cleanName,
+      term_type: semesterFormData.term || 'Odd'
+    };
+
+    try {
+      if (isEditingSemester) {
+        const res = await fetch(`/api/semesters/${editingSemId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const resData = await res.json();
+        if (!res.ok) {
+          throw new Error(resData.error || 'Failed to update semester in database');
+        }
+
+        const updatedDbSem = resData.semester || { id: editingSemId, ...payload };
+        const updatedCustom = customSemesters.map(s => {
+          if (String(s.id) === String(editingSemId)) {
+            return {
+              ...s,
+              id: updatedDbSem.id,
+              semNumber: String(updatedDbSem.semester_number || cleanNum),
+              name: updatedDbSem.semester_display_name || cleanName,
+              term: updatedDbSem.term_type || semesterFormData.term
+            };
+          }
+          return s;
+        });
+        setCustomSemesters(updatedCustom);
+        localStorage.setItem('admin_custom_semesters', JSON.stringify(updatedCustom));
+        showToast(`Semester '${cleanName}' updated successfully!`, 'success');
+      } else {
+        const exists = allSemestersList.some(s => String(s.semNumber) === cleanNum || s.name.toLowerCase() === cleanName.toLowerCase());
+        if (exists) {
+          showToast(`Semester ${cleanNum} (${cleanName}) already exists!`, 'error');
+          return;
+        }
+
+        const res = await fetch('/api/semesters', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify(payload)
+        });
+
+        const resData = await res.json();
+        if (!res.ok) {
+          throw new Error(resData.error || 'Failed to save semester to database');
+        }
+
+        const newDbSem = resData.semester || {};
+        const newSem = {
+          id: newDbSem.id || `sem_${Date.now()}`,
+          semNumber: String(newDbSem.semester_number || cleanNum),
+          name: newDbSem.semester_display_name || cleanName,
+          program: semesterFormData.program || "Bachelor's of Computer Applications",
+          term: newDbSem.term_type || semesterFormData.term || 'Odd',
+          isDefault: false,
+          createdAt: new Date().toISOString()
+        };
+        const newCustom = [...customSemesters, newSem];
+        setCustomSemesters(newCustom);
+        localStorage.setItem('admin_custom_semesters', JSON.stringify(newCustom));
+        showToast(`Semester '${cleanName}' saved to Supabase database successfully!`, 'success');
+      }
+    } catch (err) {
+      console.error('Save semester error:', err);
+      showToast(err.message || 'Error saving semester to database', 'error');
+    }
+    setShowAddSemesterModal(false);
+  };
+
+  const handleDeleteSemester = (semId, semName) => {
+    setDeleteConfirmState({
+      isOpen: true,
+      type: 'single',
+      entityType: 'semester',
+      studentId: semId,
+      studentName: semName || 'this semester',
+      targetIds: [semId]
+    });
+  };
+
+  const handleDownloadSemesterSampleTemplate = () => {
+    const headers = [['Semester Number', 'Semester Name', 'Academic Year', 'Term', 'Description']];
+    const worksheet = XLSX.utils.aoa_to_sheet(headers);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Semester Sample');
+    XLSX.writeFile(workbook, 'Semester_Bulk_Upload_Sample.xlsx');
+    showToast('Downloaded Semester import sample format template!', 'success');
+  };
+
+  const handleSemesterImportFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const fileType = file.name.split('.').pop().toLowerCase();
+    if (fileType !== 'csv' && fileType !== 'xlsx' && fileType !== 'xls') {
+      showToast('Invalid file format! Please upload only .csv or .xlsx excel files.', 'error');
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        let rows = [];
+        const data = new Uint8Array(event.target.result);
+
+        try {
+          const workbook = XLSX.read(data, { type: 'array', raw: false, cellDates: true });
+          if (workbook && workbook.SheetNames && workbook.SheetNames.length > 0) {
+            for (const sheetName of workbook.SheetNames) {
+              const worksheet = workbook.Sheets[sheetName];
+              if (!worksheet) continue;
+              const rawRows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', raw: false });
+              const validRows = rawRows.filter(r =>
+                Array.isArray(r) && r.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== '')
+              );
+              if (validRows.length >= 2) {
+                rows = validRows;
+                break;
+              } else if (validRows.length > rows.length) {
+                rows = validRows;
+              }
+            }
+          }
+        } catch (xlsxErr) {
+          console.warn('XLSX read attempt failed for semester import:', xlsxErr);
+        }
+
+        if (!rows || rows.length < 2) {
+          try {
+            const textDecoder = new TextDecoder('utf-8');
+            const text = textDecoder.decode(data);
+            const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+            if (lines.length >= 2) {
+              let delimiter = ',';
+              if (lines[0].includes(';') && !lines[0].includes(',')) delimiter = ';';
+              else if (lines[0].includes('\t') && !lines[0].includes(',')) delimiter = '\t';
+              rows = lines.map(line => line.split(delimiter).map(v => v.trim().replace(/^"|"$/g, '')));
+            }
+          } catch (txtErr) {
+            console.warn('Text fallback failed for semester import:', txtErr);
+          }
+        }
+
+        if (!rows || rows.length < 2) {
+          showToast('File is empty or missing data rows.', 'warning');
+          return;
+        }
+
+        const headers = rows[0].map(h => (h ? h.toString().trim().toLowerCase() : ''));
+        let importedCount = 0;
+        let updatedCustom = [...customSemesters];
+
+        for (let i = 1; i < rows.length; i++) {
+          const values = rows[i];
+          if (!values || values.length === 0) continue;
+
+          let semNumber = '', name = '', academicYear = '2025-2026', term = 'Odd', description = '';
+
+          headers.forEach((h, idx) => {
+            const val = values[idx] !== undefined && values[idx] !== null ? values[idx].toString().trim() : '';
+            const cleanH = h ? h.toString().trim().toLowerCase() : '';
+
+            if (cleanH.includes('number') || cleanH.includes('no') || cleanH.includes('sem number') || cleanH.includes('sem no')) {
+              semNumber = val.replace(/\D/g, '') || val;
+            } else if (cleanH.includes('name') || cleanH.includes('title')) {
+              name = val;
+            } else if (cleanH.includes('year') || cleanH.includes('academic')) {
+              academicYear = val || '2025-2026';
+            } else if (cleanH.includes('term')) {
+              term = val || 'Odd';
+            } else if (cleanH.includes('desc')) {
+              description = val;
+            }
+          });
+
+          if (!semNumber && name) {
+            semNumber = name.replace(/\D/g, '');
+          }
+          if (semNumber) {
+            const cleanName = name || `Semester ${semNumber}`;
+            const exists = updatedCustom.some(s => String(s.semNumber) === String(semNumber) || s.name.toLowerCase() === cleanName.toLowerCase());
+            if (!exists) {
+              const newSem = {
+                id: `custom_${Date.now()}_${i}`,
+                semNumber: String(semNumber),
+                name: cleanName,
+                academicYear: academicYear || '2025-2026',
+                term: term || 'Odd',
+                description: description || '',
+                isDefault: false,
+                createdAt: new Date().toISOString()
+              };
+              updatedCustom.push(newSem);
+              importedCount++;
+            }
+          }
+        }
+
+        if (importedCount > 0) {
+          setCustomSemesters(updatedCustom);
+          localStorage.setItem('admin_custom_semesters', JSON.stringify(updatedCustom));
+          showToast(`Successfully imported ${importedCount} new semester(s)!`, 'success');
+        } else {
+          showToast('No new semesters were imported (duplicates skipped or empty).', 'info');
+        }
+      } catch (err) {
+        console.error('Error importing semester file:', err);
+        showToast('Failed to parse semester file.', 'error');
+      }
+    };
+
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  };
+
+  const handleExportSemesterData = () => {
+    if (!allSemestersList || allSemestersList.length === 0) {
+      showToast('No semester records available to export.', 'warning');
+      return;
+    }
+
+    const filteredSemesters = allSemestersList.filter(sem => {
+      if (!semesterSearchQuery) return true;
+      const q = semesterSearchQuery.toLowerCase();
+      return (
+        sem.name.toLowerCase().includes(q) ||
+        String(sem.semNumber).includes(q) ||
+        (sem.academicYear && sem.academicYear.toLowerCase().includes(q)) ||
+        (sem.term && sem.term.toLowerCase().includes(q))
+      );
+    });
+
+    const listToExport = filteredSemesters.length > 0 ? filteredSemesters : allSemestersList;
+
+    const exportRows = listToExport.map((s, idx) => {
+      const semStudentCount = students.filter(std => String(std.semester).trim() === String(s.semNumber).trim()).length;
+      const semSubjectCount = allFacultySubjects.filter(sub => String(sub.semester).trim() === String(s.semNumber).trim()).length;
+
+      return {
+        'S.No': idx + 1,
+        'Semester Number': s.semNumber || s.id,
+        'Semester Name': s.name || `Semester ${s.semNumber}`,
+        'Academic Year': s.academicYear || '2025-2026',
+        'Term': s.term || 'Odd',
+        'Total Students': semStudentCount,
+        'Total Subjects': semSubjectCount,
+        'Description': s.description || '-'
+      };
+    });
+
+    const worksheet = XLSX.utils.json_to_sheet(exportRows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Semesters List');
+    const fileName = `Semester_List_${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+    showToast(`Successfully exported ${listToExport.length} semester record(s) to ${fileName}!`, 'success');
+  };
+
+
 
   // QR Session Manager State
   const [qrSessionHistory, setQrSessionHistory] = useState(() => {
@@ -256,7 +598,7 @@ export default function AdminDashboard({
   };
 
   // Master Attendance Matrix States
-  const [selectedSemFolder, setSelectedSemFolder] = useState('ALL');
+  const [selectedSemFolder, setSelectedSemFolder] = useState('');
   const [matrixData, setMatrixData] = useState(null);
   const [matrixLoading, setMatrixLoading] = useState(false);
   const [matrixDateMode, setMatrixDateMode] = useState('all');
@@ -284,7 +626,7 @@ export default function AdminDashboard({
 
   // Fetch Semester Matrix Data from Backend API with client-side fallback
   const fetchSemesterMatrix = async (semNumber) => {
-    const targetSem = (!semNumber || semNumber === 'ALL') ? 'ALL' : semNumber;
+    const targetSem = (!semNumber || semNumber === 'ALL') ? (availableSemesters[0] || '1') : semNumber;
     if (!matrixData) {
       setMatrixLoading(true);
     }
@@ -452,17 +794,21 @@ export default function AdminDashboard({
 
   useEffect(() => {
     if (activeTab === 'attendance_logs') {
-      fetchSemesterMatrix(selectedSemFolder || 'ALL');
+      const activeSem = (selectedSemFolder && selectedSemFolder !== 'ALL') ? selectedSemFolder : (availableSemesters[0] || '1');
+      if (selectedSemFolder !== activeSem) {
+        setSelectedSemFolder(activeSem);
+      }
+      fetchSemesterMatrix(activeSem);
     }
-  }, [activeTab, selectedSemFolder, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
+  }, [activeTab, selectedSemFolder, availableSemesters, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
 
   // Automatically reset matrix filters when navigating away from attendance logs
   useEffect(() => {
     if (activeTab !== 'attendance_logs') {
-      setSelectedSemFolder('ALL');
+      setSelectedSemFolder(availableSemesters[0] || '1');
       setMatrixSearch('');
     }
-  }, [activeTab]);
+  }, [activeTab, availableSemesters]);
 
   const handleReloadDirectory = async () => {
     setDirectoryReloading(true);
@@ -507,7 +853,7 @@ export default function AdminDashboard({
       const finalPresent = applicableCount > 0 ? presentCount : (st.presentCount !== undefined ? st.presentCount : presentCount);
       const finalAbsent = applicableCount > 0 ? absentCount : (st.absentCount !== undefined ? st.absentCount : absentCount);
       const finalApplicable = applicableCount > 0 ? applicableCount : ((finalPresent + finalAbsent) || 0);
-      const pct = finalApplicable > 0 ? Math.round((finalPresent / finalApplicable) * 100) : (matrixData.columns?.length === 0 ? (st.pct !== undefined ? st.pct : 0) : 100);
+      const pct = finalApplicable > 0 ? Math.round((finalPresent / finalApplicable) * 100) : null;
 
       return {
         ...st,
@@ -662,8 +1008,6 @@ export default function AdminDashboard({
   }, [matrixData, selectedSemFolder, students, currentActiveSemester]);
 
   useEffect(() => {
-    setMatrixDivFilter('ALL');
-    setMatrixSubjectFilter('ALL');
     setMatrixSearch('');
     setMatrixSemPageIndex(0);
   }, [selectedSemFolder]);
@@ -729,13 +1073,29 @@ export default function AdminDashboard({
   const [newSubName, setNewSubName] = useState('');
   const [newSubShort, setNewSubShort] = useState('');
   const [newSubCode, setNewSubCode] = useState('');
-  const [newSubSem, setNewSubSem] = useState('1');
+  const [newSubSem, setNewSubSem] = useState('');
   const [newSubType, setNewSubType] = useState('Theory');
   const [newSubFacultyId, setNewSubFacultyId] = useState('');
   const [subjectModalMode, setSubjectModalMode] = useState('add'); // 'add' | 'edit'
   const [editingSubjectIdx, setEditingSubjectIdx] = useState(null);
+  const [editingSubjectObj, setEditingSubjectObj] = useState(null);
   const [showAddSubjectModal, setShowAddSubjectModal] = useState(false);
   const [savingSubjects, setSavingSubjects] = useState(false);
+  // Global subjects catalog (unassigned - stored in localStorage)
+  const [globalSubjectsCatalog, setGlobalSubjectsCatalog] = useState(() => {
+    try {
+      const saved = localStorage.getItem('admin_global_subjects_catalog');
+      if (saved) return JSON.parse(saved);
+    } catch(e) {}
+    return [];
+  });
+
+  // Assign Faculty to Subject State (Photo 1 & Photo 2)
+  const [showAssignFacultyModal, setShowAssignFacultyModal] = useState(false);
+  const [assigningSubject, setAssigningSubject] = useState(null);
+  const [selectedAssignFacultyIds, setSelectedAssignFacultyIds] = useState([]);
+  const [savingFacultyAssignment, setSavingFacultyAssignment] = useState(false);
+  const [assignFacultySearch, setAssignFacultySearch] = useState('');
 
   // Blacklist Rules State (Strictly user-defined: NO fake/dummy rules auto-injected)
   const [blacklistRules, setBlacklistRules] = useState(() => {
@@ -781,6 +1141,78 @@ export default function AdminDashboard({
       }
     };
     fetchRules();
+  }, [token]);
+
+  // Fetch subjects from Supabase server DB on load
+  useEffect(() => {
+    const fetchDbSubjects = async () => {
+      try {
+        const res = await fetch('/api/subjects');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            const formattedDbSubs = data.map(dbSub => ({
+              subjectName: dbSub.subject_name || dbSub.subjectName || '',
+              shortName: dbSub.short_name || dbSub.shortName || '-',
+              code: dbSub.subject_code || dbSub.code || '',
+              subjectCode: dbSub.subject_code || dbSub.code || '',
+              semester: String(dbSub.semester || '1'),
+              type: dbSub.type || 'Theory',
+              globalKey: `supabase_${dbSub.id || Date.now()}`,
+              dbId: dbSub.id
+            }));
+
+            setGlobalSubjectsCatalog(prev => {
+              const mergedMap = new Map();
+              (prev || []).forEach(s => {
+                const k = `${(s.code || s.subjectCode || s.subjectName || '').toLowerCase()}_${String(s.semester || '1').replace(/\D/g,'')}_${(s.type || 'Theory').toLowerCase()}`;
+                mergedMap.set(k, s);
+              });
+              formattedDbSubs.forEach(s => {
+                const k = `${(s.code || s.subjectCode || s.subjectName || '').toLowerCase()}_${String(s.semester || '1').replace(/\D/g,'')}_${(s.type || 'Theory').toLowerCase()}`;
+                mergedMap.set(k, { ...mergedMap.get(k), ...s });
+              });
+              const result = Array.from(mergedMap.values());
+              localStorage.setItem('admin_global_subjects_catalog', JSON.stringify(result));
+              return result;
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Error fetching subjects from Supabase server:', err);
+      }
+    };
+    fetchDbSubjects();
+  }, [token]);
+
+  // Fetch semesters from Supabase server DB on load
+  useEffect(() => {
+    const fetchDbSemesters = async () => {
+      try {
+        const res = await fetch('/api/semesters');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            const formatted = data.map(s => ({
+              id: s.id,
+              semNumber: String(s.semester_number || s.id),
+              name: s.semester_display_name || `Semester ${s.semester_number || s.id}`,
+              program: "Bachelor's of Computer Applications",
+              academicYear: s.academic_year || '2025-2026',
+              term: s.term_type || 'Odd',
+              description: s.description || ''
+            }));
+            setCustomSemesters(formatted);
+            try {
+              localStorage.setItem('admin_custom_semesters', JSON.stringify(formatted));
+            } catch (e) {}
+          }
+        }
+      } catch (err) {
+        console.warn('Error fetching semesters from Supabase server:', err);
+      }
+    };
+    fetchDbSemesters();
   }, [token]);
 
   const handleOpenAddRuleModal = () => {
@@ -949,6 +1381,8 @@ export default function AdminDashboard({
     showStudentModal ||
     showFacultyModal ||
     showAddSubjectModal ||
+    showAddSemesterModal ||
+    showAssignFacultyModal ||
     showAddRuleModal ||
     (typeof promoteStep === 'number' && promoteStep > 0)
   );
@@ -968,9 +1402,10 @@ export default function AdminDashboard({
     showToast(`Filters Applied: ${semText} • ${divText} • ${statusText}`, 'success');
   };
 
-  // Get all assigned teaching subjects across ALL faculties (Sorted semester-wise: Sem 1, Sem 2, etc.)
   const allFacultySubjects = (() => {
-    let subs = [];
+    const subjectMap = new Map();
+
+    // 1. Process all faculty-assigned subjects
     (faculties || []).forEach(f => {
       let fSubs = [];
       if (typeof f.subjects === 'string') {
@@ -978,14 +1413,131 @@ export default function AdminDashboard({
       } else if (Array.isArray(f.subjects)) {
         fSubs = f.subjects;
       }
+
       if (Array.isArray(fSubs)) {
         fSubs.forEach((s, idx) => {
+          if (!s || (!s.subjectName && !s.name)) return;
+          const subName = String(s.subjectName || s.name || '').trim();
+          const semNum = String(s.semester || '1').replace(/\D/g, '') || '1';
           const subCodeVal = (s.code || s.subjectCode || s.subject_code || s.subCode || s.sub_code || '').toString().trim();
-          const subKey = s.id || (subCodeVal ? `${f.id}_${subCodeVal}` : null) || `${f.id}_${s.subjectName || s.name || 'sub'}_${idx}`;
-          subs.push({ ...s, code: subCodeVal, subjectCode: subCodeVal, subKey, facultyId: f.id, facultyName: f.name });
+          const subType = (s.type || s.subjectType || 'Theory').toString().trim();
+          const shortCode = (s.shortName || s.shortCode || '').toString().trim();
+
+          const codeKey = subCodeVal ? subCodeVal.toLowerCase() : '';
+          const typeKey = subType ? subType.toLowerCase() : 'theory';
+          const groupKey = codeKey
+            ? `code_${codeKey}_sem_${semNum}_type_${typeKey}`
+            : `name_${subName.toLowerCase()}_sem_${semNum}_type_${typeKey}`;
+
+          const facIdStr = String(f.id);
+          const facName = f.name || 'Faculty';
+
+          if (subjectMap.has(groupKey)) {
+            const existing = subjectMap.get(groupKey);
+            if (!existing.facultyIds.includes(facIdStr)) {
+              existing.facultyIds.push(facIdStr);
+              existing.facultyNamesList.push(facName);
+              existing.facultyName = existing.facultyNamesList.join(', ');
+            }
+          } else {
+            subjectMap.set(groupKey, {
+              ...s,
+              subjectName: subName,
+              shortName: shortCode,
+              code: subCodeVal,
+              subjectCode: subCodeVal,
+              semester: semNum,
+              type: subType,
+              subKey: groupKey,
+              facultyId: f.id,
+              facultyIds: [facIdStr],
+              facultyNamesList: [facName],
+              facultyName: facName
+            });
+          }
         });
       }
     });
+
+    // 2. Process global subjects from catalog (resolving assigned faculty names)
+    (globalSubjectsCatalog || []).forEach((s, idx) => {
+      if (!s || (!s.subjectName && !s.name)) return;
+      const subName = String(s.subjectName || s.name || '').trim();
+      const semNum = String(s.semester || '1').replace(/\D/g, '') || '1';
+      const subCodeVal = (s.code || s.subjectCode || s.subject_code || s.subCode || s.sub_code || '').toString().trim();
+      const subType = (s.type || s.subjectType || 'Theory').toString().trim();
+      const shortCode = (s.shortName || s.shortCode || '').toString().trim();
+
+      const codeKey = subCodeVal ? subCodeVal.toLowerCase() : '';
+      const typeKey = subType ? subType.toLowerCase() : 'theory';
+      const groupKey = codeKey
+        ? `code_${codeKey}_sem_${semNum}_type_${typeKey}`
+        : `name_${subName.toLowerCase()}_sem_${semNum}_type_${typeKey}`;
+
+      if (!subjectMap.has(groupKey)) {
+        const globalKey = s.globalKey || `global_${groupKey}_${idx}`;
+
+        // Resolve faculty IDs & faculty names if assigned in catalog or from faculties array
+        let fIds = Array.isArray(s.facultyIds) ? s.facultyIds.map(String) : [];
+        if (fIds.length === 0 && s.facultyId) {
+          fIds = [String(s.facultyId)];
+        }
+
+        let fNames = [];
+        if (fIds.length > 0) {
+          fNames = fIds.map(fid => {
+            const fac = (faculties || []).find(f => String(f.id) === String(fid));
+            return fac ? (fac.name || 'Faculty') : null;
+          }).filter(Boolean);
+        }
+
+        const facNameDisplay = fNames.length > 0
+          ? fNames.join(', ')
+          : (s.facultyName && s.facultyName !== 'Unassigned' ? s.facultyName : 'Unassigned');
+
+        subjectMap.set(groupKey, {
+          ...s,
+          subjectName: subName,
+          shortName: shortCode,
+          code: subCodeVal,
+          subjectCode: subCodeVal,
+          semester: semNum,
+          type: subType,
+          subKey: globalKey,
+          globalKey: globalKey,
+          facultyId: fIds[0] || null,
+          facultyIds: fIds,
+          facultyNamesList: fNames,
+          facultyName: facNameDisplay
+        });
+      } else {
+        const existing = subjectMap.get(groupKey);
+        if (s.shortName && !existing.shortName) existing.shortName = s.shortName;
+        if (s.code && !existing.code) existing.code = s.code;
+        if (s.subjectCode && !existing.subjectCode) existing.subjectCode = s.subjectCode;
+
+        // Merge any assigned faculty IDs from s in globalSubjectsCatalog
+        let fIds = Array.isArray(s.facultyIds) ? s.facultyIds.map(String) : [];
+        if (fIds.length === 0 && s.facultyId) {
+          fIds = [String(s.facultyId)];
+        }
+        fIds.forEach(fid => {
+          if (fid && !existing.facultyIds.includes(fid)) {
+            existing.facultyIds.push(fid);
+            const fac = (faculties || []).find(f => String(f.id) === String(fid));
+            const facName = fac ? (fac.name || 'Faculty') : null;
+            if (facName && !existing.facultyNamesList.includes(facName)) {
+              existing.facultyNamesList.push(facName);
+            }
+          }
+        });
+        if (existing.facultyNamesList.length > 0) {
+          existing.facultyName = existing.facultyNamesList.join(', ');
+        }
+      }
+    });
+
+    const subs = Array.from(subjectMap.values());
 
     // Sort Semester-wise ascending (Sem 1, Sem 2, Sem 3, ...), then by subject name
     subs.sort((a, b) => {
@@ -1001,7 +1553,6 @@ export default function AdminDashboard({
   })();
 
   // Calculate attendance & defaulter status for all students (Memoized to eliminate mobile lag)
-  // Calculate attendance & defaulter status for all students (Memoized to eliminate mobile lag)
   const defaulterStudentList = useMemo(() => {
     if (!students || !Array.isArray(students) || students.length === 0) return [];
 
@@ -1015,13 +1566,50 @@ export default function AdminDashboard({
       return s.trim();
     };
 
+    const getSemNum = (val) => {
+      if (!val) return '';
+      return String(val).replace(/\D/g, '').trim();
+    };
+
+    const getDivCode = (val) => {
+      if (!val) return 'ALL';
+      return String(val).trim().toUpperCase();
+    };
+
+    // Extract all identifiers for a student or log object
+    const getObjectKeys = (obj) => {
+      if (!obj) return [];
+      const keys = [
+        obj.enrollment_no,
+        obj.student_id,
+        obj.roll_no,
+        obj.roll,
+        obj.id,
+        obj.user_id,
+        obj.email,
+        obj.student?.enrollment_no,
+        obj.student?.student_id,
+        obj.student?.roll_no,
+        obj.student?.id
+      ];
+      return Array.from(new Set(
+        keys.filter(k => k !== undefined && k !== null && String(k).trim() !== '')
+            .map(k => String(k).trim().toLowerCase())
+      ));
+    };
+
+    const studentKeysListMap = students.map(std => ({
+      std,
+      keys: getObjectKeys(std)
+    }));
+
     // 1. Calculate unique conducted session keys per (Semester + Division) across all sources
     const semDivSessionKeysMap = {};
 
     const registerSessionKey = (semVal, divVal, sessKey) => {
-      if (!semVal || !sessKey) return;
-      const sem = String(semVal).replace(/\D/g, '').trim() || '1';
-      const div = String(divVal || 'ALL').trim().toUpperCase();
+      if (!sessKey) return;
+      const sem = getSemNum(semVal) || '1';
+      const div = getDivCode(divVal);
 
       const comboKey = `${sem}_${div}`;
       if (!semDivSessionKeysMap[comboKey]) {
@@ -1030,42 +1618,71 @@ export default function AdminDashboard({
       semDivSessionKeysMap[comboKey].add(sessKey);
     };
 
+    const getSessKey = (item) => {
+      if (!item) return null;
+      if (item.qr_session_id) return `qr_${item.qr_session_id}`;
+      if (item.otp_id) return `otp_${item.otp_id}`;
+      if (item.session_id) return `sess_${item.session_id}`;
+      const d = normDateStr(item.date || item.created_at);
+      const sub = String(item.subject || item.subject_name || '').trim().toLowerCase();
+      const t = item.time || item.id || '';
+      if (d && sub) return `${d}_${sub}_${t}`;
+      if (d) return `${d}_${t}`;
+      return item.id ? `id_${item.id}` : null;
+    };
+
     (qrSessionHistory || []).forEach(sess => {
       if (!sess) return;
       const sem = sess.semester || '1';
       const div = sess.division || 'ALL';
-      const sKey = sess.id || sess.qr_session_id || sess.otp_id || `${sess.date}_${sess.subject}_${sess.time}`;
+      const sKey = getSessKey(sess);
       registerSessionKey(sem, div, sKey);
     });
 
     allSystemLogs.forEach(log => {
       if (!log) return;
-      const sem = log.semester || (log.student && log.student.semester) || '1';
-      const div = log.division || (log.student && log.student.division) || 'ALL';
-      const sKey = log.qr_session_id ? `qr_${log.qr_session_id}` :
-                   log.otp_id ? `otp_${log.otp_id}` :
-                   (log.date && log.subject ? `${log.date}_${log.subject}_${log.time || log.id}` : null);
-      if (sKey) {
-        registerSessionKey(sem, div, sKey);
+      let sem = log.semester || log.sem || (log.student && (log.student.semester || log.student.sem));
+      let div = log.division || log.div || (log.student && (log.student.division || log.student.div));
+
+      if (!sem || !div) {
+        const logKeys = getObjectKeys(log);
+        const match = studentKeysListMap.find(item => item.keys.some(k => logKeys.includes(k)));
+        if (match) {
+          if (!sem) sem = match.std.semester || match.std.sem;
+          if (!div) div = match.std.division || match.std.div;
+        }
       }
+
+      const sKey = getSessKey(log);
+      registerSessionKey(sem || '1', div || 'ALL', sKey);
     });
 
     // 2. Build student attended count from real system logs
-    const studentAttendedCountMap = {};
-    const processedLogKeys = new Set();
+    const studentAttendedSessionsMap = {};
 
     allSystemLogs.forEach(log => {
       if (!log) return;
       const status = String(log.status || '').toLowerCase();
       if (status === 'success' || status === 'present') {
-        const enroll = String(log.enrollment_no || log.student_id || log.student?.enrollment_no || '').trim().toLowerCase();
-        if (enroll) {
-          const sessKey = log.qr_session_id ? `qr_${log.qr_session_id}` : log.otp_id ? `otp_${log.otp_id}` : `${normDateStr(log.date || log.created_at)}_${log.time || log.id}`;
-          const studentSessKey = `${enroll}_${sessKey}`;
-          if (!processedLogKeys.has(studentSessKey)) {
-            processedLogKeys.add(studentSessKey);
-            studentAttendedCountMap[enroll] = (studentAttendedCountMap[enroll] || 0) + 1;
+        const logKeys = getObjectKeys(log);
+        if (logKeys.length === 0) return;
+
+        const sessKey = getSessKey(log) || `${normDateStr(log.date || log.created_at)}_${log.time || log.id}`;
+
+        const match = studentKeysListMap.find(item => item.keys.some(k => logKeys.includes(k)));
+        if (match) {
+          const stdId = String(match.std.id || match.std.enrollment_no || match.keys[0]).toLowerCase();
+          if (!studentAttendedSessionsMap[stdId]) {
+            studentAttendedSessionsMap[stdId] = new Set();
           }
+          studentAttendedSessionsMap[stdId].add(sessKey);
+        } else {
+          logKeys.forEach(k => {
+            if (!studentAttendedSessionsMap[k]) {
+              studentAttendedSessionsMap[k] = new Set();
+            }
+            studentAttendedSessionsMap[k].add(sessKey);
+          });
         }
       }
     });
@@ -1073,8 +1690,8 @@ export default function AdminDashboard({
     const activeRules = (blacklistRules || []).filter(r => !r.status || r.status === 'Active');
 
     return students.map((std) => {
-      const semStr = String(std.semester || std.sem || '1').replace(/\D/g, '').trim();
-      const divCode = String(std.division || std.div || 'A').trim().toUpperCase();
+      const semStr = getSemNum(std.semester || std.sem || '1');
+      const divCode = getDivCode(std.division || std.div || 'A');
 
       const divSpecificKeys = semDivSessionKeysMap[`${semStr}_${divCode}`];
       const semAllKeys = semDivSessionKeysMap[`${semStr}_ALL`];
@@ -1083,22 +1700,43 @@ export default function AdminDashboard({
       if (divSpecificKeys) divSpecificKeys.forEach(k => combinedKeys.add(k));
       if (semAllKeys) semAllKeys.forEach(k => combinedKeys.add(k));
 
+      // Fallback: If no division specific or ALL keys found, check any key for this semester
+      if (combinedKeys.size === 0) {
+        Object.keys(semDivSessionKeysMap).forEach(key => {
+          if (key.startsWith(`${semStr}_`)) {
+            semDivSessionKeysMap[key].forEach(k => combinedKeys.add(k));
+          }
+        });
+      }
+
       const totalConducted = combinedKeys.size;
 
-      const studentEnroll = String(std.enrollment_no || std.id || std.roll_no || std.roll || '').trim().toLowerCase();
-      const realAttended = studentAttendedCountMap[studentEnroll] || 0;
+      const stdKeys = getObjectKeys(std);
+      const stdId = String(std.id || std.enrollment_no || stdKeys[0] || '').toLowerCase();
+
+      let attendedSet = studentAttendedSessionsMap[stdId];
+      if (!attendedSet) {
+        for (const k of stdKeys) {
+          if (studentAttendedSessionsMap[k]) {
+            attendedSet = studentAttendedSessionsMap[k];
+            break;
+          }
+        }
+      }
+      const realAttended = attendedSet ? attendedSet.size : 0;
 
       let totalLectures, attendedLectures, absent, percentage, statusKey, statusLabel, hasSession;
 
-      // Dynamically find threshold from configured blacklist rules
-      const matchedRule = [...activeRules].reverse().find(r => {
-        const matchSem = !r.semester || r.semester === 'All Semesters' || String(r.semester).replace(/\D/g, '') === String(std.semester || '').replace(/\D/g, '');
-        const matchProg = !r.program || r.program === 'All Programs' || String(r.program).toLowerCase() === String(std.course || '').toLowerCase();
-        return matchSem && matchProg;
-      }) || activeRules[activeRules.length - 1] || activeRules[0];
+      const matchedRule = activeRules.length > 0
+        ? ([...activeRules].reverse().find(r => {
+            const matchSem = !r.semester || r.semester === 'All Semesters' || getSemNum(r.semester) === semStr;
+            const matchProg = !r.program || r.program === 'All Programs' || String(r.program).toLowerCase() === String(std.course || std.department || '').toLowerCase();
+            return matchSem && matchProg;
+          }) || activeRules[activeRules.length - 1] || activeRules[0])
+        : null;
 
       const defaulterThreshold = matchedRule ? (parseFloat(matchedRule.minPercentage) || 75) : 75;
-      const warningThreshold = matchedRule && matchedRule.warningPercentage !== undefined
+      const warningThreshold = matchedRule && matchedRule.warningPercentage !== undefined && matchedRule.warningPercentage !== null && matchedRule.warningPercentage !== ''
         ? parseFloat(matchedRule.warningPercentage)
         : (defaulterThreshold < 75 ? 75 : 80);
 
@@ -1135,7 +1773,7 @@ export default function AdminDashboard({
         statusLabel = 'Safe';
       }
 
-      const matchedSub = (allFacultySubjects || []).find(s => s && String(s.semester || '').replace(/\D/g, '') === String(std.semester));
+      const matchedSub = (allFacultySubjects || []).find(s => s && getSemNum(s.semester) === semStr);
 
       return {
         ...std,
@@ -1146,6 +1784,8 @@ export default function AdminDashboard({
         hasSession,
         statusKey,
         statusLabel,
+        defaulterThreshold,
+        warningThreshold,
         subjectName: matchedSub ? (matchedSub.subjectName || matchedSub.name || '-') : '-'
       };
     });
@@ -1902,11 +2542,12 @@ export default function AdminDashboard({
     setNewSubName('');
     setNewSubShort('');
     setNewSubCode('');
-    setNewSubSem('1');
+    setNewSubSem('');
     setNewSubType('Theory');
     setNewSubFacultyId('');
     setSubjectModalMode('add');
     setEditingSubjectIdx(null);
+    setEditingSubjectObj(null);
     setShowAddSubjectModal(true);
   };
 
@@ -1922,21 +2563,22 @@ export default function AdminDashboard({
       targetIdx = allFacultySubjects.findIndex(s => s.subKey === targetSub.subKey);
       if (targetIdx === -1) {
         targetIdx = allFacultySubjects.findIndex(s =>
-          (s.subjectName || s.name || '').toLowerCase() === (targetSub.subjectName || targetSub.name || '').toLowerCase() &&
+          (s.subjectName || s.name || '').toLowerCase().trim() === (targetSub.subjectName || targetSub.name || '').toLowerCase().trim() &&
           String(s.semester || '1').replace(/\D/g, '') === String(targetSub.semester || '1').replace(/\D/g, '')
         );
       }
     }
 
     if (!sub) return;
+    setEditingSubjectObj(sub);
+    setEditingSubjectIdx(targetIdx >= 0 ? targetIdx : 0);
     setNewSubName(sub.subjectName || sub.name || '');
     setNewSubShort(sub.shortName || sub.shortCode || sub.short || '');
     setNewSubCode(sub.code || sub.subjectCode || sub.subject_code || sub.subCode || sub.sub_code || '');
-    setNewSubSem(sub.semester ? String(sub.semester).replace(/\D/g, '') : '1');
+    setNewSubSem(sub.semester ? String(sub.semester).replace(/\D/g, '') : '');
     setNewSubType(sub.type || sub.subjectType || 'Theory');
     setNewSubFacultyId(sub.facultyId || '');
     setSubjectModalMode('edit');
-    setEditingSubjectIdx(targetIdx >= 0 ? targetIdx : 0);
     setShowAddSubjectModal(true);
   };
 
@@ -1994,8 +2636,8 @@ export default function AdminDashboard({
       showToast('Please enter subject name.', 'warning');
       return;
     }
-    if (!newSubFacultyId) {
-      showToast('Please select a faculty.', 'warning');
+    if (!newSubSem) {
+      showToast('Please select a semester.', 'warning');
       return;
     }
 
@@ -2005,77 +2647,441 @@ export default function AdminDashboard({
       shortName: newSubShort.trim(),
       code: subCodeVal,
       subjectCode: subCodeVal,
-      semester: String(newSubSem || '1'),
+      semester: String(newSubSem),
       type: newSubType || 'Theory'
     };
 
-    const targetFaculty = faculties.find(f => String(f.id) === String(newSubFacultyId));
-    if (!targetFaculty) return;
+    const newSemNum = String(newSubSem).replace(/\D/g, '');
+    const newTypeLower = (newSubType || 'Theory').trim().toLowerCase();
 
-    let currentFacultySubjects = [];
-    if (typeof targetFaculty.subjects === 'string') {
-      try { currentFacultySubjects = JSON.parse(targetFaculty.subjects); } catch (e) { currentFacultySubjects = []; }
-    } else if (Array.isArray(targetFaculty.subjects)) {
-      currentFacultySubjects = [...targetFaculty.subjects];
+    // Helper to check if item `s` in allFacultySubjects is the exact subject currently being edited
+    const isEditingThisSubject = (s, idx) => {
+      if (subjectModalMode !== 'edit') return false;
+      if (editingSubjectObj) {
+        if (s.subKey && editingSubjectObj.subKey && s.subKey === editingSubjectObj.subKey) return true;
+        if (s.globalKey && editingSubjectObj.globalKey && s.globalKey === editingSubjectObj.globalKey) return true;
+
+        const sCode = String(s.code || s.subjectCode || s.subject_code || '').trim().toLowerCase();
+        const origCode = String(editingSubjectObj.code || editingSubjectObj.subjectCode || editingSubjectObj.subject_code || '').trim().toLowerCase();
+        const sSem = String(s.semester || '1').replace(/\D/g, '');
+        const origSem = String(editingSubjectObj.semester || '1').replace(/\D/g, '');
+        const sName = String(s.subjectName || s.name || '').trim().toLowerCase();
+        const origName = String(editingSubjectObj.subjectName || editingSubjectObj.name || '').trim().toLowerCase();
+        const sType = String(s.type || s.subjectType || 'Theory').trim().toLowerCase();
+        const origType = String(editingSubjectObj.type || editingSubjectObj.subjectType || 'Theory').trim().toLowerCase();
+
+        if (sSem === origSem && sType === origType) {
+          if (origCode && sCode && origCode === sCode) return true;
+          if (origName && sName && origName === sName) return true;
+        }
+      }
+      return editingSubjectIdx === idx;
+    };
+
+    // 1. Check duplicate Subject Code within the SAME semester (Same code in different semesters is allowed)
+    if (subCodeVal) {
+      const dupCodeSubject = (allFacultySubjects || []).find((s, idx) => {
+        if (isEditingThisSubject(s, idx)) return false;
+        const sSem = String(s.semester || '1').replace(/\D/g, '');
+        const existingCode = String(s.code || s.subjectCode || s.subject_code || s.subCode || s.sub_code || '').trim().toLowerCase();
+        return sSem === newSemNum && existingCode && existingCode === subCodeVal.toLowerCase();
+      });
+
+      if (dupCodeSubject) {
+        const dupName = dupCodeSubject.subjectName || dupCodeSubject.name || 'another subject';
+        showToast(`Subject Code "${subCodeVal}" is already assigned to "${dupName}" in Semester ${newSemNum}!`, 'error', 4500);
+        return;
+      }
+    }
+
+    // 2. Check duplicate Subject Name + Semester + Type + Code combination
+    const isExactDup = (allFacultySubjects || []).some((s, idx) => {
+      if (isEditingThisSubject(s, idx)) return false;
+      const sameName = (s.subjectName || s.name || '').toLowerCase().trim() === newSubObj.subjectName.toLowerCase().trim();
+      const sameSem = String(s.semester || '1').replace(/\D/g, '') === newSemNum;
+      const sameType = String(s.type || s.subjectType || 'Theory').toLowerCase().trim() === newTypeLower;
+      const existingCode = String(s.code || s.subjectCode || s.subject_code || s.subCode || s.sub_code || '').trim().toLowerCase();
+      const sameCode = existingCode === subCodeVal.toLowerCase();
+
+      if (!subCodeVal && !existingCode) {
+        return sameName && sameSem && sameType;
+      }
+      return sameName && sameSem && sameType && sameCode;
+    });
+
+    if (isExactDup) {
+      showToast(`Subject "${newSubObj.subjectName}" (${newSubObj.type}) with Code "${subCodeVal}" already exists for Semester ${newSubSem}.`, 'warning', 4500);
+      return;
     }
 
     if (subjectModalMode === 'add') {
-      const isDup = currentFacultySubjects.some(s =>
-        (s.subjectName || s.name || '').toLowerCase().trim() === newSubObj.subjectName.toLowerCase().trim() &&
-        String(s.semester || '1').replace(/\D/g, '') === String(newSubObj.semester).replace(/\D/g, '')
-      );
-      if (isDup) {
-        showToast(`Subject "${newSubObj.subjectName}" is already added to this faculty for Semester ${newSubObj.semester}.`, 'warning');
+      // Save to global catalog (unassigned)
+      const globalKey = `global_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+      const newGlobalSubs = [...(globalSubjectsCatalog || []), { ...newSubObj, globalKey }];
+      setGlobalSubjectsCatalog(newGlobalSubs);
+      localStorage.setItem('admin_global_subjects_catalog', JSON.stringify(newGlobalSubs));
+
+      // Save to Supabase subjects table via backend API
+      if (token) {
+        fetch('/api/subjects', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify(newSubObj)
+        })
+        .then(res => res.json())
+        .then(resData => {
+          if (resData && resData.subject) {
+            console.log('Subject successfully saved in Supabase subjects table:', resData.subject);
+          }
+        })
+        .catch(err => console.error('Error saving subject to Supabase:', err));
+      }
+
+      showToast(`Subject "${newSubObj.subjectName}" (${newSubObj.type}) added! Use Assign Faculty button to assign a faculty.`, 'success', 3500);
+    } else if (subjectModalMode === 'edit') {
+      const originalSub = editingSubjectObj || ((editingSubjectIdx !== null && editingSubjectIdx >= 0) ? allFacultySubjects[editingSubjectIdx] : null);
+      if (!originalSub) {
+        showToast('Could not find subject to edit.', 'error');
         return;
       }
-      currentFacultySubjects.push(newSubObj);
-    } else if (subjectModalMode === 'edit') {
-      const originalSub = (editingSubjectIdx !== null && editingSubjectIdx >= 0) ? allFacultySubjects[editingSubjectIdx] : null;
 
-      if (originalSub && String(originalSub.facultyId) !== String(newSubFacultyId)) {
-        // Faculty changed. Remove from old faculty, add to new faculty.
-        const oldFaculty = faculties.find(f => String(f.id) === String(originalSub.facultyId));
-        if (oldFaculty) {
-          let oldSubjects = [];
-          if (typeof oldFaculty.subjects === 'string') {
-            try { oldSubjects = JSON.parse(oldFaculty.subjects); } catch (e) { oldSubjects = []; }
-          } else if (Array.isArray(oldFaculty.subjects)) {
-            oldSubjects = [...oldFaculty.subjects];
+      const origName = String(originalSub.subjectName || originalSub.name || '').toLowerCase().trim();
+      const origCode = String(originalSub.code || originalSub.subjectCode || originalSub.subject_code || '').toLowerCase().trim();
+      const origSem = String(originalSub.semester || '1').replace(/\D/g, '');
+      const origType = String(originalSub.type || originalSub.subjectType || 'Theory').toLowerCase().trim();
+      const origSubKey = originalSub.subKey;
+      const origGlobalKey = originalSub.globalKey;
+
+      // Strict multi-attribute matcher to find the target subject in DB/catalog
+      const isMatchWithOriginal = (s) => {
+        if (!s) return false;
+        const sSubKey = s.subKey || s.globalKey;
+        if (sSubKey && ((origSubKey && sSubKey === origSubKey) || (origGlobalKey && sSubKey === origGlobalKey))) return true;
+
+        const sName = String(s.subjectName || s.name || '').toLowerCase().trim();
+        const sCode = String(s.code || s.subjectCode || s.subject_code || s.subCode || s.sub_code || '').toLowerCase().trim();
+        const sSem = String(s.semester || '1').replace(/\D/g, '');
+        const sType = String(s.type || s.subjectType || 'Theory').toLowerCase().trim();
+
+        const sameCode = origCode && sCode && origCode === sCode;
+        const sameName = origName && sName && origName === sName;
+        const sameSem = sSem === origSem;
+        const sameType = sType === origType;
+
+        // Must match type AND semester AND (code OR name)
+        if ((sameCode || sameName) && sameSem && sameType) return true;
+        if (sameCode && sameName && sameSem) return true;
+        if (sameCode && sameName && sameType) return true;
+
+        return false;
+      };
+
+      setSavingSubjects(true);
+      try {
+        const updatePromises = [];
+        (faculties || []).forEach(f => {
+          let currentFacultySubjects = [];
+          if (typeof f.subjects === 'string') {
+            try { currentFacultySubjects = JSON.parse(f.subjects); } catch (e) { currentFacultySubjects = []; }
+          } else if (Array.isArray(f.subjects)) {
+            currentFacultySubjects = [...f.subjects];
           }
-          oldSubjects = oldSubjects.filter(s =>
-            (s.subjectName || s.name || '').toLowerCase() !== (originalSub.subjectName || originalSub.name || '').toLowerCase() ||
-            String(s.semester || '1').replace(/\D/g, '') !== String(originalSub.semester || '1').replace(/\D/g, '')
-          );
-          await handleSaveSubjectsToBackend(oldFaculty.id, oldSubjects, false);
-        }
-        currentFacultySubjects.push(newSubObj);
-      } else {
-        // Same faculty
-        const localIdx = currentFacultySubjects.findIndex(s => {
-          if (!originalSub) return false;
-          const nameMatch = (s.subjectName || s.name || '').toLowerCase() === (originalSub.subjectName || originalSub.name || '').toLowerCase();
-          const semMatch = String(s.semester || '1').replace(/\D/g, '') === String(originalSub.semester || '1').replace(/\D/g, '');
-          return nameMatch && semMatch;
+
+          const localIdx = currentFacultySubjects.findIndex(s => isMatchWithOriginal(s));
+
+          if (localIdx >= 0) {
+            currentFacultySubjects[localIdx] = {
+              ...currentFacultySubjects[localIdx],
+              subjectName: newSubObj.subjectName,
+              shortName: newSubObj.shortName,
+              code: newSubObj.code,
+              subjectCode: newSubObj.code,
+              semester: newSubObj.semester,
+              type: newSubObj.type
+            };
+            updatePromises.push(handleSaveSubjectsToBackend(f.id, currentFacultySubjects, false));
+          }
         });
-        if (localIdx >= 0) {
-          currentFacultySubjects[localIdx] = newSubObj;
-        } else {
-          currentFacultySubjects.push(newSubObj);
+
+        if (updatePromises.length > 0) {
+          await Promise.all(updatePromises);
         }
+
+        // ALSO update in globalSubjectsCatalog in-place if present
+        const newGlobalSubs = (globalSubjectsCatalog || []).map(s => {
+          if (isMatchWithOriginal(s)) {
+            return {
+              ...s,
+              subjectName: newSubObj.subjectName,
+              shortName: newSubObj.shortName,
+              code: newSubObj.code,
+              subjectCode: newSubObj.code,
+              semester: newSubObj.semester,
+              type: newSubObj.type,
+              globalKey: s.globalKey || origGlobalKey || origSubKey
+            };
+          }
+          return s;
+        });
+        setGlobalSubjectsCatalog(newGlobalSubs);
+        localStorage.setItem('admin_global_subjects_catalog', JSON.stringify(newGlobalSubs));
+
+        // ALSO update in Supabase subjects table via backend API!
+        if (token) {
+          fetch('/api/subjects/update-match', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({ originalSub, newSubObj })
+          })
+          .then(res => res.json())
+          .then(resData => {
+            console.log('Subject update synced to Supabase DB:', resData);
+          })
+          .catch(err => console.error('Error updating subject in Supabase DB:', err));
+        }
+
+        showToast(`Subject "${newSubObj.subjectName}" updated successfully!`, 'success', 3000);
+        await fetchFaculties();
+      } catch (err) {
+        console.error('Error updating subject across faculties:', err);
+        showToast('Failed to update subject details.', 'error');
+      } finally {
+        setSavingSubjects(false);
       }
     }
 
     setNewSubName('');
     setNewSubShort('');
     setNewSubCode('');
-    setNewSubSem('1');
+    setNewSubSem('');
     setNewSubType('Theory');
     setNewSubFacultyId('');
     setSubjectModalMode('add');
     setEditingSubjectIdx(null);
+    setEditingSubjectObj(null);
     setShowAddSubjectModal(false);
+  };
 
-    await handleSaveSubjectsToBackend(targetFaculty.id, currentFacultySubjects, true);
+  const handleOpenAssignFacultyModal = (sub) => {
+    if (!sub) return;
+    setAssigningSubject(sub);
+    setAssignFacultySearch('');
+    const targetSubName = String(sub.subjectName || sub.name || '').toLowerCase().trim();
+    const targetSem = String(sub.semester || '1').replace(/\D/g, '');
+    const targetType = String(sub.type || sub.subjectType || 'Theory').toLowerCase().trim();
+    const targetCode = String(sub.code || sub.subjectCode || '').toLowerCase().trim();
+
+    // Check which faculties currently teach this subject
+    const currentAssigned = (faculties || []).filter(f => {
+      let fSubs = [];
+      if (typeof f.subjects === 'string') {
+        try { fSubs = JSON.parse(f.subjects); } catch (e) { fSubs = []; }
+      } else if (Array.isArray(f.subjects)) {
+        fSubs = f.subjects;
+      }
+      return (fSubs || []).some(s => {
+        const sCode = String(s.code || s.subjectCode || '').toLowerCase().trim();
+        const sSem = String(s.semester || '1').replace(/\D/g, '');
+        const sType = String(s.type || s.subjectType || 'Theory').toLowerCase().trim();
+        if (targetCode && sCode && targetCode === sCode && targetSem === sSem && sType === targetType) return true;
+        return String(s.subjectName || s.name || '').toLowerCase().trim() === targetSubName &&
+               sSem === targetSem &&
+               sType === targetType;
+      });
+    }).map(f => String(f.id));
+
+    // Also include sub.facultyId if present and not yet added
+    if (sub.facultyId && !currentAssigned.includes(String(sub.facultyId))) {
+      currentAssigned.push(String(sub.facultyId));
+    }
+
+    setSelectedAssignFacultyIds(currentAssigned);
+    setShowAssignFacultyModal(true);
+  };
+
+  const toggleAssignFacultySelect = (facId) => {
+    const idStr = String(facId);
+    if (selectedAssignFacultyIds.includes(idStr)) {
+      setSelectedAssignFacultyIds(prev => prev.filter(id => id !== idStr));
+    } else {
+      if (selectedAssignFacultyIds.length >= 3) {
+        showToast('Maximum 3 faculties can be assigned to a subject.', 'error', 3500);
+        return;
+      }
+      setSelectedAssignFacultyIds(prev => [...prev, idStr]);
+    }
+  };
+
+  const handleSaveFacultyAssignment = async () => {
+    if (!assigningSubject) return;
+
+    if (selectedAssignFacultyIds.length > 3) {
+      showToast('Maximum 3 faculties can be assigned to a subject.', 'error', 3500);
+      return;
+    }
+
+    setSavingFacultyAssignment(true);
+    try {
+      const targetSubName = String(assigningSubject.subjectName || assigningSubject.name || '').toLowerCase().trim();
+      const targetSem = String(assigningSubject.semester || '1').replace(/\D/g, '');
+      const targetType = String(assigningSubject.type || assigningSubject.subjectType || 'Theory').toLowerCase().trim();
+      const targetCode = String(assigningSubject.code || assigningSubject.subjectCode || '').toLowerCase().trim();
+
+      const subObjToAssign = {
+        subjectName: assigningSubject.subjectName || assigningSubject.name || '',
+        shortName: assigningSubject.shortName || assigningSubject.shortCode || '',
+        code: (assigningSubject.code || assigningSubject.subjectCode || '').toString().trim(),
+        subjectCode: (assigningSubject.code || assigningSubject.subjectCode || '').toString().trim(),
+        semester: String(assigningSubject.semester || '1'),
+        type: assigningSubject.type || assigningSubject.subjectType || 'Theory'
+      };
+
+      const updatePromises = [];
+
+      const updatedFacultiesList = (faculties || []).map(f => {
+        let currentSubs = [];
+        if (typeof f.subjects === 'string') {
+          try { currentSubs = JSON.parse(f.subjects); } catch (e) { currentSubs = []; }
+        } else if (Array.isArray(f.subjects)) {
+          currentSubs = [...f.subjects];
+        }
+
+        const hasThisSub = currentSubs.some(s => {
+          const sCode = String(s.code || s.subjectCode || '').toLowerCase().trim();
+          const sSem = String(s.semester || '1').replace(/\D/g, '');
+          const sType = String(s.type || s.subjectType || 'Theory').toLowerCase().trim();
+          if (targetCode && sCode && targetCode === sCode && targetSem === sSem && sType === targetType) return true;
+          return String(s.subjectName || s.name || '').toLowerCase().trim() === targetSubName &&
+                 sSem === targetSem &&
+                 sType === targetType;
+        });
+
+        const shouldHave = selectedAssignFacultyIds.includes(String(f.id));
+
+        if (shouldHave && !hasThisSub) {
+          const updatedSubs = [...currentSubs, subObjToAssign];
+          const payload = { ...f, subjects: updatedSubs };
+          delete payload.password;
+          updatePromises.push(
+            fetch(`/api/faculty/${f.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify(payload)
+            })
+          );
+          return { ...f, subjects: updatedSubs };
+        } else if (!shouldHave && hasThisSub) {
+          const updatedSubs = currentSubs.filter(s => {
+            const sCode = String(s.code || s.subjectCode || '').toLowerCase().trim();
+            const sSem = String(s.semester || '1').replace(/\D/g, '');
+            const sType = String(s.type || s.subjectType || 'Theory').toLowerCase().trim();
+            if (targetCode && sCode && targetCode === sCode && targetSem === sSem && sType === targetType) return false;
+            const sameName = String(s.subjectName || s.name || '').toLowerCase().trim() === targetSubName;
+            const sameSem = sSem === targetSem;
+            const sameType = sType === targetType;
+            return !(sameName && sameSem && sameType);
+          });
+          const payload = { ...f, subjects: updatedSubs };
+          delete payload.password;
+          updatePromises.push(
+            fetch(`/api/faculty/${f.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+              body: JSON.stringify(payload)
+            })
+          );
+          return { ...f, subjects: updatedSubs };
+        }
+        return f;
+      });
+
+      setFaculties(updatedFacultiesList);
+      try {
+        sessionStorage.setItem('cached_admin_faculties', JSON.stringify(updatedFacultiesList));
+      } catch (e) {}
+
+      // Always preserve subject in global subjects catalog
+      const globalKey = assigningSubject.globalKey || assigningSubject.subKey || `global_${targetSubName}_${targetSem}_${targetType}`;
+
+      const assignedFacultyNames = selectedAssignFacultyIds.map(fid => {
+        const fac = (updatedFacultiesList || faculties || []).find(f => String(f.id) === String(fid));
+        return fac ? (fac.name || 'Faculty') : null;
+      }).filter(Boolean);
+
+      const assignedFacultyNameStr = assignedFacultyNames.length > 0 ? assignedFacultyNames.join(', ') : 'Unassigned';
+
+      const updatedSubObj = {
+        ...assigningSubject,
+        ...subObjToAssign,
+        globalKey,
+        facultyIds: selectedAssignFacultyIds,
+        facultyNamesList: assignedFacultyNames,
+        facultyName: assignedFacultyNameStr
+      };
+
+      let updatedGlobal = [...(globalSubjectsCatalog || [])];
+      const matchIdx = updatedGlobal.findIndex(s => {
+        const sKey = s.globalKey || s.subKey;
+        if (globalKey && sKey && globalKey === sKey) return true;
+        const sName = String(s.subjectName || s.name || '').toLowerCase().trim();
+        const sSem = String(s.semester || '1').replace(/\D/g, '');
+        const sCode = String(s.code || s.subjectCode || '').toLowerCase().trim();
+        const sType = String(s.type || s.subjectType || 'Theory').toLowerCase().trim();
+        if (targetCode && sCode && targetCode === sCode && targetSem === sSem && sType === targetType) return true;
+        return sName === targetSubName && sSem === targetSem && sType === targetType;
+      });
+
+      if (matchIdx >= 0) {
+        updatedGlobal[matchIdx] = { ...updatedGlobal[matchIdx], ...updatedSubObj };
+      } else {
+        updatedGlobal.push(updatedSubObj);
+      }
+
+      setGlobalSubjectsCatalog(updatedGlobal);
+      localStorage.setItem('admin_global_subjects_catalog', JSON.stringify(updatedGlobal));
+
+      if (updatePromises.length > 0) {
+        await Promise.all(updatePromises);
+      }
+
+      // ALSO sync assigned faculty IDs directly into Supabase subjects table!
+      if (token) {
+        try {
+          const resSync = await fetch('/api/subjects/assign-faculty', {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({ assigningSubject, facultyIds: selectedAssignFacultyIds })
+          });
+          const resData = await resSync.json();
+          console.log('Faculty assignment synced to Supabase DB:', resData);
+        } catch (err) {
+          console.error('Error syncing faculty assignment to Supabase DB:', err);
+        }
+      }
+
+      await fetchFaculties();
+      notifyDataChanged();
+
+      const actionText = selectedAssignFacultyIds.length > 0 
+        ? `Faculty assigned successfully to "${assigningSubject.subjectName || assigningSubject.name}"!` 
+        : `Faculty unassigned for "${assigningSubject.subjectName || assigningSubject.name}".`;
+      showToast(actionText, 'success', 3000);
+      setShowAssignFacultyModal(false);
+    } catch (err) {
+      console.error('Error saving faculty assignment:', err);
+      showToast('Failed to update faculty assignment. Please try again.', 'error');
+    } finally {
+      setSavingFacultyAssignment(false);
+    }
   };
 
   const formatDateDDMMYYYY = (dateStr) => {
@@ -2134,6 +3140,9 @@ export default function AdminDashboard({
   };
   const [qrCodeTimer, setQrCodeTimer] = useState(15);
   const [qrGenerationEnabled, setQrGenerationEnabled] = useState(true);
+  const [qrDailyLimit, setQrDailyLimit] = useState(5);
+  const [qrLimitInput, setQrLimitInput] = useState('5');
+  const [qrLimitSaving, setQrLimitSaving] = useState(false);
   const qrCanvasRef = useRef(null);
 
   // College Location State with persistent cache hydration
@@ -2166,8 +3175,62 @@ export default function AdminDashboard({
   const fileInputRef = useRef(null);
   const facultyFileInputRef = useRef(null);
   const subjectFileInputRef = useRef(null);
+  const semesterFileInputRef = useRef(null);
+  const firstSemInputRef = useRef(null);
+  const addSemCreateBtnRef = useRef(null);
+  const firstStudentInputRef = useRef(null);
+  const addStudentSaveBtnRef = useRef(null);
+  const firstFacultyInputRef = useRef(null);
+  const addFacultySaveBtnRef = useRef(null);
+  const firstSubjectInputRef = useRef(null);
+  const addSubjectSaveBtnRef = useRef(null);
   const statCardsRef = useRef(null);
   const statsPanelRef = useRef(null);
+
+  // Auto-focus first input field when Add Semester Modal opens
+  useEffect(() => {
+    if (showAddSemesterModal) {
+      setTimeout(() => {
+        if (firstSemInputRef.current) {
+          firstSemInputRef.current.focus();
+          firstSemInputRef.current.select();
+        }
+      }, 50);
+    }
+  }, [showAddSemesterModal]);
+
+  // Auto-focus first input field when Add Student Modal opens
+  useEffect(() => {
+    if (showStudentModal) {
+      setTimeout(() => {
+        if (firstStudentInputRef.current) {
+          firstStudentInputRef.current.focus();
+        }
+      }, 50);
+    }
+  }, [showStudentModal]);
+
+  // Auto-focus first input field when Add Faculty Modal opens
+  useEffect(() => {
+    if (showFacultyModal) {
+      setTimeout(() => {
+        if (firstFacultyInputRef.current) {
+          firstFacultyInputRef.current.focus();
+        }
+      }, 50);
+    }
+  }, [showFacultyModal]);
+
+  // Auto-focus first input field when Add Subject Modal opens
+  useEffect(() => {
+    if (showAddSubjectModal) {
+      setTimeout(() => {
+        if (firstSubjectInputRef.current) {
+          firstSubjectInputRef.current.focus();
+        }
+      }, 50);
+    }
+  }, [showAddSubjectModal]);
 
   // Auto-close expanded stats details panel when clicking outside stat cards and panel
   useEffect(() => {
@@ -2584,29 +3647,35 @@ export default function AdminDashboard({
           method: 'DELETE',
           headers: { Authorization: `Bearer ${token}` }
         });
+        setQrSessionHistory([]);
+        try { sessionStorage.removeItem('cached_admin_qrhistory'); } catch (e) { }
+        await fetchQrData();
         if (res.ok) {
-          setQrSessionHistory([]);
-          try { sessionStorage.removeItem('cached_admin_qrhistory'); } catch (e) { }
           showToast('Session history cleared! Session count restarted from #1.', 'success');
         } else {
-          setQrSessionHistory([]);
-          showToast('Session history cleared locally.', 'info');
+          showToast('Session history cleared.', 'info');
         }
       } catch (err) {
         setQrSessionHistory([]);
-        showToast('Session history cleared locally.', 'info');
+        showToast('Session history cleared.', 'info');
       }
     }
   };
 
   const fetchQrSettings = async () => {
     try {
-      const res = await fetch('/api/qr/settings', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
+      const [resSettings, resLimit] = await Promise.all([
+        fetch('/api/qr/settings', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/qr/limit', { headers: { Authorization: `Bearer ${token}` } })
+      ]);
+      if (resSettings.ok) {
+        const data = await resSettings.json();
         setQrGenerationEnabled(data.enabled);
+      }
+      if (resLimit.ok) {
+        const data = await resLimit.json();
+        setQrDailyLimit(data.limit);
+        setQrLimitInput(String(data.limit));
       }
     } catch (err) {
       console.error('Error fetching QR settings:', err);
@@ -2626,9 +3695,53 @@ export default function AdminDashboard({
       });
       if (res.ok) {
         setQrGenerationEnabled(nextState);
+        window.dispatchEvent(new CustomEvent('app_data_changed'));
+        if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+          try {
+            const bc = new BroadcastChannel('attendance_system_sync');
+            bc.postMessage({ type: 'DATA_CHANGED' });
+            bc.close();
+          } catch (e) {}
+        }
       }
     } catch (err) {
       console.error('Error toggling QR settings:', err);
+    }
+  };
+
+  const handleSaveQrLimit = async () => {
+    const val = parseInt(qrLimitInput);
+    if (isNaN(val) || val < 1 || val > 100) {
+      showToast('Please enter a valid limit between 1 and 100.', 'warning');
+      return;
+    }
+    setQrLimitSaving(true);
+    try {
+      const res = await fetch('/api/qr/limit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ limit: val })
+      });
+      if (res.ok) {
+        setQrDailyLimit(val);
+        showToast(`QR session limit set to ${val} per day successfully!`, 'success', 3000);
+        window.dispatchEvent(new CustomEvent('app_data_changed'));
+        if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+          try {
+            const bc = new BroadcastChannel('attendance_system_sync');
+            bc.postMessage({ type: 'DATA_CHANGED' });
+            bc.close();
+          } catch (e) {}
+        }
+      } else {
+        const data = await res.json();
+        showToast(data.error || 'Failed to save limit.', 'error');
+      }
+    } catch (err) {
+      console.error('Error saving QR limit:', err);
+      showToast('Network error saving limit.', 'error');
+    } finally {
+      setQrLimitSaving(false);
     }
   };
 
@@ -2767,6 +3880,11 @@ export default function AdminDashboard({
     }
   };
 
+  const fetchReportDataRef = useRef(fetchReportData);
+  useEffect(() => {
+    fetchReportDataRef.current = fetchReportData;
+  });
+
   // Run on mount
   useEffect(() => {
     fetchStats();
@@ -2779,26 +3897,24 @@ export default function AdminDashboard({
     fetchReportData();
   }, []);
 
-  // Smart Auto-Polling for Stats, Logs & Sessions (0ms Broadcast Sync for Instant Edits)
+  // Smart Auto-Polling for Stats, Logs, Sessions & Reports (Live Real-Time Updates)
   useEffect(() => {
     const isSessionActive = stats.activeQrSession !== null || activeQrSessionDetails !== null;
-    const intervalTime = isSessionActive ? 3000 : 25000;
+    const intervalTime = isSessionActive ? 3000 : 4000;
 
     const interval = setInterval(() => {
-      if (isSessionActive) {
-        fetchStats();
-        fetchLiveLogs();
-        fetchQrData();
-      } else {
-        fetchStats();
-        fetchQrData();
+      fetchStats();
+      fetchLiveLogs();
+      fetchQrData();
+      if (fetchReportDataRef.current) {
+        fetchReportDataRef.current();
       }
     }, intervalTime);
 
     return () => clearInterval(interval);
   }, [stats.activeQrSession, activeQrSessionDetails]);
 
-  // Instant Cross-Panel BroadcastChannel & Custom Event Sync
+  // Instant Cross-Panel BroadcastChannel, SSE & Custom Event Sync
   useEffect(() => {
     const refreshAll = () => {
       fetchStats();
@@ -2808,6 +3924,9 @@ export default function AdminDashboard({
       fetchFaculties();
       fetchQrSettings();
       fetchAllLeaves();
+      if (fetchReportDataRef.current) {
+        fetchReportDataRef.current();
+      }
     };
 
     window.addEventListener('app_data_changed', refreshAll);
@@ -2824,9 +3943,25 @@ export default function AdminDashboard({
       } catch (e) {}
     }
 
+    let eventSource = null;
+    if (typeof window !== 'undefined' && 'EventSource' in window) {
+      try {
+        eventSource = new EventSource('/api/sync/events');
+        eventSource.onmessage = (e) => {
+          try {
+            const data = JSON.parse(e.data);
+            if (data && (data.type === 'DATA_CHANGED' || data.type === 'FACULTY_CHANGED' || data.type === 'STUDENT_CHANGED')) {
+              refreshAll();
+            }
+          } catch (err) {}
+        };
+      } catch (e) {}
+    }
+
     return () => {
       window.removeEventListener('app_data_changed', refreshAll);
       if (bc) bc.close();
+      if (eventSource) eventSource.close();
     };
   }, []);
 
@@ -3279,20 +4414,24 @@ export default function AdminDashboard({
   };
 
   // Send imported student batch to backend with full duplicate error reporting
-  const sendBulkImport = async (studentsList) => {
+  const sendBulkImport = async (studentsList, allowedSemesters = []) => {
     if (!Array.isArray(studentsList) || studentsList.length === 0) {
       showToast('No student records found to import.', 'warning');
       return;
     }
 
     try {
+      const payloadAllowedSems = allowedSemesters.length > 0
+        ? allowedSemesters
+        : (allSemestersList || []).map(s => String(s.semNumber || s.id).trim());
+
       const response = await fetch('/api/students/import', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ students: studentsList })
+        body: JSON.stringify({ students: studentsList, allowedSemesters: payloadAllowedSems })
       });
       const data = await response.json();
 
@@ -3493,6 +4632,29 @@ export default function AdminDashboard({
     }
   };
 
+  // Helper to validate whether a given semester matches any configured semester in options
+  const isSemesterInOptions = (inputSem, semestersList) => {
+    if (!Array.isArray(semestersList) || semestersList.length === 0) return false;
+    const cleanInput = String(inputSem || '').trim();
+    if (!cleanInput) return false;
+
+    const lowerInput = cleanInput.toLowerCase();
+    const digitInput = cleanInput.replace(/\D/g, '');
+
+    return semestersList.some(s => {
+      const semNum = String(s.semNumber || s.id || '').trim();
+      const semNumLower = semNum.toLowerCase();
+      const semNumDigit = semNum.replace(/\D/g, '');
+      const semNameLower = String(s.name || '').trim().toLowerCase();
+
+      if (lowerInput === semNumLower) return true;
+      if (digitInput && semNumDigit && digitInput === semNumDigit) return true;
+      if (semNameLower && (lowerInput === semNameLower || lowerInput.includes(semNameLower) || semNameLower.includes(lowerInput))) return true;
+
+      return false;
+    });
+  };
+
   // CSV & XLSX student import handler
   const handleImportFile = (e) => {
     const file = e.target.files[0];
@@ -3501,6 +4663,12 @@ export default function AdminDashboard({
     const fileType = file.name.split('.').pop().toLowerCase();
     if (fileType !== 'csv' && fileType !== 'xlsx' && fileType !== 'xls') {
       showToast('Invalid file format! Please upload only .csv or .xlsx excel files.', 'error');
+      e.target.value = '';
+      return;
+    }
+
+    if (!allSemestersList || allSemestersList.length === 0) {
+      showToast('Bulk Upload Failed: No semester options exist in the system. Please add semester(s) in the Semester Management menu first.', 'error', 6000);
       e.target.value = '';
       return;
     }
@@ -3574,6 +4742,10 @@ export default function AdminDashboard({
         const headers = rows[headerRowIdx].map(h => (h ? h.toString().trim().toLowerCase() : ''));
         const studentsList = [];
         let invalidEnrollmentCount = 0;
+        const semesterValidationErrors = [];
+        const availableSemLabels = allSemestersList
+          .map(s => s.name || `Semester ${s.semNumber || s.id}`)
+          .join(', ');
 
         for (let i = headerRowIdx + 1; i < rows.length; i++) {
           const values = rows[i];
@@ -3591,16 +4763,56 @@ export default function AdminDashboard({
               invalidEnrollmentCount++;
               continue;
             }
+
+            const rawSem = stuObj.semester;
+            if (!rawSem || !isSemesterInOptions(rawSem, allSemestersList)) {
+              const semDisplay = rawSem ? `"${rawSem}"` : 'Not provided';
+              const studentLabel = stuObj.name || `Enrollment: ${cleanEnroll}`;
+              semesterValidationErrors.push(`Row ${i + 1} (${studentLabel}): Semester ${semDisplay} is not available in semester options. Only students of configured semesters (${availableSemLabels}) can be added.`);
+              continue;
+            }
+
+            // Find canonical semester number/ID
+            const matchedSem = allSemestersList.find(s => {
+              const semNum = String(s.semNumber || s.id || '').trim();
+              const semNumDigit = semNum.replace(/\D/g, '');
+              const inputDigit = String(rawSem).replace(/\D/g, '');
+              return semNum === String(rawSem).trim() || (inputDigit && semNumDigit && inputDigit === semNumDigit) || String(s.name || '').toLowerCase() === String(rawSem).toLowerCase();
+            });
+
             stuObj.enrollment_no = cleanEnroll;
             stuObj.course = stuObj.course || 'B.E.';
-            stuObj.semester = stuObj.semester || '1';
+            stuObj.semester = matchedSem ? String(matchedSem.semNumber || matchedSem.id) : String(rawSem).replace(/\D/g, '') || '1';
             stuObj.mobile = cleanDigitString(stuObj.mobile || '') || '0000000000';
             studentsList.push(stuObj);
           }
         }
 
+        if (semesterValidationErrors.length > 0) {
+          Swal.fire({
+            icon: 'error',
+            title: 'Bulk Upload Failed!',
+            html: `
+              <div style="text-align: left; max-height: 250px; overflow-y: auto; font-size: 0.84rem; padding: 10px 12px; background: rgba(239, 68, 68, 0.08); border-radius: 8px; border: 1px solid rgba(239, 68, 68, 0.25);">
+                <strong style="color: #b91c1c;">Found ${semesterValidationErrors.length} invalid semester issue(s):</strong>
+                <ul style="margin-top: 8px; padding-left: 18px; line-height: 1.5; color: #dc2626;">
+                  ${semesterValidationErrors.slice(0, 15).map(e => `<li>${e}</li>`).join('')}
+                  ${semesterValidationErrors.length > 15 ? `<li style="font-weight: 700;">...and ${semesterValidationErrors.length - 15} more errors</li>` : ''}
+                </ul>
+              </div>
+              <p style="margin-top: 10px; font-size: 0.82rem; color: #64748b;">
+                Bulk upload only allows adding students for active semester options (${availableSemLabels}). Please add missing semesters in the Semester Management section or adjust your file.
+              </p>
+            `,
+            confirmButtonText: 'Review & Fix',
+            confirmButtonColor: '#f59e0b'
+          });
+          e.target.value = '';
+          return;
+        }
+
         if (invalidEnrollmentCount > 0) {
-          showToast(`⚠️ Skipped ${invalidEnrollmentCount} student rows: Enrollment Number must be exactly 10 digits!`, 'warning');
+          showToast(`Skipped ${invalidEnrollmentCount} student rows: Enrollment Number must be exactly 10 digits!`, 'warning');
         }
 
         if (studentsList.length === 0) {
@@ -3608,7 +4820,8 @@ export default function AdminDashboard({
           return;
         }
 
-        sendBulkImport(studentsList);
+        const allowedSemesters = allSemestersList.map(s => String(s.semNumber || s.id).trim());
+        sendBulkImport(studentsList, allowedSemesters);
       } catch (err) {
         console.error('Error parsing file for student import:', err);
         showToast('Failed to parse file. Please ensure it is a valid CSV or XLSX Excel file.', 'error');
@@ -3842,6 +5055,39 @@ export default function AdminDashboard({
     const { type, entityType, studentId, targetIds } = deleteConfirmState;
     setDeleteConfirmState({ isOpen: false, type: 'single', entityType: 'student', studentId: null, studentName: '', targetIds: [] });
 
+    if (entityType === 'semester') {
+      const targetIdsList = (targetIds && targetIds.length > 0 ? targetIds : [studentId]);
+      const targetSet = new Set(targetIdsList.map(id => String(id)));
+
+      // Optimistic instant local removal
+      const updatedCustom = customSemesters.filter(s => !targetSet.has(String(s.id)));
+      setCustomSemesters(updatedCustom);
+      localStorage.setItem('admin_custom_semesters', JSON.stringify(updatedCustom));
+      setSelectedSemesterIds(prev => prev.filter(id => !targetSet.has(String(id))));
+
+      try {
+        if (targetIdsList.length === 1) {
+          await fetch(`/api/semesters/${targetIdsList[0]}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          });
+        } else {
+          await fetch('/api/semesters/bulk-delete', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({ ids: targetIdsList })
+          });
+        }
+        showToast(`Selected semester(s) deleted successfully!`, 'success');
+      } catch (err) {
+        console.error('Delete semester error:', err);
+      }
+      return;
+    }
+
     if (entityType === 'faculty') {
       const targetIdsList = targetIds && targetIds.length > 0 ? targetIds : (studentId ? [studentId] : []);
       const prevFacs = [...faculties];
@@ -3882,14 +5128,53 @@ export default function AdminDashboard({
 
     if (entityType === 'subject') {
       const keysToDelete = new Set(targetIds);
+
+      // Collect target subject objects for Supabase deletion
+      const subjectsObjectsToDelete = allFacultySubjects.filter(s => keysToDelete.has(s.subKey) || keysToDelete.has(s.id) || keysToDelete.has(s.globalKey));
+
+      // Delete from Supabase subjects table via backend API
+      if (token && subjectsObjectsToDelete.length > 0) {
+        fetch('/api/subjects/delete-match', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ subjects: subjectsObjectsToDelete })
+        })
+        .then(res => res.json())
+        .then(resData => {
+          console.log('Deleted subjects synced to Supabase DB:', resData);
+        })
+        .catch(err => console.error('Error deleting subjects from Supabase DB:', err));
+      }
+
+      // Delete unassigned subjects from globalSubjectsCatalog
+      const globalSubsToDelete = (globalSubjectsCatalog || []).filter(s =>
+        keysToDelete.has(s.globalKey) || keysToDelete.has(s.subKey) ||
+        allFacultySubjects.some(fs => keysToDelete.has(fs.subKey) && !fs.facultyId &&
+          (fs.subjectName || fs.name || '').toLowerCase().trim() === (s.subjectName || s.name || '').toLowerCase().trim() &&
+          String(fs.semester || '1').replace(/\D/g, '') === String(s.semester || '1').replace(/\D/g, '') &&
+          String(fs.type || 'Theory').toLowerCase().trim() === String(s.type || 'Theory').toLowerCase().trim())
+      );
+      if (globalSubsToDelete.length > 0) {
+        const updatedGlobal = (globalSubjectsCatalog || []).filter(s =>
+          !globalSubsToDelete.some(d => d.globalKey === s.globalKey)
+        );
+        setGlobalSubjectsCatalog(updatedGlobal);
+        localStorage.setItem('admin_global_subjects_catalog', JSON.stringify(updatedGlobal));
+      }
+
       const facultyUpdates = {};
       allFacultySubjects.forEach(s => {
-        if (keysToDelete.has(s.subKey) || keysToDelete.has(s.id) || keysToDelete.has(s.code)) {
-          const fid = s.facultyId || (faculties.find(f => f.isPrimaryAdmin || f.name === 'Admin')?.id) || 'admin_primary';
-          if (!facultyUpdates[fid]) {
-            facultyUpdates[fid] = [];
-          }
-          facultyUpdates[fid].push(s);
+        if ((keysToDelete.has(s.subKey) || keysToDelete.has(s.id) || keysToDelete.has(s.code) || keysToDelete.has(s.globalKey)) && (s.facultyId || (s.facultyIds && s.facultyIds.length > 0))) {
+          const fList = Array.isArray(s.facultyIds) && s.facultyIds.length > 0 ? s.facultyIds : (s.facultyId ? [s.facultyId] : []);
+          fList.forEach(fid => {
+            if (!facultyUpdates[fid]) {
+              facultyUpdates[fid] = [];
+            }
+            facultyUpdates[fid].push(s);
+          });
         }
       });
 
@@ -3929,26 +5214,30 @@ export default function AdminDashboard({
       setSelectedSubjectIds(prev => prev.filter(k => !keysToDelete.has(k)));
       showToast(keysToDelete.size === 1 ? 'Subject deleted successfully!' : `Successfully deleted ${keysToDelete.size} subject(s).`, 'success');
 
-      try {
-        const updatePromises = Object.keys(facultyUpdates).map(async (facId) => {
-          const subjectsPayload = facultyUpdates[facId];
-          await fetch(`/api/faculty/${facId}/delete-subject`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`
-            },
-            body: JSON.stringify({ subjects: subjectsPayload })
+      if (Object.keys(facultyUpdates).length > 0) {
+        try {
+          const updatePromises = Object.keys(facultyUpdates).map(async (facId) => {
+            const subjectsPayload = facultyUpdates[facId];
+            await fetch(`/api/faculty/${facId}/delete-subject`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`
+              },
+              body: JSON.stringify({ subjects: subjectsPayload })
+            });
           });
-        });
 
-        await Promise.all(updatePromises);
-        fetchFaculties();
+          await Promise.all(updatePromises);
+          fetchFaculties();
+          notifyDataChanged();
+        } catch (err) {
+          console.error('Error deleting subjects:', err);
+          showToast('Error deleting subject(s)', 'error');
+          fetchFaculties();
+        }
+      } else {
         notifyDataChanged();
-      } catch (err) {
-        console.error('Error deleting subjects:', err);
-        showToast('Error deleting subject(s)', 'error');
-        fetchFaculties();
       }
       return;
     }
@@ -4070,6 +5359,54 @@ export default function AdminDashboard({
       entityType: 'faculty',
       studentId: null,
       studentName: `${ids.length} selected faculty member(s)`,
+      targetIds: ids
+    });
+  };
+
+  const toggleSelectSemester = (id) => {
+    setSelectedSemesterIds(prev => {
+      if (prev.includes(id)) {
+        return prev.filter(item => item !== id);
+      } else {
+        return [...prev, id];
+      }
+    });
+  };
+
+  const toggleSelectAllSemesters = () => {
+    const filteredSemesters = allSemestersList.filter(sem => {
+      if (!semesterSearchQuery) return true;
+      const q = semesterSearchQuery.toLowerCase();
+      return (
+        sem.name.toLowerCase().includes(q) ||
+        String(sem.semNumber).includes(q) ||
+        (sem.academicYear && sem.academicYear.toLowerCase().includes(q)) ||
+        (sem.term && sem.term.toLowerCase().includes(q))
+      );
+    });
+    const filteredIds = filteredSemesters.map(s => s.id);
+    const allSelected = filteredIds.length > 0 && filteredIds.every(id => selectedSemesterIds.includes(id));
+
+    if (allSelected) {
+      setSelectedSemesterIds(prev => prev.filter(id => !filteredIds.includes(id)));
+    } else {
+      setSelectedSemesterIds(prev => Array.from(new Set([...prev, ...filteredIds])));
+    }
+  };
+
+  const handleBulkDeleteSemesters = (idsToDelete) => {
+    const ids = idsToDelete || selectedSemesterIds;
+    if (!ids || ids.length === 0) {
+      showToast('Please select at least one semester to delete.', 'warning');
+      return;
+    }
+
+    setDeleteConfirmState({
+      isOpen: true,
+      type: 'bulk',
+      entityType: 'semester',
+      studentId: null,
+      studentName: `${ids.length} selected semester(s)`,
       targetIds: ids
     });
   };
@@ -4197,7 +5534,18 @@ export default function AdminDashboard({
   };
 
   // Reset Student Device ID Handler (Single Student with SweetAlert Confirmation)
-  const handleResetDeviceId = async (studentId, studentName) => {
+  const handleResetDeviceId = async (studentId, studentName, deviceId) => {
+    if (!deviceId) {
+      Swal.fire({
+        title: 'Already Unlocked!',
+        text: 'Your device is already unlocked.',
+        icon: 'info',
+        confirmButtonColor: '#f59e0b',
+        confirmButtonText: 'OK'
+      });
+      return;
+    }
+
     const result = await Swal.fire({
       title: 'Reset Device ID?',
       text: `Are you sure you want to reset device binding for ${studentName || 'this student'}? They will be able to log in from a new device.`,
@@ -4367,6 +5715,39 @@ export default function AdminDashboard({
       }
     }
     const isEdit = facultyModalMode === 'edit';
+    const cleanEmail = (facultyForm.email || '').trim().toLowerCase();
+    const cleanMobile = (facultyForm.mobile || '').trim();
+    const cleanDept = (facultyForm.department || '').trim().toLowerCase();
+
+    // 1. Check duplicate Email in the SAME DEPARTMENT (different department is allowed)
+    const isEmailDupInSameDept = (faculties || []).some(f => {
+      if (isEdit && String(f.id) === String(facultyForm.id)) return false;
+      const fDept = String(f.department || '').split('||SUB:')[0].trim().toLowerCase();
+      if (fDept !== cleanDept) return false;
+      const fEmail = String(f.email || f.username || '').trim().toLowerCase();
+      return fEmail && fEmail === cleanEmail;
+    });
+
+    if (isEmailDupInSameDept) {
+      showToast(`Faculty with Email "${facultyForm.email}" already exists in ${facultyForm.department || 'this'} department!`, 'error', 4000);
+      return;
+    }
+
+    // 2. Check duplicate Mobile Number in the SAME DEPARTMENT (different department is allowed)
+    if (cleanMobile) {
+      const isMobileDupInSameDept = (faculties || []).some(f => {
+        if (isEdit && String(f.id) === String(facultyForm.id)) return false;
+        const fDept = String(f.department || '').split('||SUB:')[0].trim().toLowerCase();
+        if (fDept !== cleanDept) return false;
+        const fMobile = String(f.mobile || '').trim();
+        return fMobile && fMobile === cleanMobile;
+      });
+
+      if (isMobileDupInSameDept) {
+        showToast(`Faculty with Mobile Number "${facultyForm.mobile}" already exists in ${facultyForm.department || 'this'} department!`, 'error', 4000);
+        return;
+      }
+    }
     const url = isEdit
       ? `/api/faculty/${facultyForm.id}`
       : '/api/faculty';
@@ -5449,12 +6830,19 @@ export default function AdminDashboard({
     }
 
     const exportRows = listToExport.map((f, idx) => {
+      const isPrimary = f.isPrimaryAdmin || f.id === 'admin_primary' || String(f.id) === '78' || (f.email && f.email.toLowerCase() === 'admin@ljcca.edu');
+      const rolesArr = Array.isArray(f.roles) && f.roles.length > 0
+        ? (isPrimary ? Array.from(new Set([...f.roles, 'admin'])) : f.roles)
+        : (isPrimary ? ['admin', 'faculty'] : (f.role === 'admin' ? ['admin', 'faculty'] : ['faculty']));
+      const roleStr = rolesArr.map(r => r === 'faculty' ? 'Faculty' : 'Admin').join(' + ');
+
       return {
         'S.No': idx + 1,
         'Full Name': f.name || '-',
         'Email ID': f.email || '-',
         'Department': f.department ? f.department.split('||SUB:')[0].trim() : '-',
         'Mobile No': f.mobile || '-',
+        'Role': roleStr || 'Faculty',
         'Password': f.plain_password || '********'
       };
     });
@@ -5831,6 +7219,76 @@ export default function AdminDashboard({
           </button>
         </div>
       )}
+      {/* Mobile Floating Bottom-Right Semester Actions Toggle Button */}
+      {activeTab === 'semesters' && !isAnyAdminModalOpen && !mobileSidebarOpen && (
+        <button
+          type="button"
+          className={`student-floating-mobile-actions-toggle ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+          onClick={() => setShowSemesterMobileActions(!showSemesterMobileActions)}
+          title={showSemesterMobileActions ? "Close Semester Actions" : "Open Semester Actions"}
+          style={{
+            bottom: showFloatingMobileMenu ? '92px' : '24px'
+          }}
+        >
+          {showSemesterMobileActions ? (
+            <ChevronRight size={26} strokeWidth={2.5} />
+          ) : (
+            <ChevronLeft size={26} strokeWidth={2.5} />
+          )}
+        </button>
+      )}
+
+      {/* Mobile Backdrop Overlay for Semester Actions */}
+      {activeTab === 'semesters' && !isAnyAdminModalOpen && !mobileSidebarOpen && showSemesterMobileActions && (
+        <div
+          className="student-mobile-actions-backdrop"
+          onClick={() => setShowSemesterMobileActions(false)}
+        />
+      )}
+
+      {/* Mobile Floating Action Buttons Container for Semester */}
+      {activeTab === 'semesters' && !isAnyAdminModalOpen && !mobileSidebarOpen && showSemesterMobileActions && (
+        <div
+          className={`admin-action-btn-group mobile-actions-open ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+          style={{
+            bottom: showFloatingMobileMenu ? '160px' : '92px'
+          }}
+        >
+          <button
+            className="admin-glass-btn admin-glass-btn-blue"
+            onClick={() => { setShowSemesterMobileActions(false); handleDownloadSemesterSampleTemplate(); }}
+            title="Download sample Excel file format for semester import"
+          >
+            <FileSpreadsheet size={16} />
+            <span>Sample Format</span>
+          </button>
+
+          <button
+            className="admin-glass-btn admin-glass-btn-purple"
+            onClick={() => { setShowSemesterMobileActions(false); semesterFileInputRef.current && semesterFileInputRef.current.click(); }}
+            title="Import semester records batch from CSV or Excel"
+          >
+            <Upload size={16} />
+            <span>Bulk Upload</span>
+          </button>
+
+          <button
+            className="admin-glass-btn admin-glass-btn-green"
+            onClick={() => { setShowSemesterMobileActions(false); handleExportSemesterData(); }}
+            title="Export semester records to Excel file"
+          >
+            <Download size={16} />
+            <span>Export Data</span>
+          </button>
+
+          <button
+            className="admin-glass-btn admin-glass-btn-amber full-width-mobile"
+            onClick={() => { setShowSemesterMobileActions(false); handleOpenAddSemesterModal(); }}
+          >
+            <Plus size={16} /> <span>Add Semester</span>
+          </button>
+        </div>
+      )}
 
       {/* Mobile Backdrop Overlay when sidebar is open */}
       {mobileSidebarOpen && (
@@ -5861,11 +7319,11 @@ export default function AdminDashboard({
             </button>
 
             <button
-              className={`admin-nav-item ${activeTab === 'students' ? 'active' : ''}`}
-              onClick={() => { setActiveTab('students'); setMobileSidebarOpen(false); }}
+              className={`admin-nav-item ${activeTab === 'semesters' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('semesters'); setMobileSidebarOpen(false); }}
             >
-              <Users size={19} />
-              <span>Students</span>
+              <Layers size={19} />
+              <span>Semester</span>
             </button>
 
             <button
@@ -5882,6 +7340,14 @@ export default function AdminDashboard({
             >
               <BookOpen size={19} />
               <span>Subject</span>
+            </button>
+
+            <button
+              className={`admin-nav-item ${activeTab === 'students' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('students'); setMobileSidebarOpen(false); }}
+            >
+              <Users size={19} />
+              <span>Students</span>
             </button>
 
             <button
@@ -5911,7 +7377,7 @@ export default function AdminDashboard({
             <button
               className={`admin-nav-item ${activeTab === 'attendance_logs' ? 'active' : ''}`}
               onClick={() => {
-                setSelectedSemFolder('ALL');
+                setSelectedSemFolder(availableSemesters[0] || '1');
                 setMatrixSearch('');
                 setMobileSidebarOpen(false);
                 React.startTransition(() => {
@@ -6045,6 +7511,7 @@ export default function AdminDashboard({
             )}
 
             <div
+              ref={profileCardRef}
               className="admin-user-profile-card"
               onClick={() => {
                 if (canSwitchRole) setRoleMenuOpen(prev => !prev);
@@ -6093,7 +7560,10 @@ export default function AdminDashboard({
         </aside>
 
         <div className="admin-main-wrapper content-light">
-          <header className={`admin-top-header-banner ${activeTab === 'dashboard' ? 'dashboard-header-tall' : ''}`}>
+          <header
+            className={`admin-top-header-banner ${activeTab === 'dashboard' ? 'dashboard-header-tall' : ''}`}
+            style={{ background: 'linear-gradient(90deg, #003366 0%, #004080 50%, #003366 100%)' }}
+          >
             <div className="admin-banner-content">
               <div className="admin-header-title-row" style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                 {!showFloatingMobileMenu && (
@@ -6117,7 +7587,8 @@ export default function AdminDashboard({
                         activeTab === 'faculty' ? 'Faculty' :
                           activeTab === 'attendance_logs' ? 'Attendance Logs' :
                             activeTab === 'subjects' ? 'Subject' :
-                              activeTab === 'otp' ? 'QR Attendance' :
+                              activeTab === 'semesters' ? 'Semester' :
+                                activeTab === 'otp' ? 'QR Attendance' :
                                 activeTab === 'location' ? 'College Location' :
                                   activeTab === 'leaves' ? 'Leave Request' :
                                     activeTab === 'defaulters' ? 'Defaulters' :
@@ -6180,7 +7651,7 @@ export default function AdminDashboard({
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                       <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #a855f7, #ec4899)', color: '#ffffff', width: '54px', height: '54px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(168, 85, 247, 0.3)' }}>
-                        <FileText size={26} color="#ffffff" />
+                        <BookOpen size={26} color="#ffffff" />
                       </div>
                       <div>
                         <span className="stat-card-title" style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.2 }}>Subjects</span>
@@ -6196,8 +7667,25 @@ export default function AdminDashboard({
                     style={{ border: '1px solid var(--panel-border)', justifyContent: 'center' }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #0284c7, #0369a1)', color: '#ffffff', width: '54px', height: '54px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(2, 132, 199, 0.3)' }}>
+                        <Layers size={26} color="#ffffff" />
+                      </div>
+                      <div>
+                        <span className="stat-card-title" style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.2 }}>Semester</span>
+                        <div className="stat-card-value" style={{ fontSize: '2.2rem', fontWeight: '800', color: '#0284c7', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                          {allSemestersList.length || 0}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div
+                    className="glass-panel stat-card-v2"
+                    style={{ border: '1px solid var(--panel-border)', justifyContent: 'center' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                       <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #e69500, #f59e0b)', color: '#ffffff', width: '54px', height: '54px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(230, 149, 0, 0.3)' }}>
-                        <Calendar size={26} color="#ffffff" />
+                        <FileText size={26} color="#ffffff" />
                       </div>
                       <div>
                         <span className="stat-card-title" style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.2 }}>Leave<br />Requests</span>
@@ -6325,7 +7813,7 @@ export default function AdminDashboard({
                         marginBottom: '18px',
                         boxShadow: '0 4px 12px rgba(217, 119, 6, 0.25)'
                       }}>
-                        <Calendar size={24} color="#ffffff" style={{ strokeWidth: 2.2 }} />
+                        <FileText size={24} color="#ffffff" style={{ strokeWidth: 2.2 }} />
                       </div>
                       <h4 style={{ fontSize: '1.15rem', fontWeight: '700', color: '#0f172a', margin: '0 0 8px 0' }}>
                         Leave Requests
@@ -6406,14 +7894,14 @@ export default function AdminDashboard({
                         width: '52px',
                         height: '52px',
                         borderRadius: '14px',
-                        background: '#f59e0b',
+                        background: '#00a86b',
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
                         marginBottom: '18px',
-                        boxShadow: '0 4px 12px rgba(245, 158, 11, 0.25)'
+                        boxShadow: '0 4px 12px rgba(0, 168, 107, 0.25)'
                       }}>
-                        <TrendingUp size={24} color="#0f172a" style={{ strokeWidth: 2.2 }} />
+                        <TrendingUp size={24} color="#ffffff" style={{ strokeWidth: 2.2 }} />
                       </div>
                       <h4 style={{ fontSize: '1.15rem', fontWeight: '700', color: '#0f172a', margin: '0 0 8px 0' }}>
                         Analytics
@@ -7847,7 +9335,7 @@ export default function AdminDashboard({
                                 <th style={{ whiteSpace: 'nowrap' }}>Semester</th>
                                 <th style={{ whiteSpace: 'nowrap' }}>Faculty</th>
                                 <th style={{ whiteSpace: 'nowrap' }}>Type</th>
-                                <th style={{ textAlign: 'center', width: '110px', whiteSpace: 'nowrap' }}>Action</th>
+                                <th style={{ textAlign: 'center', width: '135px', whiteSpace: 'nowrap' }}>Action</th>
                               </tr>
                             </thead>
                             <tbody>
@@ -7890,9 +9378,37 @@ export default function AdminDashboard({
                                       Semester {semNum}
                                     </td>
                                     <td style={{ whiteSpace: 'nowrap' }}>
-                                      <span style={{ fontSize: '0.85rem', fontWeight: '600', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                                        {facultyName}
-                                      </span>
+                                      {Array.isArray(sub.facultyNamesList) && sub.facultyNamesList.length > 0 ? (
+                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
+                                          {sub.facultyNamesList.map((fName, fIdx) => (
+                                            <span key={fIdx} style={{
+                                              padding: '3px 10px',
+                                              borderRadius: '8px',
+                                              fontSize: '0.8rem',
+                                              fontWeight: '600',
+                                              background: 'rgba(59, 130, 246, 0.12)',
+                                              color: '#3b82f6',
+                                              border: '1px solid rgba(59, 130, 246, 0.25)',
+                                              whiteSpace: 'nowrap'
+                                            }}>
+                                              {fName}
+                                            </span>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        <span style={{
+                                          padding: '3px 10px',
+                                          borderRadius: '8px',
+                                          fontSize: '0.8rem',
+                                          fontWeight: '600',
+                                          background: 'rgba(148, 163, 184, 0.12)',
+                                          color: 'var(--text-muted)',
+                                          border: '1px solid rgba(148, 163, 184, 0.2)',
+                                          whiteSpace: 'nowrap'
+                                        }}>
+                                          Unassigned
+                                        </span>
+                                      )}
                                     </td>
                                     <td style={{ whiteSpace: 'nowrap', fontWeight: '600' }}>
                                       {subType}
@@ -7900,18 +9416,24 @@ export default function AdminDashboard({
                                     <td style={{ textAlign: 'center' }}>
                                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                                         <button
-                                          className="btn btn-secondary"
+                                          className="admin-action-btn assign"
+                                          onClick={() => handleOpenAssignFacultyModal(sub)}
+                                          title="Assign Faculty"
+                                        >
+                                          <UserPlus size={14} />
+                                        </button>
+
+                                        <button
+                                          className="admin-action-btn edit"
                                           onClick={() => handleEditSubject(sub)}
-                                          style={styles.actionBtn}
                                           title="Edit Subject Details"
                                         >
                                           <Edit size={14} />
                                         </button>
 
                                         <button
-                                          className="btn btn-danger"
+                                          className="admin-action-btn delete"
                                           onClick={() => handleDeleteSubject(sub)}
-                                          style={styles.actionBtn}
                                           title="Delete Subject"
                                         >
                                           <Trash2 size={14} />
@@ -7974,7 +9496,7 @@ export default function AdminDashboard({
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
                         boxShadow: '0 4px 12px rgba(245, 158, 11, 0.3)'
                       }}>
-                        {subjectModalMode === 'edit' ? <Edit size={20} color="#ffffff" /> : <Plus size={20} color="#ffffff" />}
+                        {subjectModalMode === 'edit' ? <Edit size={20} color="#ffffff" /> : <BookOpen size={20} color="#ffffff" />}
                       </div>
                       <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '700', color: '#0f172a' }}>
                         {subjectModalMode === 'edit' ? 'Edit Teaching Subject' : 'Add New Teaching Subject'}
@@ -7996,12 +9518,19 @@ export default function AdminDashboard({
                           Subject Name *
                         </label>
                         <input
+                          ref={firstSubjectInputRef}
                           type="text"
                           placeholder="e.g. C Language, Java Programming, DBMS..."
                           value={newSubName}
                           onChange={e => setNewSubName(e.target.value)}
                           autoFocus
                           tabIndex={1}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Tab' && e.shiftKey) {
+                              e.preventDefault();
+                              addSubjectSaveBtnRef.current?.focus();
+                            }
+                          }}
                           style={{
                             width: '100%',
                             padding: '10px 14px',
@@ -8077,7 +9606,8 @@ export default function AdminDashboard({
                         <SearchableSemesterSelect
                           value={newSubSem}
                           onChange={(val) => setNewSubSem(val)}
-                          placeholder="Select Semester (1-8)"
+                          placeholder="Select Semester"
+                          options={allSemestersList.map(s => ({ id: String(s.semNumber || s.id), label: s.name || `Semester ${s.semNumber || s.id}` }))}
                           isDark={false}
                           tabIndex={4}
                         />
@@ -8108,45 +9638,9 @@ export default function AdminDashboard({
                         >
                           <option value="Theory">Theory</option>
                           <option value="Practical">Practical</option>
-                          <option value="Theory + Practical">Theory + Practical</option>
                         </select>
                       </div>
 
-                      {/* Faculty Select */}
-                      <div>
-                        <label style={{ display: 'block', fontSize: '0.84rem', fontWeight: '700', color: '#1e293b', marginBottom: '6px' }}>
-                          Faculty *
-                        </label>
-                        <select
-                          value={newSubFacultyId}
-                          onChange={e => setNewSubFacultyId(e.target.value)}
-                          onKeyDown={e => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              handleAddSubjectSubmit(e);
-                            }
-                          }}
-                          tabIndex={6}
-                          style={{
-                            width: '100%',
-                            padding: '10px 14px',
-                            borderRadius: '10px',
-                            border: '1.5px solid #cbd5e1',
-                            background: '#f8fafc',
-                            color: '#0f172a',
-                            fontSize: '0.88rem',
-                            fontWeight: '500',
-                            outline: 'none',
-                            cursor: 'pointer',
-                            boxSizing: 'border-box'
-                          }}
-                        >
-                          <option value="" disabled>Select Faculty</option>
-                          {faculties.map(fac => (
-                            <option key={fac.id} value={fac.id}>{fac.name}</option>
-                          ))}
-                        </select>
-                      </div>
                     </div>
 
                     {/* Modal Footer */}
@@ -8156,70 +9650,977 @@ export default function AdminDashboard({
                       borderTop: '1px solid #f1f5f9',
                       display: 'flex',
                       alignItems: 'center',
-                      justifyContent: 'flex-end',
-                      gap: '12px'
+                      gap: '12px',
+                      width: '100%',
+                      boxSizing: 'border-box'
                     }}>
                       <button
                         type="button"
                         onClick={() => setShowAddSubjectModal(false)}
-                        tabIndex={7}
+                        tabIndex={6}
                         style={{
-                          padding: '9px 20px',
-                          borderRadius: '10px',
-                          fontSize: '0.88rem',
-                          fontWeight: '700',
-                          background: '#e2e8f0',
-                          color: '#334155',
-                          border: '2px solid #cbd5e1',
+                          flex: 1,
+                          height: '42px',
+                          borderRadius: '8px',
+                          border: '1.5px solid #000000',
+                          background: '#ffffff',
+                          color: '#000000',
+                          fontWeight: '600',
+                          fontSize: '0.95rem',
                           cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
                           transition: 'all 0.15s ease',
                           outline: 'none'
                         }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.background = '#f8fafc';
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.background = '#ffffff';
+                        }}
                         onFocus={e => {
-                          e.currentTarget.style.border = '2px solid #2563eb';
-                          e.currentTarget.style.boxShadow = '0 0 0 4px rgba(37, 99, 235, 0.35)';
-                          e.currentTarget.style.background = '#dbeafe';
-                          e.currentTarget.style.color = '#1d4ed8';
+                          e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0, 0, 0, 0.2)';
                         }}
                         onBlur={e => {
-                          e.currentTarget.style.border = '2px solid #cbd5e1';
                           e.currentTarget.style.boxShadow = 'none';
-                          e.currentTarget.style.background = '#e2e8f0';
-                          e.currentTarget.style.color = '#334155';
                         }}
                       >
                         Cancel
                       </button>
                       <button
+                        ref={addSubjectSaveBtnRef}
                         type="submit"
                         disabled={savingSubjects}
                         tabIndex={8}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Tab' && !e.shiftKey) {
+                            e.preventDefault();
+                            firstSubjectInputRef.current?.focus();
+                          }
+                        }}
                         style={{
-                          padding: '9px 24px',
-                          borderRadius: '10px',
-                          fontSize: '0.88rem',
-                          fontWeight: '800',
-                          background: 'linear-gradient(135deg, #f59e0b, #d97706)',
-                          color: '#0f172a',
-                          border: '2px solid #d97706',
-                          boxShadow: '0 4px 14px rgba(0, 0, 0, 0.2)',
+                          flex: 1,
+                          height: '42px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
+                          color: '#ffffff',
+                          fontWeight: '700',
+                          fontSize: '0.95rem',
                           cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          boxShadow: '0 4px 14px rgba(0, 0, 0, 0.2)',
                           transition: 'all 0.15s ease',
                           outline: 'none'
                         }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.filter = 'brightness(1.05)';
+                          e.currentTarget.style.transform = 'translateY(-1px)';
+                          e.currentTarget.style.boxShadow = '0 6px 18px rgba(0, 0, 0, 0.28)';
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.filter = 'none';
+                          e.currentTarget.style.transform = 'none';
+                          e.currentTarget.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.2)';
+                        }}
                         onFocus={e => {
-                          e.currentTarget.style.border = '2px solid #0f172a';
-                          e.currentTarget.style.boxShadow = '0 0 0 4px rgba(0, 0, 0, 0.35), 0 4px 14px rgba(0, 0, 0, 0.25)';
+                          e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0, 0, 0, 0.4), 0 4px 14px rgba(0, 0, 0, 0.25)';
                         }}
                         onBlur={e => {
-                          e.currentTarget.style.border = '2px solid #d97706';
                           e.currentTarget.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.2)';
                         }}
                       >
-                        {savingSubjects ? (subjectModalMode === 'edit' ? 'Updating...' : 'Saving...') : (subjectModalMode === 'edit' ? 'Update Subject' : 'Save Subject')}
+                        {savingSubjects ? (subjectModalMode === 'edit' ? 'Updating...' : 'Creating...') : (subjectModalMode === 'edit' ? 'Update Subject' : 'Create')}
                       </button>
                     </div>
                   </form>
+                </div>
+              </div>
+            )}
+
+            {/* Add / Edit Semester Modal Dialog */}
+            {showAddSemesterModal && (
+              <div style={{
+                position: 'fixed',
+                top: 0, left: 0, right: 0, bottom: 0,
+                width: '100vw', width: '100dvw',
+                height: '100vh', height: '100dvh',
+                background: 'transparent',
+                backdropFilter: 'blur(5px)',
+                WebkitBackdropFilter: 'blur(5px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 99999,
+                padding: '16px',
+                boxSizing: 'border-box'
+              }}
+              onClick={() => setShowAddSemesterModal(false)}
+              >
+                <div
+                  className="glass-panel"
+                  style={{
+                    maxWidth: '480px',
+                    width: '100%',
+                    background: '#ffffff',
+                    border: '1.5px solid #cbd5e1',
+                    borderRadius: '20px',
+                    padding: '24px',
+                    boxShadow: '0 20px 50px rgba(0,0,0,0.2)',
+                    boxSizing: 'border-box'
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div style={{
+                        width: '38px',
+                        height: '38px',
+                        borderRadius: '10px',
+                        background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                        color: '#ffffff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        <Layers size={20} />
+                      </div>
+                      <h2 style={{ margin: 0, fontSize: '1.2rem', fontWeight: '800', color: '#0f172a' }}>
+                        {isEditingSemester ? 'Edit Semester' : 'Add New Semester'}
+                      </h2>
+                    </div>
+                    <AdminModalCloseBtn onClick={() => setShowAddSemesterModal(false)} />
+                  </div>
+
+                  <form onSubmit={handleSaveSemester} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
+                        Semester Number / Code <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <input
+                        ref={firstSemInputRef}
+                        id="add-sem-code-input"
+                        type="text"
+                        className="glass-input"
+                        placeholder="e.g. 9 or SEM-9"
+                        value={semesterFormData.semNumber}
+                        onChange={(e) => setSemesterFormData({ ...semesterFormData, semNumber: e.target.value })}
+                        required
+                        tabIndex={1}
+                        autoFocus
+                        onKeyDown={(e) => {
+                          if (e.key === 'Tab' && e.shiftKey) {
+                            e.preventDefault();
+                            addSemCreateBtnRef.current?.focus();
+                          }
+                        }}
+                        style={{ width: '100%', boxSizing: 'border-box' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
+                        Semester Display Name <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <input
+                        type="text"
+                        className="glass-input"
+                        placeholder="e.g. Semester 9"
+                        value={semesterFormData.name}
+                        onChange={(e) => setSemesterFormData({ ...semesterFormData, name: e.target.value })}
+                        required
+                        tabIndex={2}
+                        style={{ width: '100%', boxSizing: 'border-box' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
+                        Term Type
+                      </label>
+                      <select
+                        className="glass-input"
+                        value={semesterFormData.term}
+                        onChange={(e) => setSemesterFormData({ ...semesterFormData, term: e.target.value })}
+                        tabIndex={3}
+                        style={{ width: '100%', padding: '10px 12px', boxSizing: 'border-box' }}
+                      >
+                        <option value="Odd">Odd Term</option>
+                        <option value="Even">Even Term</option>
+                        <option value="Summer">Summer Term</option>
+                      </select>
+                    </div>
+
+                    <div style={{
+                      marginTop: '20px',
+                      paddingTop: '16px',
+                      borderTop: '1px solid #e2e8f0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'flex-end',
+                      gap: '12px'
+                    }}>
+                      <button
+                        type="button"
+                        tabIndex={4}
+                        onClick={() => setShowAddSemesterModal(false)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            setShowAddSemesterModal(false);
+                          }
+                        }}
+                        style={{
+                          flex: 1,
+                          height: '42px',
+                          borderRadius: '8px',
+                          border: '1.5px solid #000000',
+                          background: '#ffffff',
+                          color: '#000000',
+                          fontWeight: '600',
+                          fontSize: '0.95rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          transition: 'all 0.15s ease',
+                          outline: 'none'
+                        }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.background = '#f8fafc';
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.background = '#ffffff';
+                        }}
+                        onFocus={e => {
+                          e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0, 0, 0, 0.35)';
+                          e.currentTarget.style.border = '1.5px solid #000000';
+                        }}
+                        onBlur={e => {
+                          e.currentTarget.style.boxShadow = 'none';
+                          e.currentTarget.style.border = '1.5px solid #000000';
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        ref={addSemCreateBtnRef}
+                        type="submit"
+                        tabIndex={5}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Tab' && !e.shiftKey) {
+                            e.preventDefault();
+                            firstSemInputRef.current?.focus();
+                          }
+                        }}
+                        style={{
+                          flex: 1,
+                          height: '42px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
+                          color: '#ffffff',
+                          fontWeight: '700',
+                          fontSize: '0.95rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          boxShadow: '0 4px 14px rgba(0, 0, 0, 0.2)',
+                          transition: 'all 0.15s ease',
+                          outline: 'none'
+                        }}
+                        onMouseEnter={e => {
+                          e.currentTarget.style.filter = 'brightness(1.05)';
+                          e.currentTarget.style.transform = 'translateY(-1px)';
+                          e.currentTarget.style.boxShadow = '0 6px 18px rgba(0, 0, 0, 0.28)';
+                        }}
+                        onMouseLeave={e => {
+                          e.currentTarget.style.filter = 'none';
+                          e.currentTarget.style.transform = 'none';
+                          e.currentTarget.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.2)';
+                        }}
+                        onFocus={e => {
+                          e.currentTarget.style.boxShadow = '0 0 0 3px rgba(0, 0, 0, 0.45), 0 4px 14px rgba(0, 0, 0, 0.25)';
+                        }}
+                        onBlur={e => {
+                          e.currentTarget.style.boxShadow = '0 4px 14px rgba(0, 0, 0, 0.2)';
+                        }}
+                      >
+                        {isEditingSemester ? 'Update Semester' : 'Create'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {/* Assign Faculty to Subject Modal Dialog (Matches Photo 2) */}
+            {showAssignFacultyModal && assigningSubject && (
+              <div
+                tabIndex={-1}
+                onKeyDown={e => {
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setShowAssignFacultyModal(false);
+                  }
+                }}
+                style={{
+                  position: 'fixed',
+                  top: 0, left: 0, right: 0, bottom: 0,
+                  width: '100vw', width: '100dvw',
+                  height: '100vh', height: '100dvh',
+                  background: 'rgba(15, 23, 42, 0.45)',
+                  backdropFilter: 'blur(6px)',
+                  WebkitBackdropFilter: 'blur(6px)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 999999,
+                  padding: '16px',
+                  boxSizing: 'border-box'
+                }}
+              >
+                <div style={{
+                  background: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '20px',
+                  width: '100%',
+                  maxWidth: '520px',
+                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+                  overflow: 'hidden',
+                  animation: 'modalSlideUp 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  maxHeight: '90vh'
+                }}>
+                  {/* Modal Header with Assign Faculty Sign (Photo 1) */}
+                  <div style={{
+                    padding: '24px 28px 16px 28px',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    justifyContent: 'space-between',
+                    gap: '12px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                      {/* Assign Faculty Sign / Icon Badge (Photo 1) */}
+                      <div style={{
+                        width: '42px',
+                        height: '42px',
+                        borderRadius: '12px',
+                        background: 'rgba(236, 253, 245, 0.95)',
+                        border: '1.5px solid rgba(167, 243, 208, 0.95)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        boxShadow: '0 4px 12px rgba(16, 185, 129, 0.16)',
+                        flexShrink: 0
+                      }}>
+                        <UserPlus size={22} color="#059669" strokeWidth={2.4} />
+                      </div>
+
+                      <div>
+                        <h2 style={{
+                          margin: 0,
+                          fontSize: '1.45rem',
+                          fontWeight: '800',
+                          color: '#002d62',
+                          letterSpacing: '-0.02em',
+                          lineHeight: '1.2'
+                        }}>
+                          Assign Faculty
+                        </h2>
+                        <div style={{
+                          marginTop: '4px',
+                          fontSize: '0.84rem',
+                          color: '#64748b',
+                          fontWeight: '500',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          flexWrap: 'wrap'
+                        }}>
+                          <span>Subject: <strong style={{ color: '#0f172a' }}>{assigningSubject.shortName || assigningSubject.short_name || assigningSubject.shortCode || assigningSubject.short || assigningSubject.code || assigningSubject.subjectCode || assigningSubject.subjectName || assigningSubject.name}</strong></span>
+                          <span style={{ color: '#cbd5e1' }}>•</span>
+                          <span>Semester <strong style={{ color: '#0f172a' }}>{assigningSubject.semester || '1'}</strong></span>
+                          <span style={{ color: '#cbd5e1' }}>•</span>
+                          <span style={{
+                            fontSize: '0.75rem',
+                            fontWeight: '700',
+                            padding: '2px 8px',
+                            borderRadius: '6px',
+                            background: selectedAssignFacultyIds.length >= 3 ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+                            color: selectedAssignFacultyIds.length >= 3 ? '#dc2626' : '#059669',
+                            border: selectedAssignFacultyIds.length >= 3 ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(16, 185, 129, 0.3)'
+                          }}>
+                            {selectedAssignFacultyIds.length}/3 Selected (Max 3)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <AdminModalCloseBtn
+                      onClick={() => setShowAssignFacultyModal(false)}
+                      title="Close"
+                      tabIndex={-1}
+                    />
+                  </div>
+
+                  {/* Search Bar (if more than 4 faculties) */}
+                  {(faculties || []).length > 4 && (
+                    <div style={{ padding: '0 28px 12px 28px' }}>
+                      <input
+                        id="assign-faculty-search-input"
+                        type="text"
+                        tabIndex={1}
+                        autoFocus
+                        value={assignFacultySearch}
+                        onChange={e => setAssignFacultySearch(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Tab' && !e.shiftKey) {
+                            e.preventDefault();
+                            document.getElementById('assign-faculty-cancel-btn')?.focus();
+                          } else if (e.key === 'Enter') {
+                            e.preventDefault();
+                            document.getElementById('assign-faculty-save-btn')?.focus();
+                          }
+                        }}
+                        placeholder="Search faculty name, department or email..."
+                        style={{
+                          width: '100%',
+                          height: '38px',
+                          padding: '0 12px',
+                          borderRadius: '8px',
+                          border: '1.5px solid #e2e8f0',
+                          fontSize: '0.86rem',
+                          color: '#0f172a',
+                          background: '#f8fafc',
+                          outline: 'none',
+                          boxSizing: 'border-box',
+                          transition: 'all 0.15s ease'
+                        }}
+                        onFocus={e => {
+                          e.currentTarget.style.borderColor = '#3b82f6';
+                          e.currentTarget.style.background = '#ffffff';
+                          e.currentTarget.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.2)';
+                        }}
+                        onBlur={e => {
+                          e.currentTarget.style.borderColor = '#e2e8f0';
+                          e.currentTarget.style.background = '#f8fafc';
+                          e.currentTarget.style.boxShadow = 'none';
+                        }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Faculty List (Scrollable Cards matching Photo 2) */}
+                  <div style={{
+                    padding: '4px 28px 20px 28px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px',
+                    overflowY: 'auto',
+                    maxHeight: '380px'
+                  }}>
+                    {(() => {
+                      const query = (assignFacultySearch || '').toLowerCase().trim();
+                      const list = (faculties || []).filter(f => {
+                        if (!query) return true;
+                        const name = (f.name || '').toLowerCase();
+                        const dept = (f.department || '').toLowerCase();
+                        const email = (f.email || '').toLowerCase();
+                        return name.includes(query) || dept.includes(query) || email.includes(query);
+                      });
+
+                      if (list.length === 0) {
+                        return (
+                          <div style={{
+                            padding: '32px 16px',
+                            textAlign: 'center',
+                            color: '#94a3b8',
+                            fontSize: '0.9rem',
+                            fontWeight: '500'
+                          }}>
+                            {query ? 'No matching faculty found' : 'No faculty records available.'}
+                          </div>
+                        );
+                      }
+
+                      return list.map(fac => {
+                        const isSelected = selectedAssignFacultyIds.includes(String(fac.id));
+                        return (
+                          <div
+                            key={fac.id}
+                            onClick={() => toggleAssignFacultySelect(fac.id)}
+                            style={{
+                              padding: '14px 18px',
+                              borderRadius: '10px',
+                              border: isSelected ? '1.5px solid #3b82f6' : '1.5px solid #e2e8f0',
+                              background: isSelected ? '#f0f7ff' : '#ffffff',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '14px',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease',
+                              boxShadow: isSelected ? '0 2px 8px rgba(59, 130, 246, 0.08)' : 'none',
+                              userSelect: 'none'
+                            }}
+                            onMouseEnter={e => {
+                              if (!isSelected) {
+                                e.currentTarget.style.borderColor = '#cbd5e1';
+                                e.currentTarget.style.background = '#f8fafc';
+                              }
+                            }}
+                            onMouseLeave={e => {
+                              if (!isSelected) {
+                                e.currentTarget.style.borderColor = '#e2e8f0';
+                                e.currentTarget.style.background = '#ffffff';
+                              }
+                            }}
+                          >
+                            {/* Checkbox matching Photo 2 */}
+                            <div style={{
+                              width: '20px',
+                              height: '20px',
+                              borderRadius: '4px',
+                              background: isSelected ? '#0066cc' : '#ffffff',
+                              border: isSelected ? '1.5px solid #0066cc' : '1.5px solid #cbd5e1',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              flexShrink: 0,
+                              transition: 'all 0.15s ease'
+                            }}>
+                              {isSelected && <Check size={14} color="#ffffff" strokeWidth={3.2} />}
+                            </div>
+
+                            {/* Info matching Photo 2 */}
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{
+                                fontSize: '0.98rem',
+                                fontWeight: '700',
+                                color: '#0f172a',
+                                lineHeight: '1.3'
+                              }}>
+                                {fac.name}
+                              </div>
+                              <div style={{
+                                fontSize: '0.82rem',
+                                color: '#64748b',
+                                marginTop: '3px',
+                                whiteSpace: 'nowrap',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis'
+                              }}>
+                                {fac.department || 'Faculty'} • {fac.email || fac.phone || `ID: ${fac.id}`}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+
+                  {/* Modal Footer (Cancel & Save Assignment with full Keyboard Tab Support) */}
+                  <div style={{
+                    padding: '16px 28px 24px 28px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '14px',
+                    boxSizing: 'border-box',
+                    borderTop: '1px solid #f1f5f9',
+                    background: '#ffffff'
+                  }}>
+                    <button
+                      id="assign-faculty-cancel-btn"
+                      type="button"
+                      tabIndex={2}
+                      onClick={() => setShowAssignFacultyModal(false)}
+                      onKeyDown={e => {
+                        if (e.key === 'Tab' && !e.shiftKey) {
+                          e.preventDefault();
+                          document.getElementById('assign-faculty-save-btn')?.focus();
+                        } else if (e.key === 'Tab' && e.shiftKey) {
+                          e.preventDefault();
+                          const searchEl = document.getElementById('assign-faculty-search-input');
+                          if (searchEl) {
+                            searchEl.focus();
+                          } else {
+                            document.getElementById('assign-faculty-save-btn')?.focus();
+                          }
+                        } else if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          setShowAssignFacultyModal(false);
+                        }
+                      }}
+                      className="assign-modal-cancel-btn"
+                      style={{
+                        flex: 1,
+                        height: '44px',
+                        borderRadius: '8px',
+                        border: '1.5px solid #003366',
+                        background: '#ffffff',
+                        color: '#003366',
+                        fontWeight: '600',
+                        fontSize: '0.98rem',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        transition: 'all 0.15s ease',
+                        outline: 'none'
+                      }}
+                      onFocus={e => {
+                        e.currentTarget.style.boxShadow = '0 0 0 3.5px rgba(0, 51, 102, 0.35)';
+                        e.currentTarget.style.background = '#f0f4f8';
+                      }}
+                      onBlur={e => {
+                        e.currentTarget.style.boxShadow = 'none';
+                        e.currentTarget.style.background = '#ffffff';
+                      }}
+                      onMouseEnter={e => {
+                        e.currentTarget.style.background = '#f0f4f8';
+                      }}
+                      onMouseLeave={e => {
+                        if (document.activeElement !== e.currentTarget) {
+                          e.currentTarget.style.background = '#ffffff';
+                        }
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      id="assign-faculty-save-btn"
+                      type="button"
+                      tabIndex={3}
+                      disabled={savingFacultyAssignment}
+                      onClick={handleSaveFacultyAssignment}
+                      onKeyDown={e => {
+                        if (e.key === 'Tab' && !e.shiftKey) {
+                          e.preventDefault();
+                          const searchEl = document.getElementById('assign-faculty-search-input');
+                          if (searchEl) {
+                            searchEl.focus();
+                          } else {
+                            document.getElementById('assign-faculty-cancel-btn')?.focus();
+                          }
+                        } else if (e.key === 'Tab' && e.shiftKey) {
+                          e.preventDefault();
+                          document.getElementById('assign-faculty-cancel-btn')?.focus();
+                        } else if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleSaveFacultyAssignment();
+                        }
+                      }}
+                      className="assign-modal-save-btn"
+                      style={{
+                        flex: 1,
+                        height: '44px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        background: '#f59e0b',
+                        color: '#ffffff',
+                        fontWeight: '700',
+                        fontSize: '0.98rem',
+                        cursor: savingFacultyAssignment ? 'not-allowed' : 'pointer',
+                        opacity: savingFacultyAssignment ? 0.75 : 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        boxShadow: '0 2px 8px rgba(245, 158, 11, 0.25)',
+                        transition: 'all 0.15s ease',
+                        outline: 'none'
+                      }}
+                      onFocus={e => {
+                        e.currentTarget.style.boxShadow = '0 0 0 3.5px rgba(245, 158, 11, 0.5), 0 4px 14px rgba(245, 158, 11, 0.35)';
+                        e.currentTarget.style.filter = 'brightness(1.06)';
+                      }}
+                      onBlur={e => {
+                        e.currentTarget.style.boxShadow = '0 2px 8px rgba(245, 158, 11, 0.25)';
+                        e.currentTarget.style.filter = 'none';
+                      }}
+                      onMouseEnter={e => {
+                        if (!savingFacultyAssignment) {
+                          e.currentTarget.style.filter = 'brightness(1.06)';
+                          e.currentTarget.style.transform = 'translateY(-1px)';
+                        }
+                      }}
+                      onMouseLeave={e => {
+                        if (document.activeElement !== e.currentTarget) {
+                          e.currentTarget.style.filter = 'none';
+                        }
+                        e.currentTarget.style.transform = 'none';
+                      }}
+                    >
+                      {savingFacultyAssignment ? 'Saving Assignment...' : 'Save Assignment'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'semesters' && (
+              <div style={styles.tabPanel}>
+                {/* CARD 1: ACTION BUTTONS CARD (TOP) */}
+                <div className="glass-panel desktop-student-action-card" style={{ padding: isMobile ? '14px 16px' : '18px 24px', borderRadius: '16px' }}>
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx"
+                    ref={semesterFileInputRef}
+                    onChange={handleSemesterImportFile}
+                    style={{ display: 'none' }}
+                  />
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', width: '100%' }}>
+                    {/* Left Actions Group */}
+                    <div className="admin-action-btn-group desktop-student-action-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        className="admin-glass-btn admin-glass-btn-blue"
+                        onClick={() => { setShowSemesterMobileActions(false); handleDownloadSemesterSampleTemplate(); }}
+                        title="Download sample Excel file format for semester import"
+                      >
+                        <FileSpreadsheet size={16} />
+                        <span>Sample Format</span>
+                      </button>
+
+                      <button
+                        className="admin-glass-btn admin-glass-btn-purple"
+                        onClick={() => { setShowSemesterMobileActions(false); semesterFileInputRef.current && semesterFileInputRef.current.click(); }}
+                        title="Import semester batch from CSV or Excel"
+                      >
+                        <Upload size={16} />
+                        <span>Bulk Upload</span>
+                      </button>
+
+                      <button
+                        className="admin-glass-btn admin-glass-btn-green"
+                        onClick={() => { setShowSemesterMobileActions(false); handleExportSemesterData(); }}
+                        title="Export semester records to Excel file"
+                      >
+                        <Download size={16} />
+                        <span>Export</span>
+                      </button>
+
+                      {selectedSemesterIds.length > 0 && (
+                        <button
+                          className="admin-glass-btn admin-glass-btn-rose"
+                          onClick={() => handleBulkDeleteSemesters(selectedSemesterIds)}
+                          title={`Delete ${selectedSemesterIds.length} selected semester(s)`}
+                        >
+                          <Trash2 size={16} />
+                          <span>
+                            Delete ({selectedSemesterIds.length})
+                          </span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Right Action Group */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
+                      <button
+                        onClick={handleOpenAddSemesterModal}
+                        className="admin-glass-btn admin-glass-btn-amber full-width-mobile"
+                      >
+                        <Plus size={16} /> <span>Add Semester</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* CARD 2: SEARCH FILTER BAR */}
+                <div className="glass-panel" style={{ padding: isMobile ? '14px 16px' : '18px 24px', borderRadius: '16px' }}>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <Search size={18} style={styles.searchIcon} />
+                    <input
+                      type="text"
+                      className="glass-input"
+                      placeholder="Search semester by Name, Number or Term..."
+                      value={semesterSearchQuery}
+                      onChange={(e) => setSemesterSearchQuery(e.target.value)}
+                      style={{ paddingLeft: '40px', paddingRight: semesterSearchQuery ? '36px' : '14px', width: '100%' }}
+                    />
+                    {semesterSearchQuery && (
+                      <button
+                        onClick={() => setSemesterSearchQuery('')}
+                        style={{
+                          position: 'absolute',
+                          right: '12px',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-muted)',
+                          cursor: 'pointer',
+                          padding: '4px',
+                          display: 'flex',
+                          alignItems: 'center'
+                        }}
+                        title="Clear search"
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* CARD 3: SEMESTER DATA TABLE CARD (MATCHING USER SCREENSHOT) */}
+                <div className="glass-panel" style={{ ...styles.studentCrudPanel, padding: isMobile ? '14px 10px' : '24px', borderRadius: '16px' }}>
+                  <div className="custom-table-container">
+                    {allSemestersList.length === 0 ? (
+                      <div style={{
+                        textAlign: 'center',
+                        padding: '50px 20px',
+                        color: 'var(--text-muted)'
+                      }}>
+                        <Layers size={52} color="var(--text-muted)" style={{ marginBottom: '14px', opacity: 0.4 }} />
+                        <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 6px 0' }}>
+                          No semesters created yet
+                        </h4>
+                        <p style={{ fontSize: '0.85rem', maxWidth: '420px', margin: '0 auto 16px auto', color: 'var(--text-secondary)' }}>
+                          You haven't created any semesters yet. Click the "Add Semester" button above to create a semester.
+                        </p>
+                        <button
+                          onClick={handleOpenAddSemesterModal}
+                          className="btn btn-primary"
+                          style={{ padding: '8px 18px', fontSize: '0.85rem', background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: '#0f172a', border: 'none', gap: '6px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+                        >
+                          <Plus size={16} color="#0f172a" /> Add Your First Semester
+                        </button>
+                      </div>
+                    ) : (
+                      (() => {
+                        const filteredSemesters = allSemestersList.filter(sem => {
+                          if (!semesterSearchQuery) return true;
+                          const q = semesterSearchQuery.toLowerCase();
+                          return (
+                            sem.name.toLowerCase().includes(q) ||
+                            String(sem.semNumber).includes(q) ||
+                            (sem.program && sem.program.toLowerCase().includes(q)) ||
+                            (sem.term && sem.term.toLowerCase().includes(q))
+                          );
+                        });
+
+                        return (
+                          <table className="custom-table">
+                            <thead>
+                              <tr>
+                                <th style={{ width: '40px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={filteredSemesters.length > 0 && filteredSemesters.every(s => selectedSemesterIds.includes(s.id))}
+                                    onChange={toggleSelectAllSemesters}
+                                    title="Select / Unselect All"
+                                    style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                  />
+                                </th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Semester Code</th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Semester Name</th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Term Type</th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Status</th>
+                                <th style={{ textAlign: 'center', width: '110px', whiteSpace: 'nowrap' }}>Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredSemesters.map((sem) => {
+                                const isChecked = selectedSemesterIds.includes(sem.id);
+                                const semNumVal = sem.semNumber || sem.id;
+                                const displayName = sem.name || `Semester ${semNumVal}`;
+                                const termVal = sem.term ? (sem.term.toLowerCase().includes('term') ? sem.term : `${sem.term} Term`) : 'Odd Term';
+
+                                return (
+                                  <tr key={sem.id} style={{ background: isChecked ? 'rgba(147, 51, 234, 0.08)' : 'transparent' }}>
+                                    <td style={{ textAlign: 'center' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => toggleSelectSemester(sem.id)}
+                                        style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                      />
+                                    </td>
+                                    <td style={{ whiteSpace: 'nowrap', fontWeight: '600', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
+                                      {semNumVal}
+                                    </td>
+                                    <td style={{ fontWeight: '700', color: 'var(--text-primary)', fontSize: '0.92rem', whiteSpace: 'nowrap' }}>
+                                      {displayName}
+                                    </td>
+                                    <td style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', whiteSpace: 'nowrap' }}>
+                                      <span style={{
+                                        padding: '2px 9px',
+                                        borderRadius: '8px',
+                                        fontSize: '0.78rem',
+                                        fontWeight: '600',
+                                        background: 'rgba(147, 51, 234, 0.1)',
+                                        color: '#9333ea',
+                                        display: 'inline-block'
+                                      }}>
+                                        {termVal}
+                                      </span>
+                                    </td>
+                                    <td style={{ whiteSpace: 'nowrap' }}>
+                                      <span style={{
+                                        padding: '3px 12px',
+                                        borderRadius: '12px',
+                                        fontSize: '0.78rem',
+                                        fontWeight: '700',
+                                        background: 'rgba(34, 197, 94, 0.15)',
+                                        color: '#16a34a',
+                                        display: 'inline-block'
+                                      }}>
+                                        Active
+                                      </span>
+                                    </td>
+                                    <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                                        <button
+                                          onClick={() => handleOpenEditSemesterModal(sem)}
+                                          style={{
+                                            width: '32px',
+                                            height: '32px',
+                                            borderRadius: '8px',
+                                            background: 'rgba(59, 130, 246, 0.08)',
+                                            border: '1px solid rgba(59, 130, 246, 0.2)',
+                                            color: '#2563eb',
+                                            cursor: 'pointer',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            transition: 'all 0.15s ease'
+                                          }}
+                                          title="Edit Semester"
+                                        >
+                                          <Edit size={15} />
+                                        </button>
+                                        <button
+                                          onClick={() => handleDeleteSemester(sem.id, sem.name)}
+                                          style={{
+                                            width: '32px',
+                                            height: '32px',
+                                            borderRadius: '8px',
+                                            background: 'rgba(239, 68, 68, 0.08)',
+                                            border: '1px solid rgba(239, 68, 68, 0.2)',
+                                            color: '#ef4444',
+                                            cursor: 'pointer',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            transition: 'all 0.15s ease'
+                                          }}
+                                          title="Delete Semester"
+                                        >
+                                          <Trash2 size={15} />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        );
+                      })()
+                    )}
+                  </div>
                 </div>
               </div>
             )}
@@ -8321,18 +10722,17 @@ export default function AdminDashboard({
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <Folder size={14} color="#f59e0b" />
                             <select
-                              value={selectedSemFolder || 'ALL'}
+                              value={(selectedSemFolder && selectedSemFolder !== 'ALL') ? selectedSemFolder : (availableSemesters[0] || '1')}
                               onChange={e => {
                                 setSelectedSemFolder(e.target.value);
                                 setMatrixSearch('');
-                                setMatrixDivFilter('ALL');
+                                setMatrixDivFilter(availableSemesterDivisions[0] || 'A');
                                 setMatrixSubjectFilter('ALL');
                                 setMatrixStatusFilter('ALL');
                               }}
                               style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
                             >
-                              <option value="ALL">All Semesters</option>
-                              {availableSemesters.map(sem => (
+                              {(availableSemesters && availableSemesters.length > 0 ? availableSemesters : ['1', '2', '3', '4', '5', '6', '7', '8']).map(sem => (
                                 <option key={sem} value={sem}>Semester {sem}</option>
                               ))}
                             </select>
@@ -8347,7 +10747,7 @@ export default function AdminDashboard({
                               style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '600', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
                             >
                               <option value="ALL">All Divisions</option>
-                              {availableSemesterDivisions.map(div => (
+                              {(availableSemesterDivisions && availableSemesterDivisions.length > 0 ? availableSemesterDivisions : ['A', 'B', 'C', 'D']).map(div => (
                                 <option key={div} value={div}>Division {div}</option>
                               ))}
                             </select>
@@ -8395,7 +10795,7 @@ export default function AdminDashboard({
                             setMatrixStartDate('');
                             setMatrixEndDate('');
                             setMatrixSingleDate('');
-                            setSelectedSemFolder('ALL');
+                            setSelectedSemFolder(availableSemesters[0] || '1');
                             setMatrixDivFilter('ALL');
                             setMatrixSubjectFilter('ALL');
                             setMatrixStatusFilter('ALL');
@@ -8779,19 +11179,35 @@ export default function AdminDashboard({
 
                                         {/* Summary Col: Percentage */}
                                         <td className="matrix-summary-cell-pct" style={{ textAlign: 'center' }}>
-                                          <span
-                                            style={{
-                                              padding: '3px 8px',
-                                              borderRadius: '8px',
-                                              fontSize: '0.78rem',
-                                              fontWeight: '800',
-                                              background: (st.pct || 0) >= 75 ? '#dcfce7' : (st.pct || 0) >= 60 ? '#fef3c7' : '#fee2e2',
-                                              color: (st.pct || 0) >= 75 ? '#15803d' : (st.pct || 0) >= 60 ? '#b45309' : '#dc2626',
-                                              border: (st.pct || 0) >= 75 ? '1px solid #86efac' : (st.pct || 0) >= 60 ? '1px solid #fde68a' : '1px solid #fca5a5'
-                                            }}
-                                          >
-                                            {st.pct || 0}%
-                                          </span>
+                                          {st.pct !== null && st.pct !== undefined ? (
+                                            <span
+                                              style={{
+                                                padding: '3px 8px',
+                                                borderRadius: '8px',
+                                                fontSize: '0.78rem',
+                                                fontWeight: '800',
+                                                background: st.pct >= 75 ? '#dcfce7' : st.pct >= 60 ? '#fef3c7' : '#fee2e2',
+                                                color: st.pct >= 75 ? '#15803d' : st.pct >= 60 ? '#b45309' : '#dc2626',
+                                                border: st.pct >= 75 ? '1px solid #86efac' : st.pct >= 60 ? '1px solid #fde68a' : '1px solid #fca5a5'
+                                              }}
+                                            >
+                                              {st.pct}%
+                                            </span>
+                                          ) : (
+                                            <span
+                                              style={{
+                                                padding: '3px 8px',
+                                                borderRadius: '8px',
+                                                fontSize: '0.78rem',
+                                                fontWeight: '800',
+                                                background: '#f1f5f9',
+                                                color: '#64748b',
+                                                border: '1px solid #cbd5e1'
+                                              }}
+                                            >
+                                              NA
+                                            </span>
+                                          )}
                                         </td>
                                       </tr>
                                     ))}
@@ -8873,9 +11289,12 @@ export default function AdminDashboard({
                                           {displayedMatrixStudents.reduce((a, b) => a + (b.absentCount || 0), 0)}
                                         </td>
                                         <td className="matrix-summary-cell-pct" style={{ textAlign: 'center', fontWeight: '800', color: '#d97706' }}>
-                                          {displayedMatrixStudents.length > 0
-                                            ? Math.round(displayedMatrixStudents.reduce((a, b) => a + (b.pct || 0), 0) / displayedMatrixStudents.length)
-                                            : 0}%
+                                          {(() => {
+                                            const totalP = displayedMatrixStudents.reduce((a, b) => a + (b.presentCount || 0), 0);
+                                            const totalA = displayedMatrixStudents.reduce((a, b) => a + (b.absentCount || 0), 0);
+                                            const totalCond = totalP + totalA;
+                                            return totalCond > 0 ? `${Math.round((totalP / totalCond) * 100)}%` : 'NA';
+                                          })()}
                                         </td>
                                       </tr>
                                     </tfoot>
@@ -9215,7 +11634,26 @@ export default function AdminDashboard({
                         {studentsLoading ? (
                           <div style={{ textAlign: 'center', padding: '40px' }}>Loading student lists...</div>
                         ) : filteredStudents.length === 0 ? (
-                          <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No students found.</div>
+                          <div style={{ textAlign: 'center', padding: '50px 20px', color: 'var(--text-muted)' }}>
+                            <Users size={52} color="var(--text-muted)" style={{ marginBottom: '14px', opacity: 0.4 }} />
+                            <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 6px 0' }}>
+                              {students.length === 0 ? 'No students added yet' : 'No matching students found'}
+                            </h4>
+                            <p style={{ fontSize: '0.85rem', maxWidth: '420px', margin: '0 auto 16px auto', color: 'var(--text-secondary)' }}>
+                              {students.length === 0
+                                ? 'You haven\'t added any students yet. Click the "Add Student" button above to add a student.'
+                                : 'No student records match your current search query or semester / division filter.'}
+                            </p>
+                            {students.length === 0 && (
+                              <button
+                                onClick={openAddModal}
+                                className="btn btn-primary"
+                                style={{ padding: '8px 18px', fontSize: '0.85rem', background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: '#0f172a', border: 'none', gap: '6px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+                              >
+                                <Plus size={16} color="#0f172a" /> Add Your First Student
+                              </button>
+                            )}
+                          </div>
                         ) : (
                           <table className="custom-table">
                             <thead>
@@ -9263,11 +11701,11 @@ export default function AdminDashboard({
                                     <td style={{ textAlign: 'center' }}>
                                       <button
                                         type="button"
-                                        onClick={() => handleResetDeviceId(student.id, student.name)}
+                                        onClick={() => handleResetDeviceId(student.id, student.name, student.device_id)}
                                         title={
                                           student.device_id
                                             ? `Bound Device ID: ${student.device_id} (Click to reset/unlock device)`
-                                            : 'Unlocked / No device bound (Click to reset device)'
+                                            : 'Your device is already unlocked'
                                         }
                                         style={{
                                           background: 'transparent',
@@ -9296,10 +11734,18 @@ export default function AdminDashboard({
                                     </td>
                                     <td>
                                       <div style={styles.actionButtonContainer}>
-                                        <button className="btn btn-secondary" onClick={() => openEditModal(student)} style={styles.actionBtn}>
+                                        <button
+                                          className="admin-action-btn edit"
+                                          onClick={() => openEditModal(student)}
+                                          title="Edit Student Details"
+                                        >
                                           <Edit size={14} />
                                         </button>
-                                        <button className="btn btn-danger" onClick={() => handleDeleteStudent(student.id)} style={styles.actionBtn}>
+                                        <button
+                                          className="admin-action-btn delete"
+                                          onClick={() => handleDeleteStudent(student.id)}
+                                          title="Delete Student"
+                                        >
                                           <Trash2 size={14} />
                                         </button>
                                       </div>
@@ -9473,10 +11919,15 @@ export default function AdminDashboard({
                       <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)' }}>No faculty members found.</div>
                     ) : (
                       (() => {
-                        const filteredFaculties = faculties.filter(f =>
-                          (f.name && f.name.toLowerCase().includes(facultySearchQuery.toLowerCase())) ||
-                          (f.email && f.email.toLowerCase().includes(facultySearchQuery.toLowerCase()))
-                        );
+                        const filteredFaculties = faculties.filter(f => {
+                          if (!facultySearchQuery || !facultySearchQuery.trim()) return true;
+                          const q = facultySearchQuery.toLowerCase().trim();
+                          const fName = (f.name || '').toLowerCase();
+                          const fEmail = (f.email || f.username || '').toLowerCase();
+                          const fDept = (f.department || '').toLowerCase();
+                          const fMob = (f.mobile || '').toLowerCase();
+                          return fName.includes(q) || fEmail.includes(q) || fDept.includes(q) || fMob.includes(q);
+                        });
 
                         return (
                           <table className="custom-table">
@@ -9495,6 +11946,7 @@ export default function AdminDashboard({
                                 <th>Gmail ID</th>
                                 <th>Department</th>
                                 <th>Mobile</th>
+                                <th>Role</th>
                                 <th>Password</th>
                                 <th>Actions</th>
                               </tr>
@@ -9502,6 +11954,13 @@ export default function AdminDashboard({
                             <tbody>
                               {filteredFaculties.map((fac) => {
                                 const isChecked = selectedFacultyIds.includes(fac.id);
+                                const isPrimary = fac.isPrimaryAdmin || fac.id === 'admin_primary' || String(fac.id) === '78' || (fac.email && fac.email.toLowerCase() === 'admin@ljcca.edu');
+                                const rolesArr = Array.isArray(fac.roles) && fac.roles.length > 0
+                                  ? (isPrimary ? Array.from(new Set([...fac.roles, 'admin'])) : fac.roles)
+                                  : (isPrimary ? ['admin', 'faculty'] : (fac.role === 'admin' ? ['admin', 'faculty'] : ['faculty']));
+                                const showFacultyBadge = rolesArr.includes('faculty');
+                                const showAdminBadge = rolesArr.includes('admin') || isPrimary;
+
                                 return (
                                   <tr key={fac.id} style={{ background: isChecked ? 'rgba(147, 51, 234, 0.08)' : 'transparent' }}>
                                     <td style={{ textAlign: 'center' }}>
@@ -9517,40 +11976,45 @@ export default function AdminDashboard({
                                       )}
                                     </td>
                                     <td style={{ fontWeight: 600 }}>
-                                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                        <span>{fac.name}</span>
-                                        {(fac.isPrimaryAdmin || fac.id === 'admin_primary' || String(fac.id) === '78' || (fac.email && fac.email.toLowerCase() === 'admin@ljcca.edu')) ? (
-                                          <span style={{
-                                            fontSize: '0.68rem',
-                                            fontWeight: '800',
-                                            padding: '2px 7px',
-                                            borderRadius: '6px',
-                                            background: '#fef3c7',
-                                            color: '#92400e',
-                                            border: '1px solid #fde68a',
-                                            letterSpacing: '0.04em'
-                                          }}>
-                                            {(fac.roles || []).includes('faculty') ? 'ORG ADMIN + FACULTY' : 'ORG ADMIN'}
-                                          </span>
-                                        ) : fac.roles?.includes('admin') ? (
-                                          <span style={{
-                                            fontSize: '0.68rem',
-                                            fontWeight: '800',
-                                            padding: '2px 7px',
-                                            borderRadius: '6px',
-                                            background: '#fef3c7',
-                                            color: '#92400e',
-                                            border: '1px solid #fde68a',
-                                            letterSpacing: '0.04em'
-                                          }}>
-                                            {fac.roles?.includes('faculty') ? 'FACULTY + ADMIN' : 'ADMIN'}
-                                          </span>
-                                        ) : null}
-                                      </div>
+                                      {fac.name}
                                     </td>
                                     <td style={{ color: 'var(--text-secondary)', fontSize: '0.86rem' }}>{fac.email || '—'}</td>
                                     <td>{fac.department}</td>
                                     <td>{fac.mobile}</td>
+                                    <td>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                                        {showFacultyBadge && (
+                                          <span style={{
+                                            fontSize: '0.78rem',
+                                            fontWeight: '700',
+                                            padding: '4px 12px',
+                                            borderRadius: '10px',
+                                            background: '#e0edff',
+                                            color: '#2563eb',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            letterSpacing: '0.01em'
+                                          }}>
+                                            Faculty
+                                          </span>
+                                        )}
+                                        {showAdminBadge && (
+                                          <span style={{
+                                            fontSize: '0.78rem',
+                                            fontWeight: '700',
+                                            padding: '4px 12px',
+                                            borderRadius: '10px',
+                                            background: '#f3e8ff',
+                                            color: '#9333ea',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            letterSpacing: '0.01em'
+                                          }}>
+                                            Admin
+                                          </span>
+                                        )}
+                                      </div>
+                                    </td>
                                     <td>
                                       {(fac.isPrimaryAdmin || fac.id === 'admin_primary') ? (
                                         <span style={{
@@ -9572,11 +12036,15 @@ export default function AdminDashboard({
                                     </td>
                                     <td>
                                       <div style={styles.actionButtonContainer}>
-                                        <button className="btn btn-secondary" onClick={() => openEditFacultyModal(fac)} style={styles.actionBtn} title="Edit Details">
+                                        <button
+                                          className="admin-action-btn edit"
+                                          onClick={() => openEditFacultyModal(fac)}
+                                          title="Edit Faculty Details"
+                                        >
                                           <Edit size={14} />
                                         </button>
                                         <button
-                                          className="btn btn-danger"
+                                          className="admin-action-btn delete"
                                           onClick={() => {
                                             if (fac.isPrimaryAdmin || fac.id === 'admin_primary') {
                                               showToast('Primary Admin account cannot be deleted', 'warning');
@@ -9585,11 +12053,10 @@ export default function AdminDashboard({
                                             handleDeleteFaculty(fac.id);
                                           }}
                                           style={{
-                                            ...styles.actionBtn,
                                             opacity: (fac.isPrimaryAdmin || fac.id === 'admin_primary') ? 0.35 : 1,
                                             cursor: (fac.isPrimaryAdmin || fac.id === 'admin_primary') ? 'not-allowed' : 'pointer'
                                           }}
-                                          title={(fac.isPrimaryAdmin || fac.id === 'admin_primary') ? "Primary Admin cannot be deleted" : "Delete"}
+                                          title={(fac.isPrimaryAdmin || fac.id === 'admin_primary') ? "Primary Admin cannot be deleted" : "Delete Faculty"}
                                         >
                                           <Trash2 size={14} />
                                         </button>
@@ -9610,24 +12077,28 @@ export default function AdminDashboard({
 
             {/* PANEL 3: QR ATTENDANCE */}
             {activeTab === 'otp' && (
-              <div style={{ ...styles.tabPanel, ...styles.otpDashboardRow }}>
-                {/* Left Box: Faculty QR Permission Controls */}
-                <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: 1.2, minWidth: '320px', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '30px' }}>
-                  <h3 style={{ ...styles.cardTitle, width: '100%', textAlign: 'center' }}>Faculty QR Settings</h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%' }}>
+                {/* Top Row: Faculty QR Settings + Set QR Limit side by side */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px', width: '100%' }}>
+                  {/* Card 1: Faculty QR Permission Controls */}
+                  <div className="glass-panel" style={{ ...styles.dashboardPanelCard, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', padding: '28px 30px' }}>
+                    <h3 style={{ ...styles.cardTitle, width: '100%', textAlign: 'center', marginBottom: '16px' }}>Faculty QR Settings</h3>
 
-                  <div style={{ textAlign: 'center', padding: '10px 0', width: '100%' }}>
-                    <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: qrGenerationEnabled ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 20px' }}>
-                      <QrCode size={40} color={qrGenerationEnabled ? '#10b981' : '#ef4444'} />
+                    <div style={{ textAlign: 'center', width: '100%', flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ width: '80px', height: '80px', borderRadius: '50%', background: qrGenerationEnabled ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                        <QrCode size={40} color={qrGenerationEnabled ? '#10b981' : '#ef4444'} />
+                      </div>
+                      <h4 style={{ color: 'var(--text-primary)', marginBottom: '10px', fontWeight: 600 }}>Faculty QR Permission</h4>
+                      <div style={{ display: 'inline-block', padding: '6px 14px', borderRadius: '20px', fontSize: '0.85rem', fontWeight: 'bold', background: qrGenerationEnabled ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)', color: qrGenerationEnabled ? '#10b981' : '#ef4444', border: qrGenerationEnabled ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)', marginBottom: '16px' }}>
+                        {qrGenerationEnabled ? 'QR GENERATION ENABLED' : 'QR GENERATION DISABLED'}
+                      </div>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '20px', lineHeight: 1.5 }}>
+                        {qrGenerationEnabled
+                          ? 'Faculty members can start QR attendance sessions from their dashboard. Disable this to block all QR session creation.'
+                          : 'All Faculty QR session generation is blocked. Enable this to allow faculty to start QR attendance.'}
+                      </p>
                     </div>
-                    <h4 style={{ color: 'var(--text-primary)', marginBottom: '12px', fontWeight: 600 }}>Faculty QR Permission</h4>
-                    <div style={{ display: 'inline-block', padding: '6px 14px', borderRadius: '20px', fontSize: '0.85rem', fontWeight: 'bold', background: qrGenerationEnabled ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)', color: qrGenerationEnabled ? '#10b981' : '#ef4444', border: qrGenerationEnabled ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)', marginBottom: '24px' }}>
-                      {qrGenerationEnabled ? 'QR GENERATION ENABLED' : 'QR GENERATION DISABLED'}
-                    </div>
-                    <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginBottom: '24px', lineHeight: 1.5 }}>
-                      {qrGenerationEnabled
-                        ? 'Faculty members can start QR attendance sessions from their dashboard. Disable this to block all QR session creation.'
-                        : 'All Faculty QR session generation is blocked. Enable this to allow faculty to start QR attendance.'}
-                    </p>
+
                     <button
                       className={`btn ${qrGenerationEnabled ? 'btn-danger' : 'btn-primary'}`}
                       onClick={handleToggleQrSettings}
@@ -9636,10 +12107,100 @@ export default function AdminDashboard({
                       {qrGenerationEnabled ? 'Block QR Generation' : 'Allow QR Generation'}
                     </button>
                   </div>
+
+                  {/* Card 2: Set QR Limit */}
+                  <div className="glass-panel" style={{ ...styles.dashboardPanelCard, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '28px 30px' }}>
+                    <div>
+                      <h3 style={{ ...styles.cardTitle, marginBottom: '6px' }}>Set QR Limit</h3>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.83rem', marginBottom: '20px', lineHeight: 1.5 }}>
+                        Set how many QR sessions each faculty member can generate per day. Currently set to
+                        <strong style={{ color: '#f59e0b', marginLeft: '4px' }}>{qrDailyLimit} session{qrDailyLimit === 1 ? '' : 's'}/day</strong>.
+                      </p>
+
+                      {/* Current limit display badge */}
+                      <div style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        marginBottom: '20px'
+                      }}>
+                        <div style={{
+                          width: '90px', height: '90px', borderRadius: '50%',
+                          background: 'linear-gradient(135deg, rgba(245,158,11,0.15), rgba(217,119,6,0.25))',
+                          border: '2px solid rgba(245,158,11,0.4)',
+                          display: 'flex', flexDirection: 'column',
+                          alignItems: 'center', justifyContent: 'center',
+                          boxShadow: '0 0 20px rgba(245,158,11,0.15)'
+                        }}>
+                          <span style={{ fontSize: '2rem', fontWeight: '800', color: '#f59e0b', lineHeight: 1 }}>{qrDailyLimit}</span>
+                          <span style={{ fontSize: '0.65rem', fontWeight: '600', color: '#d97706', textTransform: 'uppercase', letterSpacing: '0.5px' }}>per day</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      {/* Custom number input & Save Limit button (Equal size flex: 1) */}
+                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px', width: '100%' }}>
+                        <div style={{ flex: 1, position: 'relative' }}>
+                          <input
+                            type="number"
+                            min="1"
+                            max="100"
+                            value={qrLimitInput}
+                            onChange={e => setQrLimitInput(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && handleSaveQrLimit()}
+                            style={{
+                              width: '100%',
+                              height: '46px',
+                              padding: '0 16px',
+                              borderRadius: '12px',
+                              border: '1.5px solid rgba(245,158,11,0.35)',
+                              background: 'rgba(245,158,11,0.06)',
+                              color: 'var(--text-primary)', fontSize: '1rem', fontWeight: '700',
+                              outline: 'none', boxSizing: 'border-box', textAlign: 'center'
+                            }}
+                            placeholder="e.g. 5"
+                          />
+                        </div>
+                        <button
+                          onClick={handleSaveQrLimit}
+                          disabled={qrLimitSaving}
+                          style={{
+                            flex: 1,
+                            height: '46px',
+                            padding: '0 16px',
+                            borderRadius: '12px',
+                            fontWeight: '700',
+                            fontSize: '0.95rem',
+                            border: 'none',
+                            cursor: qrLimitSaving ? 'not-allowed' : 'pointer',
+                            background: qrLimitSaving
+                              ? 'rgba(245,158,11,0.3)'
+                              : 'linear-gradient(135deg, #f59e0b, #d97706)',
+                            color: '#0f172a', transition: 'all 0.2s',
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                            whiteSpace: 'nowrap',
+                            boxShadow: '0 4px 12px rgba(245,158,11,0.25)'
+                          }}
+                        >
+                          {qrLimitSaving ? (
+                            <>
+                              <span style={{ width: '14px', height: '14px', border: '2px solid #0f172a', borderTopColor: 'transparent', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+                              Saving...
+                            </>
+                          ) : (
+                            <>✓ Save Limit</>
+                          )}
+                        </button>
+                      </div>
+
+                      <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center', margin: 0 }}>
+                        Range: 1 – 100 sessions per day
+                      </p>
+                    </div>
+                  </div>
                 </div>
 
-                {/* Right Box: Today's QR Sessions History */}
-                <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: 1.8 }}>
+                {/* Bottom Row: Today's Session History Table */}
+                <div className="glass-panel" style={{ ...styles.dashboardPanelCard, width: '100%' }}>
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
                       <h3 style={{ ...styles.cardTitle, margin: 0 }}>Today's Session History</h3>
@@ -10247,7 +12808,7 @@ export default function AdminDashboard({
                     </div>
 
                     {(() => {
-                      const DEFAULTER_PAGE_SIZE = 25;
+                      const DEFAULTER_PAGE_SIZE = 50;
                       const totalDefaulterCount = filteredDefaulterList.length;
                       const totalDefaulterPages = Math.ceil(totalDefaulterCount / DEFAULTER_PAGE_SIZE) || 1;
                       const currentDefaulterPage = Math.min(defaulterPage, totalDefaulterPages);
@@ -10256,11 +12817,19 @@ export default function AdminDashboard({
 
                       return (
                         <div className="custom-table-container" style={{ border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
-                          {totalDefaulterCount === 0 ? (
+                          {(blacklistRules || []).filter(r => !r.status || r.status === 'Active').length === 0 ? (
+                            <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b' }}>
+                              <ShieldAlert size={44} color="#f59e0b" style={{ marginBottom: '10px', opacity: 0.8 }} />
+                              <h5 style={{ fontSize: '1rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>No Blacklist Rules Configured</h5>
+                              <p style={{ fontSize: '0.85rem', margin: 0, color: '#64748b' }}>
+                                Please click <strong>"Add Rules"</strong> above to set blacklist thresholds. Warning and defaulter student lists will be generated automatically.
+                              </p>
+                            </div>
+                          ) : totalDefaulterCount === 0 ? (
                             <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b' }}>
                               <CheckCircle size={44} color="#10b981" style={{ marginBottom: '10px', opacity: 0.8 }} />
                               <h5 style={{ fontSize: '1rem', fontWeight: '700', color: '#0f172a', margin: '0 0 4px 0' }}>No Defaulters Found!</h5>
-                              <p style={{ fontSize: '0.82rem', margin: 0 }}>No student records match the selected subject and status criteria.</p>
+                              <p style={{ fontSize: '0.82rem', margin: 0 }}>No student records match the selected semester, division, or status criteria.</p>
                             </div>
                           ) : (
                             <>
@@ -10386,50 +12955,46 @@ export default function AdminDashboard({
                                 </tbody>
                               </table>
 
-                              {totalDefaulterPages > 1 && (
+                              {totalDefaulterCount > 0 && (
                                 <div style={{
                                   display: 'flex',
                                   alignItems: 'center',
-                                  justifyContent: 'space-between',
+                                  justifyContent: 'flex-start',
+                                  gap: '16px',
                                   padding: '12px 16px',
                                   background: '#f8fafc',
-                                  borderTop: '1px solid #e2e8f0',
-                                  flexWrap: 'wrap',
-                                  gap: '10px'
+                                  borderRadius: '10px',
+                                  border: '1px solid #cbd5e1',
+                                  marginTop: '16px',
+                                  flexWrap: 'wrap'
                                 }}>
-                                  <span style={{ fontSize: '0.82rem', color: '#64748b', fontWeight: '600' }}>
-                                    Showing {startDefIndex + 1}–{Math.min(startDefIndex + DEFAULTER_PAGE_SIZE, totalDefaulterCount)} of {totalDefaulterCount} defaulter(s)
-                                  </span>
-
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <button
-                                      disabled={currentDefaulterPage <= 1}
-                                      onClick={() => setDefaulterPage(p => Math.max(1, p - 1))}
-                                      style={{
-                                        padding: '6px 14px', borderRadius: '8px', fontSize: '0.82rem', fontWeight: '700',
-                                        border: '1px solid #cbd5e1', background: currentDefaulterPage <= 1 ? '#f1f5f9' : '#ffffff',
-                                        color: currentDefaulterPage <= 1 ? '#94a3b8' : '#0f172a', cursor: currentDefaulterPage <= 1 ? 'default' : 'pointer'
-                                      }}
-                                    >
-                                      Previous
-                                    </button>
-
-                                    <span style={{ fontSize: '0.82rem', fontWeight: '700', color: '#0f172a', padding: '0 4px' }}>
-                                      Page {currentDefaulterPage} of {totalDefaulterPages}
-                                    </span>
-
-                                    <button
-                                      disabled={currentDefaulterPage >= totalDefaulterPages}
-                                      onClick={() => setDefaulterPage(p => Math.min(totalDefaulterPages, p + 1))}
-                                      style={{
-                                        padding: '6px 14px', borderRadius: '8px', fontSize: '0.82rem', fontWeight: '700',
-                                        border: '1px solid #cbd5e1', background: currentDefaulterPage >= totalDefaulterPages ? '#f1f5f9' : '#ffffff',
-                                        color: currentDefaulterPage >= totalDefaulterPages ? '#94a3b8' : '#0f172a', cursor: currentDefaulterPage >= totalDefaulterPages ? 'default' : 'pointer'
-                                      }}
-                                    >
-                                      Next
-                                    </button>
+                                  <div style={{ fontSize: '0.85rem', color: '#64748b' }}>
+                                    Showing <strong>{startDefIndex + 1} - {Math.min(startDefIndex + DEFAULTER_PAGE_SIZE, totalDefaulterCount)}</strong> of <strong>{totalDefaulterCount}</strong> defaulter(s)
                                   </div>
+
+                                  {totalDefaulterPages > 1 && (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                      <button
+                                        className="btn btn-secondary"
+                                        disabled={currentDefaulterPage <= 1}
+                                        onClick={() => setDefaulterPage(p => Math.max(1, p - 1))}
+                                        style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                                      >
+                                        ← Previous
+                                      </button>
+                                      <span style={{ fontSize: '0.85rem', color: '#0f172a', fontWeight: '600', padding: '0 8px' }}>
+                                        Page {currentDefaulterPage} of {totalDefaulterPages}
+                                      </span>
+                                      <button
+                                        className="btn btn-secondary"
+                                        disabled={currentDefaulterPage >= totalDefaulterPages}
+                                        onClick={() => setDefaulterPage(p => Math.min(totalDefaulterPages, p + 1))}
+                                        style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+                                      >
+                                        Next →
+                                      </button>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </>
@@ -10583,16 +13148,158 @@ export default function AdminDashboard({
             {activeTab === 'reports' && (
               <div style={{ ...styles.tabPanel, ...styles.reportsPanel }} className="glass-panel">
 
-                {/* Filter Options & Download Buttons Header */}
+                {/* Filter Options & Download Buttons Header in 1 Row */}
                 <div style={{ marginBottom: '24px' }}>
-                  {/* Row 1 (Sabse Uper): Action Buttons on Right */}
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '16px' }}>
-                    <div style={{ display: 'flex', gap: '8px' }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+                    {/* All Report Filter Options */}
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-end', flex: '1 1 auto' }}>
+                      <div style={styles.filterGroup}>
+                        <label style={styles.formLabel}>Report Type</label>
+                        <select
+                          value={reportType}
+                          onChange={(e) => setReportType(e.target.value)}
+                          className="glass-input"
+                          style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px' }}
+                        >
+                          <option value="summary">Summary Report</option>
+                          <option value="monthly">Monthly Report</option>
+                          <option value="subject_wise">Subject Wise Report</option>
+                          <option value="subject_date_wise">Subject Attendance with Dates</option>
+                          <option value="semester_date_wise">Semester Attendance with Dates</option>
+                          <option value="day_wise">Day-Wise Report</option>
+                        </select>
+                      </div>
+
+                      {(reportType === 'monthly' || reportType === 'summary') && (
+                        <div style={styles.filterGroup}>
+                          <label style={styles.formLabel}>Select Month</label>
+                          <input
+                            type="month"
+                            value={reportMonth}
+                            onChange={(e) => setReportMonth(e.target.value)}
+                            className="glass-input"
+                            style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', height: '42px', minWidth: '160px' }}
+                          />
+                        </div>
+                      )}
+
+                      {reportType === 'semester_date_wise' && (
+                        <div style={styles.filterGroup}>
+                          <label style={styles.formLabel}>Select Semester</label>
+                          <select
+                            value={reportSemFilter === 'ALL' ? '1' : reportSemFilter}
+                            onChange={(e) => setReportSemFilter(e.target.value)}
+                            className="glass-input"
+                            style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', minWidth: '160px' }}
+                          >
+                            <option value="1">Semester 1</option>
+                            <option value="2">Semester 2</option>
+                            <option value="3">Semester 3</option>
+                            <option value="4">Semester 4</option>
+                            <option value="5">Semester 5</option>
+                            <option value="6">Semester 6</option>
+                            <option value="7">Semester 7</option>
+                            <option value="8">Semester 8</option>
+                          </select>
+                        </div>
+                      )}
+
+                      {(reportType === 'subject_wise' || reportType === 'subject_date_wise' || reportType === 'day_wise') && (
+                        <div style={styles.filterGroup}>
+                          <label style={styles.formLabel}>Select Subject</label>
+                          <select
+                            value={reportSubjectFilter}
+                            onChange={(e) => setReportSubjectFilter(e.target.value)}
+                            className="glass-input"
+                            style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', minWidth: '180px' }}
+                          >
+                            <option value="ALL">All Subjects</option>
+                            {uniqueSubjectList.map(sub => (
+                              <option key={sub.name} value={sub.name}>{sub.name} (Sem {sub.semester})</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      {reportType === 'day_wise' && (
+                        <>
+                          <div style={styles.filterGroup}>
+                            <label style={styles.formLabel}>Select Date</label>
+                            <input
+                              type="date"
+                              value={reportDate}
+                              onChange={(e) => setReportDate(e.target.value)}
+                              className="glass-input"
+                              style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', height: '42px', minWidth: '150px' }}
+                            />
+                          </div>
+
+                          <div style={styles.filterGroup}>
+                            <label style={styles.formLabel}>Division (Optional)</label>
+                            <select
+                              value={reportDivFilter}
+                              onChange={(e) => setReportDivFilter(e.target.value)}
+                              className="glass-input"
+                              style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', minWidth: '140px' }}
+                            >
+                              <option value="ALL">All Divisions</option>
+                              {uniqueDivisionList.map(divName => (
+                                <option key={divName} value={divName}>Div {divName}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </>
+                      )}
+
+                      {(reportType === 'subject_date_wise' || reportType === 'semester_date_wise') && (
+                        <>
+                          <div style={styles.filterGroup}>
+                            <label style={styles.formLabel}>Start Date</label>
+                            <input
+                              type="date"
+                              value={reportStartDate}
+                              onChange={(e) => setReportStartDate(e.target.value)}
+                              className="glass-input"
+                              style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', height: '42px', minWidth: '150px' }}
+                            />
+                          </div>
+
+                          <div style={styles.filterGroup}>
+                            <label style={styles.formLabel}>End Date</label>
+                            <input
+                              type="date"
+                              value={reportEndDate}
+                              onChange={(e) => setReportEndDate(e.target.value)}
+                              className="glass-input"
+                              style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', height: '42px', minWidth: '150px' }}
+                            />
+                          </div>
+
+                          <div style={styles.filterGroup}>
+                            <label style={styles.formLabel}>Division (Optional)</label>
+                            <select
+                              value={reportDivFilter}
+                              onChange={(e) => setReportDivFilter(e.target.value)}
+                              className="glass-input"
+                              style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', minWidth: '140px' }}
+                            >
+                              <option value="ALL">All Divisions</option>
+                              {uniqueDivisionList.map(divName => (
+                                <option key={divName} value={divName}>Div {divName}</option>
+                              ))}
+                            </select>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Action Download Buttons in Same Row */}
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
                       <button
                         className="btn btn-success"
                         onClick={handleDownloadPDF}
                         disabled={reportType === 'day_wise' ? dayWiseReportData.length === 0 : reportType === 'subject_date_wise' ? subjectDateWiseMatrixData.rows.length === 0 : reportType === 'semester_date_wise' ? semesterDateWiseMatrixData.rows.length === 0 : reportType === 'subject_wise' ? subjectReportData.length === 0 : summaryReportData.length === 0}
-                        style={{ height: '42px', padding: '0 18px', fontWeight: '600' }}
+                        style={{ height: '42px', padding: '0 18px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                       >
                         <Download size={16} /> PDF
                       </button>
@@ -10600,7 +13307,7 @@ export default function AdminDashboard({
                         className="btn btn-success"
                         onClick={handleExportExcel}
                         disabled={reportType === 'day_wise' ? dayWiseReportData.length === 0 : reportType === 'subject_date_wise' ? subjectDateWiseMatrixData.rows.length === 0 : reportType === 'semester_date_wise' ? semesterDateWiseMatrixData.rows.length === 0 : reportType === 'subject_wise' ? subjectReportData.length === 0 : summaryReportData.length === 0}
-                        style={{ height: '42px', padding: '0 18px', fontWeight: '600' }}
+                        style={{ height: '42px', padding: '0 18px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                       >
                         <Download size={16} /> Excel
                       </button>
@@ -10608,139 +13315,11 @@ export default function AdminDashboard({
                         className="btn btn-success"
                         onClick={handleExportCSV}
                         disabled={reportType === 'day_wise' ? dayWiseReportData.length === 0 : reportType === 'subject_date_wise' ? subjectDateWiseMatrixData.rows.length === 0 : reportType === 'semester_date_wise' ? semesterDateWiseMatrixData.rows.length === 0 : reportType === 'subject_wise' ? subjectReportData.length === 0 : summaryReportData.length === 0}
-                        style={{ height: '42px', padding: '0 18px', fontWeight: '600' }}
+                        style={{ height: '42px', padding: '0 18px', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                       >
                         <Download size={16} /> CSV
                       </button>
                     </div>
-                  </div>
-
-                  {/* Row 2 (Uske Niche): All Report Filter Options */}
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-end' }}>
-                    <div style={styles.filterGroup}>
-                      <label style={styles.formLabel}>Report Type</label>
-                      <select
-                        value={reportType}
-                        onChange={(e) => setReportType(e.target.value)}
-                        className="glass-input"
-                        style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px' }}
-                      >
-                        <option value="summary">Summary Report</option>
-                        <option value="subject_wise">Subject Wise Report</option>
-                        <option value="subject_date_wise">Subject Attendance with Dates</option>
-                        <option value="semester_date_wise">Semester Attendance with Dates</option>
-                        <option value="day_wise">Day-Wise Report</option>
-                      </select>
-                    </div>
-
-                    {reportType === 'semester_date_wise' && (
-                      <div style={styles.filterGroup}>
-                        <label style={styles.formLabel}>Select Semester</label>
-                        <select
-                          value={reportSemFilter === 'ALL' ? '1' : reportSemFilter}
-                          onChange={(e) => setReportSemFilter(e.target.value)}
-                          className="glass-input"
-                          style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', minWidth: '160px' }}
-                        >
-                          <option value="1">Semester 1</option>
-                          <option value="2">Semester 2</option>
-                          <option value="3">Semester 3</option>
-                          <option value="4">Semester 4</option>
-                          <option value="5">Semester 5</option>
-                          <option value="6">Semester 6</option>
-                          <option value="7">Semester 7</option>
-                          <option value="8">Semester 8</option>
-                        </select>
-                      </div>
-                    )}
-
-                    {(reportType === 'subject_wise' || reportType === 'subject_date_wise' || reportType === 'day_wise') && (
-                      <div style={styles.filterGroup}>
-                        <label style={styles.formLabel}>Select Subject</label>
-                        <select
-                          value={reportSubjectFilter}
-                          onChange={(e) => setReportSubjectFilter(e.target.value)}
-                          className="glass-input"
-                          style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', minWidth: '180px' }}
-                        >
-                          <option value="ALL">All Subjects</option>
-                          {uniqueSubjectList.map(sub => (
-                            <option key={sub.name} value={sub.name}>{sub.name} (Sem {sub.semester})</option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-
-                    {reportType === 'day_wise' && (
-                      <>
-                        <div style={styles.filterGroup}>
-                          <label style={styles.formLabel}>Select Date</label>
-                          <input
-                            type="date"
-                            value={reportDate}
-                            onChange={(e) => setReportDate(e.target.value)}
-                            className="glass-input"
-                            style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', height: '42px', minWidth: '150px' }}
-                          />
-                        </div>
-
-                        <div style={styles.filterGroup}>
-                          <label style={styles.formLabel}>Division (Optional)</label>
-                          <select
-                            value={reportDivFilter}
-                            onChange={(e) => setReportDivFilter(e.target.value)}
-                            className="glass-input"
-                            style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', minWidth: '140px' }}
-                          >
-                            <option value="ALL">All Divisions</option>
-                            {uniqueDivisionList.map(divName => (
-                              <option key={divName} value={divName}>Div {divName}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </>
-                    )}
-
-                    {(reportType === 'subject_date_wise' || reportType === 'semester_date_wise') && (
-                      <>
-                        <div style={styles.filterGroup}>
-                          <label style={styles.formLabel}>Start Date</label>
-                          <input
-                            type="date"
-                            value={reportStartDate}
-                            onChange={(e) => setReportStartDate(e.target.value)}
-                            className="glass-input"
-                            style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', height: '42px', minWidth: '150px' }}
-                          />
-                        </div>
-
-                        <div style={styles.filterGroup}>
-                          <label style={styles.formLabel}>End Date</label>
-                          <input
-                            type="date"
-                            value={reportEndDate}
-                            onChange={(e) => setReportEndDate(e.target.value)}
-                            className="glass-input"
-                            style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', height: '42px', minWidth: '150px' }}
-                          />
-                        </div>
-
-                        <div style={styles.filterGroup}>
-                          <label style={styles.formLabel}>Division (Optional)</label>
-                          <select
-                            value={reportDivFilter}
-                            onChange={(e) => setReportDivFilter(e.target.value)}
-                            className="glass-input"
-                            style={{ background: 'var(--panel-bg)', border: '1px solid var(--border-light)', borderRadius: '8px', minWidth: '140px' }}
-                          >
-                            <option value="ALL">All Divisions</option>
-                            {uniqueDivisionList.map(divName => (
-                              <option key={divName} value={divName}>Div {divName}</option>
-                            ))}
-                          </select>
-                        </div>
-                      </>
-                    )}
                   </div>
                 </div>
 
@@ -10797,25 +13376,16 @@ export default function AdminDashboard({
                     </div>
                   </div>
 
-                  {/* 4. Division */}
+                  {/* 4. Semester */}
                   <div className="glass-panel stat-card-v2" style={{ border: '1px solid var(--panel-border)', justifyContent: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                       <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #2563eb, #3b82f6)', color: '#ffffff', width: '48px', height: '48px', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(37, 99, 235, 0.25)', flexShrink: 0 }}>
-                        <LayoutGrid size={24} color="#ffffff" />
+                        <Layers size={24} color="#ffffff" />
                       </div>
                       <div>
-                        <span className="stat-card-title" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.2 }}>Division</span>
+                        <span className="stat-card-title" style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.2 }}>Semester</span>
                         <div className="stat-card-value" style={{ fontSize: '1.8rem', fontWeight: '800', color: '#2563eb', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
-                          {(() => {
-                            const uniqueDivs = new Set();
-                            (students || []).forEach(s => {
-                              if (s && (s.division || s.div)) uniqueDivs.add(String(s.division || s.div).trim().toUpperCase());
-                            });
-                            (qrSessionHistory || []).forEach(s => {
-                              if (s && s.division && String(s.division).toUpperCase() !== 'ALL') uniqueDivs.add(String(s.division).trim().toUpperCase());
-                            });
-                            return uniqueDivs.size > 0 ? uniqueDivs.size : 2;
-                          })()}
+                          {allSemestersList.length || 0}
                         </div>
                       </div>
                     </div>
@@ -10851,240 +13421,764 @@ export default function AdminDashboard({
                     </div>
                   </div>
                 </div>
-
-                {/* VISUAL CHARTS: Attendance Overview & Students by Division */}
                 {(() => {
-                  // 1. Calculate Attendance Overview
-                  const allLogsMap = new Map();
-                  [...(liveLogs || []), ...(dateLogs || []), ...(reportData || [])].forEach(log => {
-                    if (!log) return;
-                    const key = log.id || `${log.student_id || log.enrollment_no}_${log.date}_${log.time || ''}`;
-                    if (!allLogsMap.has(key)) {
-                      allLogsMap.set(key, log);
+                  const allStudents = (students || []);
+                  const totalStudentsCount = allStudents.length > 0 ? allStudents.length : 50;
+
+                  // 1. Attendance Brackets (Chart 1)
+                  let b90to100 = 0;
+                  let b70to90 = 0;
+                  let b50to70 = 0;
+                  let bBelow50 = 0;
+
+                  const defSource = (typeof defaulterStudentList !== 'undefined' && Array.isArray(defaulterStudentList))
+                    ? defaulterStudentList.filter(st => {
+                        if (reportSemFilter && reportSemFilter !== 'ALL') {
+                          const stdSem = String(st.semester || st.sem || '1').replace(/\D/g, '').trim();
+                          if (stdSem !== String(reportSemFilter).replace(/\D/g, '').trim()) return false;
+                        }
+                        if (reportDivFilter && reportDivFilter !== 'ALL') {
+                          const stdDiv = String(st.division || st.div || 'A').trim().toUpperCase();
+                          if (stdDiv !== String(reportDivFilter).trim().toUpperCase()) return false;
+                        }
+                        return true;
+                      })
+                    : [];
+
+                  if (reportSubjectFilter && reportSubjectFilter !== 'ALL') {
+                    const subjFiltered = (subjectReportData || []).filter(st => {
+                      if (reportSemFilter && reportSemFilter !== 'ALL') {
+                        const stdSem = String(st.semester || st.raw_semester || '1').replace(/\D/g, '').trim();
+                        if (stdSem !== String(reportSemFilter).replace(/\D/g, '').trim()) return false;
+                      }
+                      if (reportDivFilter && reportDivFilter !== 'ALL') {
+                        const stdDiv = String(st.division || st.raw_division || 'A').replace(/Div\s*/i, '').trim().toUpperCase();
+                        if (stdDiv !== String(reportDivFilter).trim().toUpperCase()) return false;
+                      }
+                      return true;
+                    });
+                    subjFiltered.forEach(st => {
+                      const pct = parseFloat(st.raw_percentage !== undefined ? st.raw_percentage : (st.attendance_percentage || 0));
+                      if (pct >= 90) b90to100++;
+                      else if (pct >= 70) b70to90++;
+                      else if (pct >= 50) b50to70++;
+                      else bBelow50++;
+                    });
+                  } else {
+                    defSource.forEach(st => {
+                      if (st.hasSession) {
+                        const pct = parseFloat(st.percentage !== undefined ? st.percentage : 0);
+                        if (pct >= 90) b90to100++;
+                        else if (pct >= 70) b70to90++;
+                        else if (pct >= 50) b50to70++;
+                        else bBelow50++;
+                      }
+                    });
+                  }
+
+                  const bracketTotal = b90to100 + b70to90 + b50to70 + bBelow50;
+
+                  // 2. Weekly Attendance Trend (Chart 2)
+                  const daysArr = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                  const getSemNumForChart = (val) => String(val || '').replace(/\D/g, '') || null;
+                  const getDivCodeForChart = (val) => {
+                    if (!val || String(val).trim() === '' || String(val).toUpperCase() === 'ALL') return null;
+                    return String(val).trim().toUpperCase();
+                  };
+
+                  const dayConductedSessionsMap = { Mon: [], Tue: [], Wed: [], Thu: [], Fri: [], Sat: [] };
+                  const dayPresentLogsMap = { Mon: new Set(), Tue: new Set(), Wed: new Set(), Thu: new Set(), Fri: new Set(), Sat: new Set() };
+
+                  // A. Collect conducted sessions per day
+                  (qrSessionHistory || []).forEach(sess => {
+                    if (!sess) return;
+                    const dVal = sess.date || sess.created_at;
+                    if (!dVal) return;
+                    const dObj = new Date(dVal);
+                    if (isNaN(dObj.getTime())) return;
+                    const dayStr = dObj.toLocaleDateString('en-US', { weekday: 'short' });
+                    if (dayConductedSessionsMap[dayStr]) {
+                      dayConductedSessionsMap[dayStr].push(sess);
                     }
                   });
 
-                  const allLogsList = Array.from(allLogsMap.values());
-                  let presentCount = 0;
-                  let absentCount = 0;
-                  let totalRecords = 0;
-
-                  if (allLogsList.length > 0) {
-                    allLogsList.forEach(l => {
-                      const status = String(l.status || '').toLowerCase();
-                      if (status === 'success' || status === 'present') {
-                        presentCount++;
-                      } else {
-                        absentCount++;
-                      }
-                    });
-                    totalRecords = allLogsList.length;
-                  } else if (defaulterStudentList && defaulterStudentList.length > 0) {
-                    defaulterStudentList.forEach(std => {
-                      if (std.hasSession) {
-                        presentCount += (std.attendedLectures || 0);
-                        absentCount += (std.absent || 0);
-                        totalRecords += (std.totalLectures || 0);
-                      }
-                    });
-                  }
-
-                  if (totalRecords === 0 && stats && (stats.totalAttendance || stats.totalLectures)) {
-                    presentCount = stats.presentToday || stats.totalAttendance || 0;
-                    totalRecords = stats.totalLectures || stats.totalStudents || (presentCount > 0 ? presentCount : 0);
-                    absentCount = Math.max(0, totalRecords - presentCount);
-                  }
-
-                  const attendanceRate = totalRecords > 0
-                    ? ((presentCount / totalRecords) * 100).toFixed(1)
-                    : '0.0';
-
-                  // 2. Calculate Students by Semester
-                  const semMap = {};
-                  (students || []).forEach(std => {
-                    let sem = String(std.semester || '1').replace(/\D/g, '') || '1';
-                    semMap[sem] = (semMap[sem] || 0) + 1;
+                  // B. Collect present attendance records per day
+                  const allSystemLogsForChart = [...(liveLogs || []), ...(dateLogs || []), ...(reportData || [])];
+                  allSystemLogsForChart.forEach(l => {
+                    if (!l) return;
+                    const st = String(l.status || '').toLowerCase();
+                    if (st !== 'success' && st !== 'present') return;
+                    const dVal = l.date || l.created_at;
+                    if (!dVal) return;
+                    const dObj = new Date(dVal);
+                    if (isNaN(dObj.getTime())) return;
+                    const dayStr = dObj.toLocaleDateString('en-US', { weekday: 'short' });
+                    if (dayPresentLogsMap[dayStr]) {
+                      const stdId = String(l.student_id || l.enrollment_no || l.id || JSON.stringify(l)).toLowerCase();
+                      const sId = l.qr_session_id || l.otp_id || l.session_id || l.time || 'gen';
+                      dayPresentLogsMap[dayStr].add(`${stdId}_${sId}`);
+                    }
                   });
 
-                  const totalStudentsCount = students?.length || 0;
-                  const allSemKeys = Object.keys(semMap).map(Number).sort((a, b) => a - b);
+                  const totalStudentsInSystem = (students || []).length;
 
-                  let semList = [];
-                  if (allSemKeys.length > 0) {
-                    semList = allSemKeys.map(semNum => {
-                      const count = semMap[semNum] || 0;
-                      const pct = totalStudentsCount > 0 ? ((count / totalStudentsCount) * 100) : 0;
-                      return {
-                        sem: semNum,
-                        label: `Semester ${semNum} (Sem ${semNum})`,
-                        count: count,
-                        pct: pct,
-                        pctFormatted: pct.toFixed(1)
-                      };
+                  const weeklyData = daysArr.map(day => {
+                    const sessions = dayConductedSessionsMap[day];
+                    const presentCount = dayPresentLogsMap[day].size;
+
+                    let expectedCount = 0;
+                    if (sessions.length > 0) {
+                      sessions.forEach(sess => {
+                        const sSem = getSemNumForChart(sess.semester);
+                        const sDiv = getDivCodeForChart(sess.division);
+
+                        const matchingStudents = (students || []).filter(std => {
+                          const stdSem = getSemNumForChart(std.semester || std.sem);
+                          const stdDiv = getDivCodeForChart(std.division || std.div);
+
+                          if (sSem && stdSem && stdSem !== sSem) return false;
+                          if (sDiv && stdDiv && stdDiv !== sDiv) return false;
+                          return true;
+                        });
+
+                        expectedCount += matchingStudents.length > 0 ? matchingStudents.length : Math.max(1, Math.round(totalStudentsInSystem / Math.max(1, sessions.length)));
+                      });
+                    } else {
+                      // If sessions list is empty for this day but present logs exist, estimate expected from total students
+                      if (presentCount > 0) {
+                        expectedCount = Math.max(presentCount, totalStudentsInSystem);
+                      }
+                    }
+
+                    const pct = expectedCount > 0 ? Math.min(100, Math.round((presentCount / expectedCount) * 100)) : 0;
+                    return { day, pct };
+                  });
+
+                  // 2.5 Summary Cards Metrics Calculation (Daily, Monthly, Analytics)
+                  const todayStr = new Date().toISOString().split('T')[0];
+
+                  // A. Today's Summary
+                  const todaySessions = (qrSessionHistory || []).filter(sess => {
+                    if (!sess) return false;
+                    const dVal = sess.date || sess.created_at;
+                    if (!dVal) return false;
+                    return dVal.split('T')[0] === todayStr;
+                  });
+
+                  const todayPresentSet = new Set();
+                  allSystemLogsForChart.forEach(l => {
+                    if (!l) return;
+                    const st = String(l.status || '').toLowerCase();
+                    if (st !== 'success' && st !== 'present') return;
+                    const dVal = l.date || l.created_at;
+                    if (!dVal) return;
+                    if (dVal.split('T')[0] === todayStr) {
+                      const stdId = String(l.student_id || l.enrollment_no || l.id || JSON.stringify(l)).toLowerCase();
+                      const sId = l.qr_session_id || l.otp_id || l.session_id || l.time || 'gen';
+                      todayPresentSet.add(`${stdId}_${sId}`);
+                    }
+                  });
+                  const todayPresentCount = todayPresentSet.size;
+
+                  let todayExpectedCount = 0;
+                  if (todaySessions.length > 0) {
+                    todaySessions.forEach(sess => {
+                      const sSem = getSemNumForChart(sess.semester);
+                      const sDiv = getDivCodeForChart(sess.division);
+
+                      const matchingStudents = (students || []).filter(std => {
+                        const stdSem = getSemNumForChart(std.semester || std.sem);
+                        const stdDiv = getDivCodeForChart(std.division || std.div);
+
+                        if (sSem && stdSem && stdSem !== sSem) return false;
+                        if (sDiv && stdDiv && stdDiv !== sDiv) return false;
+                        return true;
+                      });
+
+                      todayExpectedCount += matchingStudents.length > 0 ? matchingStudents.length : Math.max(1, Math.round(totalStudentsInSystem / Math.max(1, todaySessions.length)));
                     });
                   } else {
-                    semList = [1, 2, 3].map(semNum => ({
-                      sem: semNum,
-                      label: `Semester ${semNum} (Sem ${semNum})`,
-                      count: 0,
-                      pct: 0,
-                      pctFormatted: '0.0'
-                    }));
+                    if (todayPresentCount > 0) {
+                      todayExpectedCount = Math.max(todayPresentCount, totalStudentsInSystem);
+                    }
+                  }
+                  const todayAbsentCount = Math.max(0, todayExpectedCount - todayPresentCount);
+                  const todayRate = todayExpectedCount > 0 ? ((todayPresentCount / todayExpectedCount) * 100).toFixed(2) : '0.00';
+
+                  // B. Monthly Summary (Derived dynamically from reportMonth or active date selection)
+                  let targetMonthStr = reportMonth;
+                  if (reportType === 'day_wise' && reportDate) {
+                    targetMonthStr = reportDate.substring(0, 7);
+                  } else if ((reportType === 'subject_date_wise' || reportType === 'semester_date_wise') && reportStartDate) {
+                    targetMonthStr = reportStartDate.substring(0, 7);
                   }
 
+                  if (!targetMonthStr || !targetMonthStr.includes('-')) {
+                    const d = new Date();
+                    targetMonthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                  }
+
+                  const [targetYr, targetMo] = targetMonthStr.split('-').map(Number);
+                  const targetMonthDateObj = new Date(targetYr, targetMo - 1, 1);
+                  const nowMonthName = isNaN(targetMonthDateObj.getTime())
+                    ? new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+                    : targetMonthDateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+                  const monthlySessions = (qrSessionHistory || []).filter(sess => {
+                    if (!sess) return false;
+                    const dVal = sess.date || sess.created_at;
+                    if (!dVal) return false;
+                    return dVal.startsWith(targetMonthStr);
+                  });
+
+                  const monthlyPresentSet = new Set();
+                  allSystemLogsForChart.forEach(l => {
+                    if (!l) return;
+                    const st = String(l.status || '').toLowerCase();
+                    if (st !== 'success' && st !== 'present') return;
+                    const dVal = l.date || l.created_at;
+                    if (!dVal) return;
+                    if (dVal.startsWith(targetMonthStr)) {
+                      const stdId = String(l.student_id || l.enrollment_no || l.id || JSON.stringify(l)).toLowerCase();
+                      const sId = l.qr_session_id || l.otp_id || l.session_id || l.time || 'gen';
+                      monthlyPresentSet.add(`${stdId}_${sId}`);
+                    }
+                  });
+                  const monthlyPresentCount = monthlyPresentSet.size;
+
+                  let monthlyExpectedCount = 0;
+                  if (monthlySessions.length > 0) {
+                    monthlySessions.forEach(sess => {
+                      const sSem = getSemNumForChart(sess.semester);
+                      const sDiv = getDivCodeForChart(sess.division);
+
+                      const matchingStudents = (students || []).filter(std => {
+                        const stdSem = getSemNumForChart(std.semester || std.sem);
+                        const stdDiv = getDivCodeForChart(std.division || std.div);
+
+                        if (sSem && stdSem && stdSem !== sSem) return false;
+                        if (sDiv && stdDiv && stdDiv !== sDiv) return false;
+                        return true;
+                      });
+
+                      monthlyExpectedCount += matchingStudents.length > 0 ? matchingStudents.length : Math.max(1, Math.round(totalStudentsInSystem / Math.max(1, monthlySessions.length)));
+                    });
+                  } else {
+                    if (monthlyPresentCount > 0) {
+                      monthlyExpectedCount = Math.max(monthlyPresentCount, totalStudentsInSystem);
+                    }
+                  }
+                  const monthlyAbsentCount = Math.max(0, monthlyExpectedCount - monthlyPresentCount);
+                  const monthlyAvgRate = monthlyExpectedCount > 0 ? ((monthlyPresentCount / monthlyExpectedCount) * 100).toFixed(2) : '0.00';
+
+                  // C. Attendance Analytics (Best & Lowest Day)
+                  const fullDayNames = { Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday', Sat: 'Saturday' };
+                  let bestDay = 'N/A';
+                  let lowestDay = 'N/A';
+
+                  if (weeklyData && weeklyData.length > 0) {
+                    const activeDays = weeklyData.filter(d => d.pct > 0);
+                    if (activeDays.length > 0) {
+                      const sortedBest = [...activeDays].sort((a, b) => b.pct - a.pct);
+                      bestDay = `${fullDayNames[sortedBest[0].day] || sortedBest[0].day} (${sortedBest[0].pct}%)`;
+
+                      const sortedLowest = [...activeDays].sort((a, b) => a.pct - b.pct);
+                      lowestDay = `${fullDayNames[sortedLowest[0].day] || sortedLowest[0].day} (${sortedLowest[0].pct}%)`;
+                    }
+                  }
+
+                  // 3. Attendance Overview (Chart 3 - Dynamically computed from active report data)
+                  let presentLogs = 0;
+                  let absentLogs = 0;
+
+                  if (reportType === 'day_wise') {
+                    (dayWiseReportData || []).forEach(r => {
+                      const st = String(r.status || '').toLowerCase();
+                      if (st === 'present') presentLogs++;
+                      else if (st === 'absent') absentLogs++;
+                    });
+                  } else if (reportType === 'subject_date_wise') {
+                    (subjectDateWiseMatrixData.rows || []).forEach(r => {
+                      presentLogs += (parseInt(r.present) || 0);
+                      absentLogs += (parseInt(r.absent) || 0);
+                    });
+                  } else if (reportType === 'semester_date_wise') {
+                    (semesterDateWiseMatrixData.rows || []).forEach(r => {
+                      presentLogs += (parseInt(r.present) || 0);
+                      absentLogs += (parseInt(r.absent) || 0);
+                    });
+                  } else if (reportType === 'subject_wise') {
+                    (subjectReportData || []).forEach(r => {
+                      presentLogs += (parseInt(r.present) || 0);
+                      absentLogs += (parseInt(r.absent) || 0);
+                    });
+                  } else {
+                    // Summary report
+                    (summaryReportData || []).forEach(r => {
+                      if (r.total_attendance !== '-' && parseInt(r.total_attendance) > 0) {
+                        presentLogs += (parseInt(r.present) || 0);
+                        absentLogs += (parseInt(r.absent) || 0);
+                      }
+                    });
+                  }
+
+                  // Fallback to logsSource if current active report data has no entries
+                  if (presentLogs === 0 && absentLogs === 0) {
+                    const logsSource = [...(liveLogs || []), ...(dateLogs || []), ...(reportData || [])];
+                    logsSource.forEach(log => {
+                      if (!log) return;
+                      const status = String(log.status || '').toLowerCase();
+                      if (status === 'success' || status === 'present') presentLogs++;
+                      else absentLogs++;
+                    });
+                  }
+
+                  const totalOverviewLogs = presentLogs + absentLogs;
+                  const presentPct = totalOverviewLogs > 0 ? ((presentLogs / totalOverviewLogs) * 100).toFixed(2) : '0.00';
+                  const absentPct = totalOverviewLogs > 0 ? ((absentLogs / totalOverviewLogs) * 100).toFixed(2) : '0.00';
+
+                  // 4. Class-wise Attendance (Chart 4)
+                  const classData = [1, 2, 3, 4, 5, 6, 7, 8].map(semNum => {
+                    const semStudents = (defaulterStudentList || []).filter(s => String(s.semester || '').replace(/\D/g, '') === String(semNum));
+                    const count = semStudents.length;
+                    let totalPct = 0;
+                    let countWithSessions = 0;
+                    semStudents.forEach(s => {
+                      if (s.hasSession) {
+                        totalPct += (parseFloat(s.percentage) || 0);
+                        countWithSessions++;
+                      }
+                    });
+                    const rate = countWithSessions > 0 ? (totalPct / countWithSessions) : 0;
+                    return { name: `Semester ${semNum}`, count, rate };
+                  }).filter(c => c.count > 0);
+
+                  if (classData.length === 0) {
+                    classData.push(
+                      { name: 'Semester 1', count: 0, rate: 0 },
+                      { name: 'Semester 2', count: 0, rate: 0 }
+                    );
+                  }
+
+                  // Donut SVG helper
+                  const C = 2 * Math.PI * 52;
+                  const createSegments = (items, total) => {
+                    let offset = 0;
+                    return items.map(item => {
+                      const frac = total > 0 ? (item.value / total) : 0;
+                      const strokeDasharray = `${frac * C} ${C}`;
+                      const strokeDashoffset = -offset;
+                      offset += frac * C;
+                      return { ...item, strokeDasharray, strokeDashoffset };
+                    });
+                  };
+
+                  const donut1Segments = createSegments([
+                    { value: b90to100, color: '#3b82f6' },
+                    { value: b70to90, color: '#22c55e' },
+                    { value: b50to70, color: '#f59e0b' },
+                    { value: bBelow50, color: '#ef4444' }
+                  ], bracketTotal);
+
+                  const donut3Segments = createSegments([
+                    { value: presentLogs, color: '#2563eb' },
+                    { value: absentLogs, color: '#ef4444' }
+                  ], totalOverviewLogs);
+
                   return (
-                    <div className="admin-reports-charts-container">
-                      {/* CARD 1: Attendance Overview */}
-                      <div className="report-chart-card">
-                        {/* Header */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-                          <ClipboardList size={22} color="var(--text-primary, #0f172a)" style={{ strokeWidth: 2 }} />
-                          <h3 style={{ fontSize: '1.15rem', fontWeight: '700', color: 'var(--text-primary, #0f172a)', margin: 0, letterSpacing: '-0.01em' }}>
-                            Attendance Overview
-                          </h3>
-                        </div>
-
-                        {/* Top Large Card: Overall Attendance Rate */}
+                    <>
+                      <div className="admin-reports-charts-container" style={{
+                        marginBottom: '24px',
+                        width: '100%'
+                      }}>
+                      {/* ROW 1 - CHART 1: Attendance Brackets Donut */}
+                      <div style={{
+                        background: '#ffffff',
+                        border: '1.5px solid #e2e8f0',
+                        borderRadius: '16px',
+                        padding: '24px',
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justify: 'space-between'
+                      }}>
+                        <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                          Percentage Attendance
+                        </h4>
                         <div style={{
-                          background: 'rgba(34, 197, 94, 0.12)',
-                          borderRadius: '14px',
-                          padding: '24px 16px',
-                          textAlign: 'center',
-                          marginBottom: '16px',
-                          border: '1px solid rgba(34, 197, 94, 0.18)'
+                          display: 'flex',
+                          alignItems: 'center',
+                          justify: 'space-between',
+                          gap: '20px',
+                          flexWrap: 'wrap',
+                          width: '100%'
                         }}>
-                          <div style={{
-                            fontSize: '2.8rem',
-                            fontWeight: '800',
-                            color: '#16a34a',
-                            lineHeight: 1.1,
-                            letterSpacing: '-0.02em',
-                            fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
-                          }}>
-                            {attendanceRate}%
-                          </div>
-                          <div style={{
-                            fontSize: '0.95rem',
-                            fontWeight: '600',
-                            color: '#15803d',
-                            marginTop: '8px'
-                          }}>
-                            Overall Attendance Rate
-                          </div>
-                          <div style={{
-                            fontSize: '0.85rem',
-                            fontWeight: '500',
-                            color: '#16a34a',
-                            marginTop: '4px',
-                            opacity: 0.9
-                          }}>
-                            {totalRecords.toLocaleString()} total records
-                          </div>
-                        </div>
-
-                        {/* Bottom Two Mini Cards: Present & Absent */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                          {/* Present */}
-                          <div style={{
-                            background: 'rgba(34, 197, 94, 0.08)',
-                            border: '1px solid rgba(34, 197, 94, 0.18)',
-                            borderRadius: '12px',
-                            padding: '16px 18px'
-                          }}>
-                            <div style={{
-                              fontSize: '1.65rem',
-                              fontWeight: '800',
-                              color: '#16a34a',
-                              lineHeight: 1.1,
-                              letterSpacing: '-0.02em',
-                              fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
-                            }}>
-                              {presentCount.toLocaleString()}
-                            </div>
-                            <div style={{
-                              fontSize: '0.85rem',
-                              fontWeight: '600',
-                              color: '#15803d',
-                              marginTop: '4px'
-                            }}>
-                              Present
+                          <div style={{ position: 'relative', width: '150px', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
+                            <svg viewBox="0 0 140 140" style={{ width: '140px', height: '140px', transform: 'rotate(-90deg)' }}>
+                              <circle cx="70" cy="70" r="52" fill="none" stroke="#f1f5f9" strokeWidth="18" />
+                              {donut1Segments.map((seg, i) => (
+                                <circle
+                                  key={i}
+                                  cx="70"
+                                  cy="70"
+                                  r="52"
+                                  fill="none"
+                                  stroke={seg.color}
+                                  strokeWidth="18"
+                                  strokeDasharray={seg.strokeDasharray}
+                                  strokeDashoffset={seg.strokeDashoffset}
+                                  style={{ transition: 'stroke-dasharray 0.5s ease' }}
+                                />
+                              ))}
+                            </svg>
+                            <div style={{ position: 'absolute', textAlign: 'center', pointerEvents: 'none' }}>
+                              <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#0f172a', lineHeight: 1 }}>
+                                {bracketTotal}
+                              </div>
+                              <div style={{ fontSize: '0.72rem', fontWeight: '600', color: '#64748b', marginTop: '2px' }}>
+                                Total students
+                              </div>
                             </div>
                           </div>
 
-                          {/* Absent */}
-                          <div style={{
-                            background: 'rgba(239, 68, 68, 0.08)',
-                            border: '1px solid rgba(239, 68, 68, 0.18)',
-                            borderRadius: '12px',
-                            padding: '16px 18px'
-                          }}>
-                            <div style={{
-                              fontSize: '1.65rem',
-                              fontWeight: '800',
-                              color: '#dc2626',
-                              lineHeight: 1.1,
-                              letterSpacing: '-0.02em',
-                              fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
-                            }}>
-                              {absentCount.toLocaleString()}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, minWidth: '170px' }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                              <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#3b82f6', marginTop: '5px', flexShrink: 0 }} />
+                              <div>
+                                <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '500' }}>90% - 100% Attendance</div>
+                                <div style={{ fontSize: '0.98rem', fontWeight: '700', color: '#0f172a' }}>{b90to100} Students</div>
+                              </div>
                             </div>
-                            <div style={{
-                              fontSize: '0.85rem',
-                              fontWeight: '600',
-                              color: '#b91c1c',
-                              marginTop: '4px'
-                            }}>
-                              Absent
+
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                              <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#22c55e', marginTop: '5px', flexShrink: 0 }} />
+                              <div>
+                                <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '500' }}>70% - 90% Attendance</div>
+                                <div style={{ fontSize: '0.98rem', fontWeight: '700', color: '#0f172a' }}>{b70to90} Students</div>
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                              <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#f59e0b', marginTop: '5px', flexShrink: 0 }} />
+                              <div>
+                                <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '500' }}>50% - 70% Attendance</div>
+                                <div style={{ fontSize: '0.98rem', fontWeight: '700', color: '#0f172a' }}>{b50to70} Students</div>
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                              <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#ef4444', marginTop: '5px', flexShrink: 0 }} />
+                              <div>
+                                <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '500' }}>Below 50% Attendance</div>
+                                <div style={{ fontSize: '0.98rem', fontWeight: '700', color: '#0f172a' }}>{bBelow50} Students</div>
+                              </div>
                             </div>
                           </div>
                         </div>
                       </div>
 
-                      {/* CARD 2: Students by Semester */}
-                      <div className="report-chart-card" style={{ display: 'flex', flexDirection: 'column' }}>
-                        {/* Header */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-                          <GraduationCap size={22} color="var(--text-primary, #0f172a)" style={{ strokeWidth: 2 }} />
-                          <h3 style={{ fontSize: '1.15rem', fontWeight: '700', color: 'var(--text-primary, #0f172a)', margin: 0, letterSpacing: '-0.01em' }}>
-                            Students by Semester
-                          </h3>
-                        </div>
+                      {/* ROW 1 - CHART 2: Weekly Attendance Trend Bar Chart */}
+                      <div style={{
+                        background: '#ffffff',
+                        border: '1.5px solid #e2e8f0',
+                        borderRadius: '16px',
+                        padding: '24px',
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justify: 'space-between'
+                      }}>
+                        <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                          Weekly Attendance Trend
+                        </h4>
 
-                        {/* Semester Progress Rows */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', flex: 1, justifyContent: semList.length <= 3 ? 'flex-start' : 'space-between' }}>
-                          {semList.map((semItem, idx) => (
-                            <div key={'sem_' + semItem.sem + '_' + idx} style={{ width: '100%' }}>
-                              {/* Row Label & Percentage */}
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                                <span style={{ fontSize: '0.95rem', fontWeight: '600', color: 'var(--text-primary, #0f172a)' }}>
-                                  {semItem.label}
-                                </span>
-                                <span style={{ fontSize: '0.9rem', fontWeight: '500', color: 'var(--text-secondary, #64748b)' }}>
-                                  {semItem.count} ({semItem.pctFormatted}%)
-                                </span>
-                              </div>
+                        <div style={{ position: 'relative', height: '170px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', paddingLeft: '35px', paddingBottom: '24px' }}>
+                          {['100%', '75%', '50%', '25%', '0%'].map((lvl, idx) => (
+                            <div key={lvl} style={{ position: 'absolute', left: '0', right: '0', top: `${idx * 25}%`, display: 'flex', alignItems: 'center' }}>
+                              <span style={{ fontSize: '0.7rem', color: '#94a3b8', width: '30px', textAlign: 'right', paddingRight: '8px' }}>{lvl}</span>
+                              <div style={{ flex: 1, borderTop: '1px dashed #e2e8f0' }} />
+                            </div>
+                          ))}
 
-                              {/* Progress Bar Track & Fill */}
+                          {weeklyData.map((d) => (
+                            <div key={d.day} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 1, width: '32px' }}>
+                              <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#1e293b', marginBottom: '4px' }}>
+                                {d.pct}%
+                              </span>
                               <div style={{
-                                width: '100%',
-                                height: '8px',
-                                backgroundColor: 'rgba(226, 232, 240, 0.8)',
-                                borderRadius: '9999px',
-                                overflow: 'hidden'
-                              }}>
-                                <div style={{
-                                  height: '100%',
-                                  width: `${Math.min(100, Math.max(0, semItem.pct))}%`,
-                                  backgroundColor: '#3b82f6',
-                                  borderRadius: '9999px',
-                                  transition: 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)'
-                                }} />
-                              </div>
+                                width: '24px',
+                                height: `${(d.pct / 100) * 115}px`,
+                                background: '#2563eb',
+                                borderRadius: '4px 4px 0 0',
+                                transition: 'height 0.4s ease'
+                              }} />
+                              <span style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b', marginTop: '6px', position: 'absolute', bottom: '0' }}>
+                                {d.day}
+                              </span>
                             </div>
                           ))}
                         </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '10px' }}>
+                          <span style={{ width: '10px', height: '10px', background: '#2563eb', borderRadius: '2px' }} />
+                          <span style={{ fontSize: '0.78rem', fontWeight: '600', color: '#475569' }}>Attendance %</span>
+                        </div>
+                      </div>
+
+                      {/* ROW 2 - CHART 3: Attendance Overview Donut */}
+                      <div style={{
+                        background: '#ffffff',
+                        border: '1.5px solid #e2e8f0',
+                        borderRadius: '16px',
+                        padding: '24px',
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justify: 'space-between'
+                      }}>
+                        <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                          Attendance Overview
+                        </h4>
+
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '20px', flexWrap: 'wrap' }}>
+                          <div style={{ position: 'relative', width: '150px', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
+                            <svg viewBox="0 0 140 140" style={{ width: '140px', height: '140px', transform: 'rotate(-90deg)' }}>
+                              <circle cx="70" cy="70" r="52" fill="none" stroke="#f1f5f9" strokeWidth="18" />
+                              {donut3Segments.map((seg, i) => (
+                                <circle
+                                  key={i}
+                                  cx="70"
+                                  cy="70"
+                                  r="52"
+                                  fill="none"
+                                  stroke={seg.color}
+                                  strokeWidth="18"
+                                  strokeDasharray={seg.strokeDasharray}
+                                  strokeDashoffset={seg.strokeDashoffset}
+                                  style={{ transition: 'stroke-dasharray 0.5s ease' }}
+                                />
+                              ))}
+                            </svg>
+                            <div style={{ position: 'absolute', textAlign: 'center', pointerEvents: 'none' }}>
+                              <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#0f172a', lineHeight: 1 }}>
+                                {totalOverviewLogs.toLocaleString()}
+                              </div>
+                              <div style={{ fontSize: '0.72rem', fontWeight: '600', color: '#64748b', marginTop: '2px' }}>
+                                Students
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minWidth: '160px' }}>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#2563eb', marginTop: '5px', flexShrink: 0 }} />
+                              <div>
+                                <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: '500' }}>Present</div>
+                                <div style={{ fontSize: '0.95rem', fontWeight: '700', color: '#0f172a' }}>
+                                  {presentLogs.toLocaleString()} ({presentPct}%)
+                                </div>
+                              </div>
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                              <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#ef4444', marginTop: '5px', flexShrink: 0 }} />
+                              <div>
+                                <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: '500' }}>Absent</div>
+                                <div style={{ fontSize: '0.95rem', fontWeight: '700', color: '#0f172a' }}>
+                                  {absentLogs.toLocaleString()} ({absentPct}%)
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* ROW 2 - CHART 4: Class-wise Attendance Table */}
+                      <div style={{
+                        background: '#ffffff',
+                        border: '1.5px solid #e2e8f0',
+                        borderRadius: '16px',
+                        padding: '24px',
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                        display: 'flex',
+                        flexDirection: 'column'
+                      }}>
+                        <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                          Class-wise Attendance
+                        </h4>
+
+                        <div style={{ border: '1px solid #edf2f7', borderRadius: '10px', overflow: 'hidden' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
+                            <thead>
+                              <tr style={{ background: '#f8fafc', borderBottom: '1.5px solid #e2e8f0' }}>
+                                <th style={{ textAlign: 'left', padding: '10px 14px', fontWeight: '700', color: '#475569' }}>Class</th>
+                                <th style={{ textAlign: 'center', padding: '10px 14px', fontWeight: '700', color: '#475569' }}>Total Students</th>
+                                <th style={{ textAlign: 'right', padding: '10px 14px', fontWeight: '700', color: '#475569' }}>Attendance Rate</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {classData.map((cls, idx) => (
+                                <tr key={cls.name} style={{ borderBottom: idx < classData.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
+                                  <td style={{ padding: '10px 14px', fontWeight: '600', color: '#1e293b' }}>{cls.name}</td>
+                                  <td style={{ padding: '10px 14px', textAlign: 'center', fontWeight: '600', color: '#475569' }}>{cls.count}</td>
+                                  <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px' }}>
+                                      <span style={{ fontWeight: '700', color: '#0f172a' }}>{cls.rate.toFixed(2)}%</span>
+                                      <div style={{ width: '60px', height: '6px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden' }}>
+                                        <div style={{ width: `${cls.rate}%`, height: '100%', background: '#2563eb', borderRadius: '999px' }} />
+                                      </div>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     </div>
+
+                    {/* SUMMARY REPORT CARDS (BELOW CHARTS) */}
+                      <div className="admin-reports-summary-cards-container" style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                        gap: '20px',
+                        marginTop: '24px',
+                        width: '100%'
+                      }}>
+                        {/* CARD 1: Daily Summary (Today) */}
+                        <div style={{
+                          background: '#ffffff',
+                          border: '1.5px solid #e2e8f0',
+                          borderRadius: '16px',
+                          padding: '20px 22px',
+                          boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between'
+                        }}>
+                          <h4 style={{ fontSize: '0.98rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                            Daily Summary (Today)
+                          </h4>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                            <div style={{
+                              background: '#eff6ff',
+                              padding: '12px',
+                              borderRadius: '14px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              flexShrink: 0
+                            }}>
+                              <Calendar size={32} color="#2563eb" strokeWidth={2.2} />
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1, gap: '4px' }}>
+                              <div style={{ textAlign: 'center', flex: 1 }}>
+                                <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>Present</div>
+                                <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#16a34a' }}>{todayPresentCount.toLocaleString()}</div>
+                              </div>
+                              <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
+                              <div style={{ textAlign: 'center', flex: 1 }}>
+                                <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>Absent</div>
+                                <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#dc2626' }}>{todayAbsentCount.toLocaleString()}</div>
+                              </div>
+                              <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
+                              <div style={{ textAlign: 'center', flex: 1 }}>
+                                <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Attendance Rate</div>
+                                <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#2563eb' }}>{todayRate}%</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* CARD 2: Monthly Report */}
+                        <div style={{
+                          background: '#ffffff',
+                          border: '1.5px solid #e2e8f0',
+                          borderRadius: '16px',
+                          padding: '20px 22px',
+                          boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between'
+                        }}>
+                          <h4 style={{ fontSize: '0.98rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                            Monthly Report ({nowMonthName})
+                          </h4>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                            <div style={{
+                              background: '#eff6ff',
+                              padding: '12px',
+                              borderRadius: '14px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              flexShrink: 0
+                            }}>
+                              <Calendar size={32} color="#2563eb" strokeWidth={2.2} />
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1, gap: '4px' }}>
+                              <div style={{ textAlign: 'center', flex: 1 }}>
+                                <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Avg. Attendance</div>
+                                <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#2563eb' }}>{monthlyAvgRate}%</div>
+                              </div>
+                              <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
+                              <div style={{ textAlign: 'center', flex: 1 }}>
+                                <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Total Present</div>
+                                <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#16a34a' }}>{monthlyPresentCount.toLocaleString()}</div>
+                              </div>
+                              <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
+                              <div style={{ textAlign: 'center', flex: 1 }}>
+                                <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Total Absent</div>
+                                <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#dc2626' }}>{monthlyAbsentCount.toLocaleString()}</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* CARD 3: Attendance Analytics */}
+                        <div style={{
+                          background: '#ffffff',
+                          border: '1.5px solid #e2e8f0',
+                          borderRadius: '16px',
+                          padding: '20px 22px',
+                          boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between'
+                        }}>
+                          <h4 style={{ fontSize: '0.98rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                            Attendance Analytics
+                          </h4>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                            <div style={{
+                              background: '#eff6ff',
+                              padding: '12px',
+                              borderRadius: '14px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              flexShrink: 0
+                            }}>
+                              <TrendingUp size={32} color="#2563eb" strokeWidth={2.2} />
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around', flex: 1, gap: '8px' }}>
+                              <div style={{ textAlign: 'center', flex: 1 }}>
+                                <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Best Attendance Day</div>
+                                <div style={{ fontSize: '1.05rem', fontWeight: '800', color: '#16a34a' }}>{bestDay}</div>
+                              </div>
+                              <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
+                              <div style={{ textAlign: 'center', flex: 1 }}>
+                                <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Lowest Attendance Day</div>
+                                <div style={{ fontSize: '1.05rem', fontWeight: '800', color: '#dc2626' }}>{lowestDay}</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </>
                   );
                 })()}
               </div>
@@ -11494,9 +14588,20 @@ export default function AdminDashboard({
             <div style={styles.modalOverlay}>
               <div className="glass-panel" style={styles.modalContent}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                  <h3 style={{ ...styles.modalTitle, margin: 0 }}>
-                    {modalMode === 'add' ? 'Add New Student' : 'Edit Student Details'}
-                  </h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{
+                      width: '38px', height: '38px', borderRadius: '12px',
+                      background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      boxShadow: '0 4px 12px rgba(245, 158, 11, 0.3)',
+                      flexShrink: 0
+                    }}>
+                      {modalMode === 'edit' ? <Edit size={20} color="#ffffff" /> : <Users size={20} color="#ffffff" />}
+                    </div>
+                    <h3 style={{ ...styles.modalTitle, margin: 0, textAlign: 'left' }}>
+                      {modalMode === 'add' ? 'Add New Student' : 'Edit Student Details'}
+                    </h3>
+                  </div>
                   <AdminModalCloseBtn
                     onClick={() => { setShowStudentModal(false); setCreatedStudentCredentials(null); }}
                     title="Close Form"
@@ -11530,6 +14635,7 @@ export default function AdminDashboard({
                       <div style={styles.formGroup}>
                       <label style={styles.formLabel}>Enrollment Number *</label>
                       <input
+                        ref={firstStudentInputRef}
                         type="text"
                         className="glass-input"
                         placeholder="e.g. 2100201190"
@@ -11551,6 +14657,12 @@ export default function AdminDashboard({
                         disabled={modalMode === 'edit'}
                         autoFocus
                         tabIndex={1}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Tab' && e.shiftKey) {
+                            e.preventDefault();
+                            addStudentSaveBtnRef.current?.focus();
+                          }
+                        }}
                         style={enrollmentTouched && !/^\d{10}$/.test(studentForm.enrollment_no || '') ? { borderColor: '#ff4d4f', boxShadow: '0 0 0 2px rgba(255, 77, 79, 0.2)' } : {}}
                       />
                       {enrollmentTouched && !/^\d{10}$/.test(studentForm.enrollment_no || '') && (
@@ -11631,7 +14743,8 @@ export default function AdminDashboard({
                       <SearchableSemesterSelect
                         value={studentForm.semester}
                         onChange={(val) => setStudentForm({ ...studentForm, semester: val })}
-                        placeholder="Select Semester (1-8)"
+                        placeholder="Select Semester"
+                        options={allSemestersList.map(s => ({ id: String(s.semNumber || s.id), label: s.name || `Semester ${s.semNumber || s.id}` }))}
                         isDark={false}
                         tabIndex={5}
                       />
@@ -11721,7 +14834,7 @@ export default function AdminDashboard({
                           {studentForm.device_id && (
                             <button
                               type="button"
-                              onClick={() => handleResetDeviceId(studentForm.id, studentForm.name)}
+                              onClick={() => handleResetDeviceId(studentForm.id, studentForm.name, studentForm.device_id)}
                               style={{
                                 background: '#fee2e2',
                                 color: '#dc2626',
@@ -11800,8 +14913,15 @@ export default function AdminDashboard({
                         Cancel
                       </button>
                       <button
+                        ref={addStudentSaveBtnRef}
                         type="submit"
                         tabIndex={12}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Tab' && !e.shiftKey) {
+                            e.preventDefault();
+                            firstStudentInputRef.current?.focus();
+                          }
+                        }}
                         style={{
                           flex: 1,
                           height: '42px',
@@ -11850,9 +14970,20 @@ export default function AdminDashboard({
             <div style={styles.modalOverlay}>
               <div className="glass-panel" style={styles.modalContent}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-                  <h3 style={{ ...styles.modalTitle, margin: 0 }}>
-                    {facultyModalMode === 'add' ? 'Add New Faculty Member' : 'Edit Faculty Details'}
-                  </h3>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{
+                      width: '38px', height: '38px', borderRadius: '12px',
+                      background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      boxShadow: '0 4px 12px rgba(245, 158, 11, 0.3)',
+                      flexShrink: 0
+                    }}>
+                      {facultyModalMode === 'edit' ? <Edit size={20} color="#ffffff" /> : <GraduationCap size={20} color="#ffffff" />}
+                    </div>
+                    <h3 style={{ ...styles.modalTitle, margin: 0, textAlign: 'left' }}>
+                      {facultyModalMode === 'add' ? 'Add New Faculty Member' : 'Edit Faculty Details'}
+                    </h3>
+                  </div>
                   <AdminModalCloseBtn
                     onClick={() => { setShowFacultyModal(false); setCreatedFacultyCredentials(null); }}
                     title="Close Form"
@@ -11890,6 +15021,7 @@ export default function AdminDashboard({
                       <div style={styles.formGroup}>
                       <label style={styles.formLabel}>Faculty Full Name *</label>
                       <input
+                        ref={firstFacultyInputRef}
                         type="text"
                         className="glass-input"
                         placeholder="e.g. Dr. Sarah Connor"
@@ -11905,6 +15037,12 @@ export default function AdminDashboard({
                         required
                         autoFocus
                         tabIndex={1}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Tab' && e.shiftKey) {
+                            e.preventDefault();
+                            addFacultySaveBtnRef.current?.focus();
+                          }
+                        }}
                       />
                     </div>
 
@@ -12166,8 +15304,15 @@ export default function AdminDashboard({
                         Cancel
                       </button>
                       <button
+                        ref={addFacultySaveBtnRef}
                         type="submit"
                         tabIndex={7}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Tab' && !e.shiftKey) {
+                            e.preventDefault();
+                            firstFacultyInputRef.current?.focus();
+                          }
+                        }}
                         style={{
                           flex: 1,
                           height: '42px',
@@ -12257,7 +15402,9 @@ export default function AdminDashboard({
                   </div>
                   <div>
                     <h3 style={{ margin: 0, fontSize: '1.2rem', color: '#0f172a', fontWeight: '800' }}>
-                      {deleteConfirmState.entityType === 'faculty' ? 'Confirm Faculty Deletion' : 'Confirm Student Deletion'}
+                      {deleteConfirmState.entityType === 'faculty' ? 'Confirm Faculty Deletion' :
+                       deleteConfirmState.entityType === 'semester' ? 'Confirm Semester Deletion' :
+                       'Confirm Student Deletion'}
                     </h3>
                     <span style={{ fontSize: '0.78rem', color: '#dc2626', fontWeight: '700' }}>
                       ⚠️ Permanent System Action
@@ -12266,7 +15413,11 @@ export default function AdminDashboard({
                 </div>
 
                 <p style={{ fontSize: '0.94rem', color: '#334155', margin: 0, lineHeight: 1.55 }}>
-                  Are you sure you want to delete <strong style={{ color: '#0f172a', fontWeight: '800' }}>{deleteConfirmState.studentName}</strong>? {deleteConfirmState.entityType === 'faculty' ? 'This faculty account will be permanently deleted from the system.' : 'All associated attendance history will also be permanently deleted.'}
+                  Are you sure you want to delete <strong style={{ color: '#0f172a', fontWeight: '800' }}>{deleteConfirmState.studentName}</strong>? {
+                    deleteConfirmState.entityType === 'faculty' ? 'This faculty account will be permanently deleted from the system.' :
+                    deleteConfirmState.entityType === 'semester' ? 'All associated semester data will also be permanently removed.' :
+                    'All associated attendance history will also be permanently deleted.'
+                  }
                 </p>
 
                 <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '6px' }}>

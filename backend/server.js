@@ -13,6 +13,8 @@ const leavesRouter = require('./routes/leaves');
 const syncRouter = require('./routes/sync');
 const noticesRouter = require('./routes/notices');
 const rulesRouter = require('./routes/rules');
+const subjectsRouter = require('./routes/subjects');
+const semestersRouter = require('./routes/semesters');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -34,6 +36,8 @@ app.use('/api/leaves', leavesRouter);
 app.use('/api/sync', syncRouter);
 app.use('/api/notices', noticesRouter);
 app.use('/api/rules', rulesRouter);
+app.use('/api/subjects', subjectsRouter);
+app.use('/api/semesters', semestersRouter);
 
 // Serve frontend build static files in production
 app.use(express.static(path.join(__dirname, '../frontend/dist')));

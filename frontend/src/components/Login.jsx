@@ -431,14 +431,14 @@ const styles = {
     position: 'relative',
     padding: '20px',
     overflow: 'hidden',
-    background: 'var(--bg-gradient)'
+    background: 'linear-gradient(180deg, #003366 0%, #004080 50%, #003366 100%)'
   },
   blurCircle1: {
     position: 'absolute',
     width: '450px',
     height: '450px',
     borderRadius: '50%',
-    background: 'radial-gradient(circle, rgba(0, 59, 122, 0.5) 0%, rgba(0,0,0,0) 70%)',
+    background: 'radial-gradient(circle, rgba(0, 64, 128, 0.6) 0%, rgba(0,0,0,0) 70%)',
     top: '-10%',
     left: '-10%',
     zIndex: 0
@@ -448,7 +448,7 @@ const styles = {
     width: '450px',
     height: '450px',
     borderRadius: '50%',
-    background: 'radial-gradient(circle, rgba(37, 99, 235, 0.2) 0%, rgba(0,0,0,0) 70%)',
+    background: 'radial-gradient(circle, rgba(0, 51, 102, 0.45) 0%, rgba(0,0,0,0) 70%)',
     bottom: '-10%',
     right: '-10%',
     zIndex: 0
@@ -458,12 +458,12 @@ const styles = {
     maxWidth: '420px',
     padding: '40px 32px',
     zIndex: 1,
-    boxShadow: '0 24px 50px rgba(0, 0, 0, 0.35), 0 0 40px rgba(251, 191, 36, 0.1)',
+    boxShadow: '0 24px 50px rgba(0, 0, 0, 0.35), 0 0 40px rgba(0, 64, 128, 0.25)',
     position: 'relative',
     borderRadius: '24px',
-    background: 'rgba(255, 255, 255, 0.03)',
+    background: 'rgba(0, 51, 102, 0.35)',
     backdropFilter: 'blur(16px)',
-    border: '1px solid rgba(255, 255, 255, 0.1)'
+    border: '1px solid rgba(255, 255, 255, 0.12)'
   },
   backBtn: {
     position: 'absolute',

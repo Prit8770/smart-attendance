@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
+const { notifyChange } = require('../syncEmitter');
 
 // Middleware to restrict to admins or faculty
 const requireAdmin = (req, res, next) => {
@@ -416,6 +417,7 @@ router.post('/submit', authenticateJWT, async (req, res) => {
 
     await supabase.from('attendance').insert([insertPayload]);
     invalidateMatrixCache();
+    notifyChange('DATA_CHANGED', { entity: 'attendance', action: 'submit', studentId: req.user.id });
 
     if (status === 'Success') {
       res.json({
@@ -515,11 +517,13 @@ router.post('/manual', authenticateJWT, requireAdmin, async (req, res) => {
     const { data: existing } = await dupQuery.limit(1).maybeSingle();
 
     if (existing) {
-      if (existing.device_id && existing.device_id !== 'Manual') {
-        return res.status(400).json({ error: 'Student already marked attendance via Smartphone for this session.' });
-      } else {
-        return res.status(400).json({ error: 'Student is already marked present for this session.' });
-      }
+      const { error: updateErr } = await supabase.from('attendance')
+        .update({ status: 'Success', device_id: 'Manual', subject: activeManualSubject || req.body.subject || null })
+        .eq('id', existing.id);
+      if (updateErr) throw updateErr;
+      invalidateMatrixCache();
+      notifyChange('DATA_CHANGED', { entity: 'attendance', action: 'manual', studentId: student_id });
+      return res.json({ success: true, message: 'Student attendance marked present.' });
     }
 
     if (!activeManualSubject && linkCol && linkId) {
@@ -548,6 +552,7 @@ router.post('/manual', authenticateJWT, requireAdmin, async (req, res) => {
     const { error } = await supabase.from('attendance').insert([insertPayload]);
     if (error) throw error;
     invalidateMatrixCache();
+    notifyChange('DATA_CHANGED', { entity: 'attendance', action: 'manual', studentId: student_id });
 
     res.json({ success: true, message: 'Manual attendance recorded successfully.' });
   } catch (err) {
@@ -566,8 +571,7 @@ router.post('/manual/undo', authenticateJWT, requireAdmin, async (req, res) => {
     const targetDate = date || getLocalDateString();
     let query = supabase.from('attendance')
       .select('id, device_id')
-      .eq('student_id', student_id)
-      .eq('device_id', 'Manual');
+      .eq('student_id', student_id);
 
     if (qr_session_id) {
       query = query.eq('qr_session_id', qr_session_id);
@@ -577,20 +581,20 @@ router.post('/manual/undo', authenticateJWT, requireAdmin, async (req, res) => {
       query = query.eq('date', targetDate);
     }
 
-    const { data: toDelete, error: findErr } = await query.limit(1).maybeSingle();
+    const { data: toDelete } = await query.limit(1).maybeSingle();
 
-    if (findErr || !toDelete) {
-      return res.status(400).json({ error: 'Only manual attendance records can be undone or student is already absent.' });
+    if (toDelete) {
+      const { error } = await supabase.from('attendance').delete().eq('id', toDelete.id);
+      if (error) throw error;
     }
 
-    const { error } = await supabase.from('attendance').delete().eq('id', toDelete.id);
-    if (error) throw error;
     invalidateMatrixCache();
+    notifyChange('DATA_CHANGED', { entity: 'attendance', action: 'manual_undo', studentId: student_id });
 
-    res.json({ success: true, message: 'Attendance removed / set to Absent.' });
+    res.json({ success: true, message: 'Student attendance set to Absent.' });
   } catch (err) {
     console.error('Error undoing manual attendance:', err);
-    res.status(500).json({ error: 'Failed to undo attendance.' });
+    res.status(500).json({ error: 'Failed to set attendance to absent.' });
   }
 });
 
@@ -867,8 +871,8 @@ const getReportsHandler = async (req, res) => {
 
   try {
     let reqQuery = supabase.from('attendance').select(`
-      id, time, distance, status, date, qr_session_id, device_id,
-      student:student_id (*),
+      id, time, distance, status, date, qr_session_id, otp_id, device_id,
+      student:student_id (id, name, enrollment_no, roll_no, division, semester, course, mobile),
       otp:otp_id (otp, generated_by, faculty:generated_by(name)),
       qr_session:qr_session_id (created_by_faculty_id, faculty:created_by_faculty_id(name))
     `);
@@ -905,15 +909,25 @@ const getReportsHandler = async (req, res) => {
 
     let filteredReports = reports || [];
     if (req.user.role === 'faculty') {
-      filteredReports = filteredReports.filter(log =>
-        (log.qr_session && String(log.qr_session.created_by_faculty_id) === String(req.user.id)) ||
-        (log.otp && String(log.otp.generated_by) === String(req.user.id)) ||
-        (log.device_id === 'Manual' && !log.qr_session && !log.otp)
-      );
+      const activeFacId = req.user.faculty_id || req.user.id;
+      const allowedFacIds = new Set([
+        String(req.user.id),
+        String(activeFacId)
+      ].filter(Boolean));
+
+      filteredReports = filteredReports.filter(log => {
+        const qrFacId = log.qr_session ? String(log.qr_session.created_by_faculty_id) : '';
+        const otpFacId = log.otp ? String(log.otp.generated_by) : '';
+        const isQrMatch = qrFacId && allowedFacIds.has(qrFacId);
+        const isOtpMatch = otpFacId && allowedFacIds.has(otpFacId);
+        const isManual = log.device_id === 'Manual';
+        return isQrMatch || isOtpMatch || isManual;
+      });
     }
 
     const flatReports = filteredReports.map(log => ({
       id: log.id,
+      student_id: log.student_id || log.student?.id,
       enrollment_no: log.student?.enrollment_no,
       roll_no: log.student?.roll_no,
       division: log.student?.division,
@@ -1373,8 +1387,15 @@ router.get('/subject-breakdown', authenticateJWT, async (req, res) => {
           fSubjects = JSON.parse(jsonStr);
         } catch (e) { }
       }
-      if (!fSubjects || fSubjects.length === 0) {
-        fSubjects = subjectsMap[f.id] || subjectsMap[f.employee_no] || subjectsMap[String(f.id)] || [];
+      const fileSubs = subjectsMap[f.id] ||
+        subjectsMap[String(f.id)] ||
+        (f.employee_no && subjectsMap[f.employee_no]) ||
+        (f.employee_no && subjectsMap[String(f.employee_no)]) ||
+        (f.email && subjectsMap[f.email.toLowerCase()]) ||
+        (f.username && subjectsMap[f.username.toLowerCase()]) ||
+        [];
+      if (Array.isArray(fileSubs) && fileSubs.length > 0) {
+        fSubjects = fileSubs;
       }
 
       if (Array.isArray(fSubjects)) {
@@ -2094,5 +2115,6 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
   }
 });
 
+router.invalidateMatrixCache = invalidateMatrixCache;
 module.exports = router;
 

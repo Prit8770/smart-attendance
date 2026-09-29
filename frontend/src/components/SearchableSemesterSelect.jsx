@@ -1,27 +1,41 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { ChevronDown, Check } from 'lucide-react';
 
 const SearchableSemesterSelect = ({
   value,
   onChange,
-  placeholder = "Select Semester (1-8)",
-  isDark = false
+  placeholder = "Select Semester",
+  options,
+  isDark = false,
+  tabIndex
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [inputText, setInputText] = useState('');
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const wrapperRef = useRef(null);
 
-  const semesters = [
-    { id: '1', label: 'Semester 1' },
-    { id: '2', label: 'Semester 2' },
-    { id: '3', label: 'Semester 3' },
-    { id: '4', label: 'Semester 4' },
-    { id: '5', label: 'Semester 5' },
-    { id: '6', label: 'Semester 6' },
-    { id: '7', label: 'Semester 7' },
-    { id: '8', label: 'Semester 8' }
-  ];
+  const semesters = useMemo(() => {
+    if (Array.isArray(options) && options.length > 0) return options;
+
+    try {
+      const saved = localStorage.getItem('admin_custom_semesters');
+      const customList = saved ? JSON.parse(saved) : [];
+      if (Array.isArray(customList) && customList.length > 0) {
+        const customItems = customList.map(c => {
+          const semId = String(c.semNumber || c.id).trim();
+          const semLabel = c.name || `Semester ${semId}`;
+          return { id: semId, label: semLabel };
+        });
+        return customItems.sort((a, b) => {
+          const numA = parseInt(a.id, 10) || 999;
+          const numB = parseInt(b.id, 10) || 999;
+          return numA - numB;
+        });
+      }
+    } catch (e) {}
+
+    return [];
+  }, [options, isOpen]);
 
   // Synchronize inputText with selected value when closed or value changes
   useEffect(() => {
@@ -29,7 +43,7 @@ const SearchableSemesterSelect = ({
       const match = semesters.find(s => String(s.id) === String(value));
       setInputText(match ? match.label : (value ? `Semester ${value}` : ''));
     }
-  }, [value, isOpen]);
+  }, [value, isOpen, semesters]);
 
   // Reset highlighted index when typing
   useEffect(() => {
@@ -47,14 +61,14 @@ const SearchableSemesterSelect = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filter 1-8 semesters based on input text
+  // Filter semesters based on input text
   const filtered = semesters.filter(s => {
     if (!inputText || !isOpen) return true;
     const cleanSearch = inputText.toLowerCase().trim();
     const cleanNum = cleanSearch.replace(/\D/g, '');
     return (
       s.label.toLowerCase().includes(cleanSearch) ||
-      (cleanNum && s.id === cleanNum)
+      (cleanNum && String(s.id) === cleanNum)
     );
   });
 
@@ -93,10 +107,15 @@ const SearchableSemesterSelect = ({
   const handleBlur = () => {
     setTimeout(() => {
       if (!wrapperRef.current?.contains(document.activeElement)) {
-        const cleanNum = inputText.trim().replace(/\D/g, '');
-        if (cleanNum >= '1' && cleanNum <= '8') {
-          handleSelectOption(cleanNum);
-        } else if (filtered.length > 0) {
+        const trimmed = inputText.trim();
+        const cleanNum = trimmed.replace(/\D/g, '');
+        const matchByNum = semesters.find(s => String(s.id) === cleanNum);
+        if (matchByNum) {
+          handleSelectOption(matchByNum.id);
+        } else if (!trimmed && !value) {
+          setInputText('');
+          if (onChange) onChange('');
+        } else if (trimmed && filtered.length > 0) {
           handleSelectOption(filtered[0].id);
         } else {
           const match = semesters.find(s => String(s.id) === String(value));
@@ -118,13 +137,17 @@ const SearchableSemesterSelect = ({
           onFocus={() => setIsOpen(true)}
           onBlur={handleBlur}
           onKeyDown={handleKeyDown}
+          tabIndex={tabIndex}
           onChange={(e) => {
             const val = e.target.value;
             setInputText(val);
             setIsOpen(true);
             const digit = val.trim().replace(/\D/g, '');
-            if (digit >= '1' && digit <= '8') {
-              onChange(digit);
+            const match = semesters.find(s => String(s.id) === digit);
+            if (match) {
+              onChange(match.id);
+            } else if (!val.trim()) {
+              onChange('');
             }
           }}
           style={{
@@ -181,8 +204,8 @@ const SearchableSemesterSelect = ({
           }}
         >
           {filtered.length === 0 ? (
-            <div style={{ padding: '8px 12px', fontSize: '0.82rem', color: '#94a3b8', textAlign: 'center' }}>
-              No matching semester (Use 1-8)
+            <div style={{ padding: '10px 12px', fontSize: '0.82rem', color: '#94a3b8', textAlign: 'center' }}>
+              {semesters.length === 0 ? "No semesters created yet. Add from Semester menu." : "No matching semester"}
             </div>
           ) : (
             filtered.map((sem, idx) => {

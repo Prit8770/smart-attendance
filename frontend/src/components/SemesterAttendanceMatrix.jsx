@@ -152,16 +152,37 @@ export default function SemesterAttendanceMatrix({
       const sSem = String(sess.semester || '').replace(/\D/g, '');
       if (isAll || sSem === targetSemClean) {
         const dateStr = getLocalDateStr(sess.date || sess.created_at);
-        const colKey = `${dateStr}_${sess.id || sess.qr_session_id || sess.otp_id}`;
+        const sId = sess.id || sess.qr_session_id || sess.otp_id || 'sess';
+        const colKey = `${dateStr}_${sId}`;
         sessionMap.set(colKey, {
           columnKey: colKey,
           date: dateStr,
           subject: cleanSubjectTitle(sess.subject || 'Subject'),
           faculty_name: sess.faculty_name || 'Faculty',
-          time: sess.created_at ? new Date(sess.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Session',
-          type: sess.qr_session_id ? 'QR' : 'OTP',
+          time: sess.created_at ? new Date(sess.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (sess.time || 'Session'),
+          type: sess.type || (sess.qr_session_id || sess.tokens ? 'QR' : (sess.otp_id || sess.otp ? 'OTP' : 'Manual')),
           division: sess.division || 'ALL'
         });
+      }
+    });
+
+    semLogs.forEach(l => {
+      const lDate = getLocalDateStr(l.date || l.timestamp || l.created_at);
+      const lSem = String(l.semester || '').replace(/\D/g, '');
+      if (isAll || lSem === targetSemClean) {
+        const sId = l.qr_session_id ? `qr_${l.qr_session_id}` : (l.otp_id ? `otp_${l.otp_id}` : `manual_${lDate}_${cleanSubjectTitle(l.subject).replace(/\s+/g, '_')}`);
+        const colKey = `${lDate}_${sId}`;
+        if (!sessionMap.has(colKey)) {
+          sessionMap.set(colKey, {
+            columnKey: colKey,
+            date: lDate,
+            subject: cleanSubjectTitle(l.subject || 'Subject'),
+            faculty_name: l.faculty_name || 'Faculty',
+            time: l.time || (l.created_at ? new Date(l.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Session'),
+            type: l.qr_session_id ? 'QR' : (l.otp_id ? 'OTP' : 'Manual'),
+            division: l.division || 'ALL'
+          });
+        }
       }
     });
 
@@ -223,10 +244,10 @@ export default function SemesterAttendanceMatrix({
     });
   };
 
-  // Re-fetch when semester or filters change
+  // Re-fetch when semester or filters or session history change
   useEffect(() => {
     fetchSemesterMatrix(selectedSem);
-  }, [selectedSem, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
+  }, [selectedSem, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter, qrSessionHistory, liveLogs]);
 
   // Available semesters for filter dropdown (Strictly assigned semesters if in Faculty mode)
   const allSemestersList = useMemo(() => {
@@ -384,7 +405,7 @@ export default function SemesterAttendanceMatrix({
       const finalPresent = applicableCount > 0 ? presentCount : (st.presentCount !== undefined ? st.presentCount : presentCount);
       const finalAbsent = applicableCount > 0 ? absentCount : (st.absentCount !== undefined ? st.absentCount : absentCount);
       const finalApplicable = applicableCount > 0 ? applicableCount : ((finalPresent + finalAbsent) || 0);
-      const pct = finalApplicable > 0 ? Math.round((finalPresent / finalApplicable) * 100) : (activeCols.length === 0 ? (st.pct !== undefined ? st.pct : 0) : 100);
+      const pct = finalApplicable > 0 ? Math.round((finalPresent / finalApplicable) * 100) : null;
 
       return {
         ...st,
@@ -1134,19 +1155,35 @@ export default function SemesterAttendanceMatrix({
 
                       {/* Summary Col: Percentage */}
                       <td className="matrix-summary-cell-pct" style={{ textAlign: 'center' }}>
-                        <span
-                          style={{
-                            padding: '3px 8px',
-                            borderRadius: '8px',
-                            fontSize: '0.78rem',
-                            fontWeight: '800',
-                            background: (st.pct || 0) >= 75 ? '#dcfce7' : (st.pct || 0) >= 60 ? '#fef3c7' : '#fee2e2',
-                            color: (st.pct || 0) >= 75 ? '#15803d' : (st.pct || 0) >= 60 ? '#b45309' : '#dc2626',
-                            border: (st.pct || 0) >= 75 ? '1px solid #86efac' : (st.pct || 0) >= 60 ? '1px solid #fde68a' : '1px solid #fca5a5'
-                          }}
-                        >
-                          {st.pct || 0}%
-                        </span>
+                        {st.pct !== null && st.pct !== undefined ? (
+                          <span
+                            style={{
+                              padding: '3px 8px',
+                              borderRadius: '8px',
+                              fontSize: '0.78rem',
+                              fontWeight: '800',
+                              background: st.pct >= 75 ? '#dcfce7' : st.pct >= 60 ? '#fef3c7' : '#fee2e2',
+                              color: st.pct >= 75 ? '#15803d' : st.pct >= 60 ? '#b45309' : '#dc2626',
+                              border: st.pct >= 75 ? '1px solid #86efac' : st.pct >= 60 ? '1px solid #fde68a' : '1px solid #fca5a5'
+                            }}
+                          >
+                            {st.pct}%
+                          </span>
+                        ) : (
+                          <span
+                            style={{
+                              padding: '3px 8px',
+                              borderRadius: '8px',
+                              fontSize: '0.78rem',
+                              fontWeight: '800',
+                              background: '#f1f5f9',
+                              color: '#64748b',
+                              border: '1px solid #cbd5e1'
+                            }}
+                          >
+                            NA
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -1230,7 +1267,12 @@ export default function SemesterAttendanceMatrix({
                         {displayedMatrixStudents.reduce((a, b) => a + (b.absentCount || 0), 0)}
                       </td>
                       <td className="matrix-summary-cell-pct" style={{ textAlign: 'center', fontWeight: '800', color: '#d97706' }}>
-                        {displayedMatrixStudents.length > 0 ? Math.round(displayedMatrixStudents.reduce((a, b) => a + (b.pct || 0), 0) / displayedMatrixStudents.length) : 0}%
+                        {(() => {
+                          const totalP = displayedMatrixStudents.reduce((a, b) => a + (b.presentCount || 0), 0);
+                          const totalA = displayedMatrixStudents.reduce((a, b) => a + (b.absentCount || 0), 0);
+                          const totalCond = totalP + totalA;
+                          return totalCond > 0 ? `${Math.round((totalP / totalCond) * 100)}%` : 'NA';
+                        })()}
                       </td>
                     </tr>
                   </tfoot>

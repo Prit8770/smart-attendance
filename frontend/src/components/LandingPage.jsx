@@ -101,7 +101,23 @@ const LandingPage = ({ onGetStarted }) => {
               <button style={s.btnPrimary} onClick={onGetStarted} id="landing-get-started-btn">
                 Get Started <Zap size={18} color="#c2410c" fill="#ea580c" style={{ display: 'inline-flex', verticalAlign: 'middle' }} />
               </button>
-              <button style={s.btnGhost} onClick={() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' })} id="landing-how-it-works-btn">
+              <button
+                style={s.btnGhost}
+                onClick={() => document.getElementById('how-it-works')?.scrollIntoView({ behavior: 'smooth' })}
+                id="landing-how-it-works-btn"
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'rgba(229, 231, 235, 0.28)';
+                  e.currentTarget.style.borderColor = '#e5e7eb';
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = '0 10px 25px rgba(0, 0, 0, 0.25), 0 0 16px rgba(229, 231, 235, 0.35)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'rgba(229, 231, 235, 0.16)';
+                  e.currentTarget.style.borderColor = 'rgba(229, 231, 235, 0.45)';
+                  e.currentTarget.style.transform = 'none';
+                  e.currentTarget.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.18), inset 0 1px 1px rgba(255, 255, 255, 0.3)';
+                }}
+              >
                 How it Works
               </button>
             </div>
@@ -252,7 +268,7 @@ const LandingPage = ({ onGetStarted }) => {
 const s = {
   page: { minHeight: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', fontFamily: "'Inter', system-ui, sans-serif", overflowX: 'hidden' },
   hero: {
-    background: 'radial-gradient(ellipse at 50% 0%, #003b7a 0%, #001b3d 55%, #000f24 100%)',
+    background: 'linear-gradient(180deg, #003366 0%, #004080 50%, #003366 100%)',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
@@ -350,15 +366,21 @@ const s = {
     gap: '8px',
   },
   btnGhost: {
-    background: 'transparent',
-    border: '2px solid rgba(255,255,255,0.25)',
+    background: 'rgba(229, 231, 235, 0.16)',
+    border: '1.5px solid rgba(229, 231, 235, 0.45)',
     color: '#ffffff',
     fontWeight: '700',
     fontSize: '1rem',
     padding: '12px 32px',
     borderRadius: '12px',
     cursor: 'pointer',
-    backdropFilter: 'blur(4px)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
+    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.18), inset 0 1px 1px rgba(255, 255, 255, 0.3)',
+    transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   trustRow: {
     display: 'flex',
@@ -571,7 +593,7 @@ const s = {
     margin: 0,
   },
   stepsSection: {
-    background: 'radial-gradient(ellipse at 50% 0%, #003b7a 0%, #001b3d 60%, #000f24 100%)',
+    background: 'linear-gradient(180deg, #003366 0%, #004080 50%, #003366 100%)',
     padding: '90px 4% 90px 4%',
     display: 'flex',
     flexDirection: 'column',
@@ -640,7 +662,7 @@ const s = {
   },
   ctaCard: {
     width: '100%',
-    background: 'linear-gradient(135deg, rgba(0, 59, 122, 0.45) 0%, rgba(0, 27, 61, 0.75) 100%)',
+    background: 'linear-gradient(135deg, rgba(0, 64, 128, 0.6) 0%, rgba(0, 51, 102, 0.85) 100%)',
     border: '1px solid rgba(251, 191, 36, 0.35)',
     borderRadius: '24px',
     padding: '50px 36px',
@@ -678,7 +700,7 @@ const s = {
     maxWidth: '560px',
   },
   footer: {
-    background: '#000f24',
+    background: '#00264d',
     padding: '40px 4%',
     display: 'flex',
     flexDirection: 'column',

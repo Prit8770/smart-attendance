@@ -742,12 +742,27 @@ router.post('/update-profile', authenticateJWT, async (req, res) => {
       // Save to persistent file storage to guarantee permanence even if Supabase RLS is restricted
       setAdminOverride(updatedData);
 
-      // Also sync linked faculty table entry if it exists (id 78 or matches email)
+      // Also sync linked faculty table entry in Supabase database
       try {
-        await supabase.from('faculty').update({
-          name: updatedData.name,
-          mobile: updatedData.mobile
-        }).or(`id.eq.78,email.eq.${updatedData.email.toLowerCase()}`);
+        const cleanAdminEmail = updatedData.email.toLowerCase();
+        const { data: existingFac } = await supabase.from('faculty').select('id').or(`email.eq.${cleanAdminEmail},username.eq.${cleanAdminEmail}`).maybeSingle();
+        if (existingFac) {
+          await supabase.from('faculty').update({
+            name: updatedData.name,
+            mobile: updatedData.mobile,
+            email: cleanAdminEmail
+          }).eq('id', existingFac.id);
+        } else {
+          await supabase.from('faculty').insert([{
+            name: updatedData.name,
+            department: 'BCA',
+            mobile: updatedData.mobile,
+            username: cleanAdminEmail,
+            password: '$2a$10$0pxQ8vu0Bi/hnUQ7hW/HhOxCR.pFyVpaogs8rgL9S2W8EFITQTqTW',
+            plain_password: 'Uses Admin Account (No separate password needed)',
+            email: cleanAdminEmail
+          }]);
+        }
       } catch (e) {}
 
       const newAdminUser = {
@@ -939,16 +954,30 @@ router.get('/me', authenticateJWT, async (req, res) => {
           const p = path.join(__dirname, '../data/faculty_subjects.json');
           if (fs.existsSync(p)) {
             const map = JSON.parse(fs.readFileSync(p, 'utf8'));
-            fileSubjects = map[faculty.id] || map[faculty.employee_no] || map[String(faculty.id)] || map[String(faculty.employee_no)] || [];
+            fileSubjects = map[faculty.id] ||
+              map[String(faculty.id)] ||
+              (faculty.employee_no && map[faculty.employee_no]) ||
+              (faculty.employee_no && map[String(faculty.employee_no)]) ||
+              (faculty.email && map[faculty.email.toLowerCase()]) ||
+              (faculty.username && map[faculty.username.toLowerCase()]) ||
+              [];
           }
         } catch(e) {}
 
         const subMap = new Map();
-        if (Array.isArray(fileSubjects)) {
-          fileSubjects.forEach(s => { if (s && s.subjectName) subMap.set(String(s.subjectName).trim().toLowerCase(), s); });
-        }
-        if (Array.isArray(embeddedSubjects)) {
-          embeddedSubjects.forEach(s => { if (s && s.subjectName) subMap.set(String(s.subjectName).trim().toLowerCase(), s); });
+        const mergeSub = (s) => {
+          if (!s || (!s.subjectName && !s.name)) return;
+          const name = String(s.subjectName || s.name).trim();
+          const sem = String(s.semester || '1').replace(/\D/g, '') || '1';
+          const code = (s.code || s.subjectCode || s.subject_code || s.subCode || '').toString().trim();
+          const type = (s.type || s.subjectType || 'Theory').toString().trim();
+          const key = code ? `code_${code.toLowerCase()}_sem_${sem}_type_${type.toLowerCase()}` : `name_${name.toLowerCase()}_sem_${sem}_type_${type.toLowerCase()}`;
+          subMap.set(key, s);
+        };
+        if (Array.isArray(fileSubjects) && fileSubjects.length > 0) {
+          fileSubjects.forEach(mergeSub);
+        } else if (Array.isArray(embeddedSubjects)) {
+          embeddedSubjects.forEach(mergeSub);
         }
         const finalSubjects = Array.from(subMap.values());
         const assignedRoles = getFacultyRoles(faculty.id, faculty.email, faculty.username, faculty.employee_no);

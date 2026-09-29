@@ -109,12 +109,69 @@ const setAdminOverride = (data) => {
   } catch (e) {}
 };
 
+// Helper function to ensure Admin user is physically created/synced in Supabase faculty table
+async function ensureAdminInSupabaseFaculty(adminEmail, adminName, adminMobile) {
+  try {
+    const cleanEmail = String(adminEmail || 'admin@ljcca.edu').trim().toLowerCase();
+    const { data: existing } = await supabase
+      .from('faculty')
+      .select('*')
+      .or(`email.eq.${cleanEmail},username.eq.${cleanEmail}`)
+      .maybeSingle();
+
+    if (!existing) {
+      // Fetch admin password from admin table to keep hash consistent
+      let adminPasswordHash = '$2a$10$0pxQ8vu0Bi/hnUQ7hW/HhOxCR.pFyVpaogs8rgL9S2W8EFITQTqTW';
+      try {
+        const { data: adminRow } = await supabase.from('admin').select('password').eq('email', cleanEmail).maybeSingle();
+        if (adminRow && adminRow.password) adminPasswordHash = adminRow.password;
+      } catch (e) {}
+
+      const insertAdminObj = {
+        name: adminName || 'Administrative',
+        department: 'BCA',
+        mobile: adminMobile || '9510479002',
+        username: cleanEmail,
+        password: adminPasswordHash,
+        plain_password: 'Uses Admin Account (No separate password needed)',
+        email: cleanEmail
+      };
+
+      const { data: inserted, error } = await supabase
+        .from('faculty')
+        .insert([insertAdminObj])
+        .select()
+        .single();
+
+      if (error) {
+        console.warn('Could not insert admin into faculty table:', error.message);
+      } else {
+        console.log('Successfully inserted Admin into Supabase faculty table with ID:', inserted.id);
+        return inserted;
+      }
+    } else {
+      // Sync existing admin record in faculty table if name or mobile changed
+      const { data: updated } = await supabase
+        .from('faculty')
+        .update({
+          name: adminName || existing.name,
+          mobile: adminMobile || existing.mobile,
+          email: cleanEmail
+        })
+        .eq('id', existing.id)
+        .select()
+        .single();
+      return updated || existing;
+    }
+  } catch (err) {
+    console.warn('Error in ensureAdminInSupabaseFaculty:', err.message);
+  }
+  return null;
+}
+
 // GET all faculty
 router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
   try {
-    const { data: faculty, error } = await supabase.from('faculty').select('*');
-    if (error) throw error;
-
     const subjectsMap = loadFacultySubjectsMap();
     const rolesMap = loadFacultyRolesMap();
     const override = getAdminOverride();
@@ -122,6 +179,12 @@ router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
     const adminEmail = (override?.email || 'admin@ljcca.edu').toLowerCase();
     const adminName = override?.name || 'Administrative';
     const adminMobile = override?.mobile || '9510479002';
+
+    // Ensure Admin is physically synced in Supabase faculty table
+    await ensureAdminInSupabaseFaculty(adminEmail, adminName, adminMobile);
+
+    const { data: faculty, error } = await supabase.from('faculty').select('*');
+    if (error) throw error;
 
     const formatted = (faculty || []).map(f => {
       let deptName = f.department || '';
@@ -136,39 +199,51 @@ router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
         } catch (e) {}
       }
 
-      const fileSubjects = subjectsMap[f.id] || subjectsMap[f.employee_no] || subjectsMap[String(f.id)] || subjectsMap[String(f.employee_no)] || [];
+      const fileSubjects = subjectsMap[f.id] ||
+        subjectsMap[String(f.id)] ||
+        (f.employee_no && subjectsMap[f.employee_no]) ||
+        (f.employee_no && subjectsMap[String(f.employee_no)]) ||
+        (f.email && subjectsMap[f.email.toLowerCase()]) ||
+        (f.username && subjectsMap[f.username.toLowerCase()]) ||
+        [];
       const subMap = new Map();
       const mergeSub = (s) => {
         if (!s || (!s.subjectName && !s.name)) return;
         const name = String(s.subjectName || s.name).trim();
         const sem = String(s.semester || '1').replace(/\D/g, '') || '1';
-        const key = `${name.toLowerCase()}_sem_${sem}`;
+        const code = (s.code || s.subjectCode || s.subject_code || s.subCode || '').toString().trim();
+        const shortName = (s.shortName || s.shortCode || '').toString().trim();
+        const type = (s.type || s.subjectType || 'Theory').toString().trim();
+
+        const codeKey = code ? code.toLowerCase() : '';
+        const typeKey = type ? type.toLowerCase() : 'theory';
+        const key = codeKey 
+          ? `code_${codeKey}_sem_${sem}_type_${typeKey}` 
+          : `name_${name.toLowerCase()}_sem_${sem}_type_${typeKey}`;
+
         const existing = subMap.get(key) || {};
-        const mergedCode = (s.code || s.subjectCode || s.subject_code || s.subCode || existing.code || existing.subjectCode || '').toString().trim();
-        const mergedShort = (s.shortName || s.shortCode || existing.shortName || '').toString().trim();
-        const mergedType = (s.type || s.subjectType || existing.type || 'Theory').toString().trim();
         subMap.set(key, {
           ...existing,
           ...s,
           subjectName: name,
-          shortName: mergedShort,
-          code: mergedCode,
-          subjectCode: mergedCode,
+          shortName: shortName || existing.shortName || '',
+          code: code || existing.code || '',
+          subjectCode: code || existing.subjectCode || '',
           semester: sem,
-          type: mergedType
+          type: type || existing.type || 'Theory'
         });
       };
-      const hasFileRecord = subjectsMap[f.id] !== undefined || subjectsMap[String(f.id)] !== undefined || (f.employee_no && subjectsMap[f.employee_no] !== undefined) || (f.email && subjectsMap[f.email.toLowerCase()] !== undefined);
-      if (hasFileRecord) {
-        if (Array.isArray(fileSubjects)) fileSubjects.forEach(mergeSub);
-      } else {
-        if (Array.isArray(embeddedSubjects)) embeddedSubjects.forEach(mergeSub);
+      
+      if (Array.isArray(fileSubjects) && fileSubjects.length > 0) {
+        fileSubjects.forEach(mergeSub);
+      } else if (Array.isArray(embeddedSubjects) && embeddedSubjects.length > 0) {
+        embeddedSubjects.forEach(mergeSub);
       }
       const finalSubjects = Array.from(subMap.values());
       const fRoles = rolesMap[f.id] || rolesMap[String(f.id)] || (f.email ? rolesMap[f.email.toLowerCase()] : null) || (f.username ? rolesMap[f.username.toLowerCase()] : null) || (f.employee_no ? rolesMap[f.employee_no] : null) || (f.role === 'admin' ? ['admin', 'faculty'] : ['faculty']);
 
-      const isThisAdmin = (f.email && f.email.toLowerCase() === adminEmail) || (f.username && f.username.toLowerCase() === adminEmail) || String(f.id) === '78';
-      const assignedAdminRoles = rolesMap['admin_primary'] || rolesMap[adminEmail] || rolesMap['78'] || (Array.isArray(fRoles) ? fRoles : ['admin', 'faculty']);
+      const isThisAdmin = (f.email && f.email.toLowerCase() === adminEmail) || (f.username && f.username.toLowerCase() === adminEmail) || String(f.id) === '78' || String(f.id) === '86';
+      const assignedAdminRoles = rolesMap['admin_primary'] || rolesMap[adminEmail] || rolesMap['78'] || rolesMap['86'] || (Array.isArray(fRoles) ? fRoles : ['admin', 'faculty']);
 
       return {
         ...f,
@@ -182,29 +257,8 @@ router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
       };
     });
 
-    // Auto-include Admin as a primary faculty member so they automatically appear in faculty options
-    const hasAdminInFaculty = formatted.some(f => f.isPrimaryAdmin || (f.email && f.email.toLowerCase() === adminEmail) || (f.username && f.username.toLowerCase() === adminEmail));
-    if (!hasAdminInFaculty) {
-      const adminSubs = subjectsMap['admin_primary'] || subjectsMap[adminEmail] || [];
-      const assignedAdminRoles = rolesMap['admin_primary'] || rolesMap[adminEmail] || ['admin', 'faculty'];
-      const adminFacultyRecord = {
-        id: 'admin_primary',
-        employee_no: 'ADMIN-01',
-        name: adminName,
-        email: adminEmail,
-        department: 'BCA',
-        mobile: adminMobile,
-        username: adminEmail,
-        roles: assignedAdminRoles,
-        isPrimaryAdmin: true,
-        plain_password: 'Uses Admin Account (No separate password needed)',
-        subjects: Array.isArray(adminSubs) ? adminSubs : []
-      };
-      formatted.unshift(adminFacultyRecord);
-    } else {
-      // Sort primary admin to the very top
-      formatted.sort((a, b) => (b.isPrimaryAdmin ? 1 : 0) - (a.isPrimaryAdmin ? 1 : 0));
-    }
+    // Sort primary admin to the very top
+    formatted.sort((a, b) => (b.isPrimaryAdmin ? 1 : 0) - (a.isPrimaryAdmin ? 1 : 0));
 
     res.json(formatted);
   } catch (err) {
@@ -254,28 +308,52 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
   const rawPassword = (customPassword && customPassword.trim() !== '') ? customPassword.trim() : generatePassword();
   const hashedPassword = bcrypt.hashSync(rawPassword, 10);
 
-  // Encode subjects inside department string as DB fallback
+  // Store clean department string in DB column (avoid DB column truncation since department is VARCHAR(255))
   const cleanDeptName = String(department).split('||SUB:')[0].trim();
-  const encodedDepartment = cleanSubjects.length > 0 
-    ? `${cleanDeptName}||SUB:${JSON.stringify(cleanSubjects)}||`
-    : cleanDeptName;
+  const encodedDepartment = cleanDeptName;
 
   try {
-    // Check if email or username already exists
-    const { data: existing } = await supabase.from('faculty')
-      .select('id')
-      .or(`email.eq.${cleanEmail},username.eq.${username}`)
-      .maybeSingle();
+    // Fetch all existing faculty to perform department-scoped validation
+    const { data: allFac } = await supabase.from('faculty').select('*');
+    const sameDeptFac = (allFac || []).filter(f => {
+      const fDept = String(f.department || '').split('||SUB:')[0].trim().toLowerCase();
+      return fDept === cleanDeptName.toLowerCase();
+    });
 
-    if (existing) {
-      return res.status(400).json({ error: 'Faculty with this Email ID already exists' });
+    const isEmailDupInSameDept = sameDeptFac.some(f => {
+      const fEmail = String(f.email || f.username || '').trim().toLowerCase();
+      return fEmail && fEmail === cleanEmail.toLowerCase();
+    });
+
+    if (isEmailDupInSameDept) {
+      return res.status(400).json({ error: `Faculty with Email ID "${cleanEmail}" already exists in ${cleanDeptName} department.` });
+    }
+
+    if (mobile && String(mobile).trim()) {
+      const cleanMob = String(mobile).trim();
+      const isMobileDupInSameDept = sameDeptFac.some(f => {
+        const fMob = String(f.mobile || '').trim();
+        return fMob && fMob === cleanMob;
+      });
+
+      if (isMobileDupInSameDept) {
+        return res.status(400).json({ error: `Faculty with Mobile Number "${cleanMob}" already exists in ${cleanDeptName} department.` });
+      }
+    }
+
+    // Determine unique username for DB column to avoid unique index violation when email exists in another dept
+    let finalUsername = username;
+    const isUsernameTaken = (allFac || []).some(f => String(f.username || '').toLowerCase() === username.toLowerCase());
+    if (isUsernameTaken) {
+      const deptSlug = cleanDeptName.toLowerCase().replace(/[^a-z0-9]/g, '');
+      finalUsername = `${cleanEmail.toLowerCase()}_${deptSlug}_${Math.floor(100 + Math.random() * 900)}`;
     }
 
     let insertObj = {
       name,
       department: encodedDepartment,
       mobile,
-      username,
+      username: finalUsername,
       password: hashedPassword,
       plain_password: rawPassword,
       email: cleanEmail
@@ -296,14 +374,14 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: error.message || 'Failed to add faculty member' });
     }
 
-    // Save subjects in persistent map
+    // Save subjects in persistent map under all alias keys
     const map = loadFacultySubjectsMap();
-    if (result && result.id) map[result.id] = cleanSubjects;
-    if (result && result.id) map[String(result.id)] = cleanSubjects;
-    if (employee_no) {
-      map[employee_no] = cleanSubjects;
-      map[String(employee_no)] = cleanSubjects;
-    }
+    const aliasKeys = [];
+    if (result && result.id) aliasKeys.push(result.id, String(result.id));
+    if (employee_no) aliasKeys.push(employee_no, String(employee_no));
+    if (cleanEmail) aliasKeys.push(cleanEmail.toLowerCase());
+    if (username) aliasKeys.push(username.toLowerCase());
+    aliasKeys.forEach(k => { map[k] = cleanSubjects; });
     saveFacultySubjectsMap(map);
 
     // Save roles in persistent map
@@ -368,20 +446,15 @@ router.put('/my-subjects', authenticateJWT, async (req, res) => {
     }
 
     const cleanDeptName = String(faculty.department || 'BCA').split('||SUB:')[0].trim();
-    const encodedDepartment = cleanSubjects.length > 0 
-      ? `${cleanDeptName}||SUB:${JSON.stringify(cleanSubjects)}||`
-      : cleanDeptName;
+    await supabase.from('faculty').update({ department: cleanDeptName }).eq('id', facultyId);
 
-    await supabase.from('faculty').update({ department: encodedDepartment }).eq('id', facultyId);
-
-    // Save in persistent JSON map
+    // Save in persistent JSON map for all alias keys
     const map = loadFacultySubjectsMap();
-    map[facultyId] = cleanSubjects;
-    map[String(facultyId)] = cleanSubjects;
-    if (faculty.employee_no) {
-      map[faculty.employee_no] = cleanSubjects;
-      map[String(faculty.employee_no)] = cleanSubjects;
-    }
+    const aliasKeys = [facultyId, String(facultyId)];
+    if (faculty.employee_no) aliasKeys.push(faculty.employee_no, String(faculty.employee_no));
+    if (faculty.email) aliasKeys.push(faculty.email.toLowerCase());
+    if (faculty.username) aliasKeys.push(faculty.username.toLowerCase());
+    aliasKeys.forEach(k => { map[k] = cleanSubjects; });
     saveFacultySubjectsMap(map);
 
     // Emit real-time synchronization event
@@ -446,17 +519,8 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
     rolesMap['78'] = finalRoles;
     saveFacultyRolesMap(rolesMap);
 
-    // Also update row in Supabase faculty table (id 78) if it exists
-    const encodedAdminDept = cleanSubjects.length > 0 
-      ? `${cleanDeptName}||SUB:${JSON.stringify(cleanSubjects)}||`
-      : cleanDeptName;
-    try {
-      await supabase.from('faculty').update({
-        name: override.name || 'Administrative',
-        department: encodedAdminDept,
-        mobile: override.mobile || '9510479002'
-      }).or(`id.eq.78,email.eq.${adminEmail}`);
-    } catch(e) {}
+    // Also update/upsert row in Supabase faculty table
+    await ensureAdminInSupabaseFaculty(adminEmail, override.name || 'Administrative', override.mobile || '9510479002');
 
     // Emit real-time synchronization event
     notifyChange('FACULTY_CHANGED', { action: 'admin_faculty_update' });
@@ -502,14 +566,42 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
     : (subjects === undefined ? existingSubs : []);
 
   const cleanDeptName = String(department).split('||SUB:')[0].trim();
-  const encodedDepartment = cleanSubjects.length > 0 
-    ? `${cleanDeptName}||SUB:${JSON.stringify(cleanSubjects)}||`
-    : cleanDeptName;
+  const encodedDepartment = cleanDeptName;
 
   try {
     const { data: faculty } = await supabase.from('faculty').select('*').eq('id', id).maybeSingle();
     if (!faculty) {
       return res.status(404).json({ error: 'Faculty member not found' });
+    }
+
+    // Check duplicate Email or Mobile in the SAME Department (excluding current faculty id)
+    const { data: allFac } = await supabase.from('faculty').select('*');
+    const sameDeptFac = (allFac || []).filter(f => {
+      if (String(f.id) === String(id)) return false;
+      const fDept = String(f.department || '').split('||SUB:')[0].trim().toLowerCase();
+      return fDept === cleanDeptName.toLowerCase();
+    });
+
+    if (email && String(email).trim()) {
+      const cleanEmail = String(email).trim().toLowerCase();
+      const isEmailDup = sameDeptFac.some(f => {
+        const fEmail = String(f.email || f.username || '').trim().toLowerCase();
+        return fEmail && fEmail === cleanEmail;
+      });
+      if (isEmailDup) {
+        return res.status(400).json({ error: `Faculty with Email ID "${email}" already exists in ${cleanDeptName} department.` });
+      }
+    }
+
+    if (mobile && String(mobile).trim()) {
+      const cleanMob = String(mobile).trim();
+      const isMobileDup = sameDeptFac.some(f => {
+        const fMob = String(f.mobile || '').trim();
+        return fMob && fMob === cleanMob;
+      });
+      if (isMobileDup) {
+        return res.status(400).json({ error: `Faculty with Mobile Number "${cleanMob}" already exists in ${cleanDeptName} department.` });
+      }
     }
 
     let updateObj = { name, department: encodedDepartment, mobile };
@@ -546,14 +638,14 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: error.message || 'Failed to update faculty member' });
     }
 
-    // Save subjects in persistent map
+    // Save subjects in persistent map under all alias keys
     const map = loadFacultySubjectsMap();
-    map[id] = cleanSubjects;
-    map[String(id)] = cleanSubjects;
-    if (faculty.employee_no) {
-      map[faculty.employee_no] = cleanSubjects;
-      map[String(faculty.employee_no)] = cleanSubjects;
-    }
+    const aliasKeys = [id, String(id)];
+    if (faculty.employee_no) aliasKeys.push(faculty.employee_no, String(faculty.employee_no));
+    if (faculty.email) aliasKeys.push(faculty.email.toLowerCase());
+    if (email && String(email).trim()) aliasKeys.push(String(email).trim().toLowerCase());
+    if (faculty.username) aliasKeys.push(faculty.username.toLowerCase());
+    aliasKeys.forEach(k => { map[k] = cleanSubjects; });
     saveFacultySubjectsMap(map);
 
     // Save roles in persistent map if provided
@@ -684,14 +776,12 @@ router.post('/:id/delete-subject', authenticateJWT, requireAdmin, async (req, re
     // Update Supabase department column
     if (isAdminTarget) {
       const cleanDept = 'BCA';
-      const encodedDept = remainingSubs.length > 0 ? `${cleanDept}||SUB:${JSON.stringify(remainingSubs)}||` : cleanDept;
       try {
-        await supabase.from('faculty').update({ department: encodedDept }).or(`id.eq.78,email.eq.${adminEmail}`);
+        await supabase.from('faculty').update({ department: cleanDept }).or(`id.eq.78,email.eq.${adminEmail}`);
       } catch (e) {}
     } else if (facultyRow) {
       const cleanDept = String(facultyRow.department || 'BCA').split('||SUB:')[0].trim();
-      const encodedDept = remainingSubs.length > 0 ? `${cleanDept}||SUB:${JSON.stringify(remainingSubs)}||` : cleanDept;
-      await supabase.from('faculty').update({ department: encodedDept }).eq('id', id);
+      await supabase.from('faculty').update({ department: cleanDept }).eq('id', id);
     }
 
     notifyChange('FACULTY_CHANGED', { action: 'delete_subject', facultyId: id });
@@ -846,30 +936,42 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
         subjectsToSave = fac.subjects;
       }
 
-      const encodedDept = `${department}||SUB:${JSON.stringify(subjectsToSave)}||`;
+      const cleanDept = department ? String(department).split('||SUB:')[0].trim() : 'BCA';
+      const encodedDept = cleanDept;
 
       const employee_no = String(fac.employee_no || fac.employeeNo || `EMP${String(Date.now()).slice(-6)}${Math.floor(100 + Math.random() * 900)}`).trim();
 
-      const { data: existing } = await supabase.from('faculty').select('id').eq('email', email).maybeSingle();
+      const { data: deptMatches } = await supabase.from('faculty').select('*').eq('email', email);
+      const existingInSameDept = (deptMatches || []).find(f => {
+        const fDept = String(f.department || '').split('||SUB:')[0].trim().toLowerCase();
+        return fDept === department.trim().toLowerCase();
+      });
+
+      let finalUsername = email;
+      const { data: usernameMatch } = await supabase.from('faculty').select('id').eq('username', email).maybeSingle();
+      if (usernameMatch && (!existingInSameDept || usernameMatch.id !== existingInSameDept.id)) {
+        const deptSlug = department.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+        finalUsername = `${email.toLowerCase()}_${deptSlug}_${Math.floor(100 + Math.random() * 900)}`;
+      }
 
       const payload = {
         name,
         email,
         department: encodedDept,
         mobile,
-        username: email,
+        username: finalUsername,
         password: hashedPassword,
         plain_password
       };
 
-      if (existing) {
-        await supabase.from('faculty').update(payload).eq('id', existing.id);
-        subjectsMap[existing.id] = subjectsToSave;
+      if (existingInSameDept) {
+        await supabase.from('faculty').update(payload).eq('id', existingInSameDept.id);
+        subjectsMap[existingInSameDept.id] = subjectsToSave;
       } else {
         const { data: newFac, error: insErr } = await supabase.from('faculty').insert([payload]).select().single();
 
         if (insErr) {
-          errors.push(`Email ${email}: ${insErr.message}`);
+          errors.push(`Email ${email} (${department}): ${insErr.message}`);
           continue;
         }
 

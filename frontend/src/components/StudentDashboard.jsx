@@ -1875,7 +1875,15 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
       {/* Main Right Workspace Wrapper */}
       <div className="admin-main-wrapper content-light student-main-wrapper">
         {/* Top Header Banner Card */}
-        <header className="admin-top-header-banner student-top-banner" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <header
+          className="admin-top-header-banner student-top-banner"
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            background: 'linear-gradient(90deg, #003366 0%, #004080 50%, #003366 100%)'
+          }}
+        >
           <div className="admin-banner-content">
             <div className="admin-header-title-row">
               <button 

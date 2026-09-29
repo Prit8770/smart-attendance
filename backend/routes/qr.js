@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
+const { notifyChange } = require('../syncEmitter');
 
 const sessionMetaPath = path.join(__dirname, '../data/session_meta.json');
 function saveLocalSessionMeta(type, id, subject, division) {
@@ -27,7 +28,7 @@ function saveLocalSessionMeta(type, id, subject, division) {
 
 // Middleware to restrict to admins or faculty
 const requireAdminOrFaculty = (req, res, next) => {
-  if (req.user && (req.user.role === 'admin' || req.user.role === 'faculty')) {
+  if (req.user && (req.user.role === 'admin' || req.user.role === 'faculty' || req.user.isFacultyUser || req.user.hasAdminAccess || req.user.hasFacultyAccess)) {
     next();
   } else {
     res.status(403).json({ error: 'Access denied. Admins or Faculty only' });
@@ -36,7 +37,7 @@ const requireAdminOrFaculty = (req, res, next) => {
 
 // Middleware to restrict strictly to faculty (or admin acting as faculty)
 const requireFacultyOnly = (req, res, next) => {
-  if (req.user && (req.user.role === 'faculty' || req.user.role === 'admin')) {
+  if (req.user && (req.user.role === 'faculty' || req.user.role === 'admin' || req.user.isFacultyUser || req.user.hasFacultyAccess || req.user.hasAdminAccess)) {
     next();
   } else {
     res.status(403).json({ error: 'Access denied. Faculty only can generate QR codes.' });
@@ -59,6 +60,37 @@ router.get('/settings', authenticateJWT, async (req, res) => {
   } catch (err) {
     console.error('Error fetching settings:', err);
     res.status(500).json({ error: 'Failed to fetch settings' });
+  }
+});
+
+// GET QR daily session limit (Admin only)
+router.get('/limit', authenticateJWT, async (req, res) => {
+  try {
+    const { data: limitSetting } = await supabase.from('settings').select('value').eq('key', 'qr_daily_limit').maybeSingle();
+    const limit = limitSetting ? parseInt(limitSetting.value) || 5 : 5;
+    res.json({ limit });
+  } catch (err) {
+    console.error('Error fetching QR limit:', err);
+    res.status(500).json({ error: 'Failed to fetch QR limit' });
+  }
+});
+
+// POST set QR daily session limit (Admin only)
+router.post('/limit', authenticateJWT, async (req, res) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Access denied. Admins only.' });
+  }
+  const { limit } = req.body;
+  const limitVal = parseInt(limit);
+  if (isNaN(limitVal) || limitVal < 1 || limitVal > 100) {
+    return res.status(400).json({ error: 'Limit must be a number between 1 and 100.' });
+  }
+  try {
+    await supabase.from('settings').upsert({ key: 'qr_daily_limit', value: String(limitVal) });
+    res.json({ success: true, limit: limitVal });
+  } catch (err) {
+    console.error('Error setting QR limit:', err);
+    res.status(500).json({ error: 'Failed to set QR limit' });
   }
 });
 
@@ -127,13 +159,16 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
       return res.status(400).json({ error: 'No valid faculty account found to associate with this QR session.' });
     }
 
-    // 2. Check if this specific faculty member has already generated 5 sessions today
+    // 2. Get daily limit from settings, then check if this faculty has reached it today
+    const { data: limitSetting } = await supabase.from('settings').select('value').eq('key', 'qr_daily_limit').maybeSingle();
+    const dailyLimit = limitSetting ? (parseInt(limitSetting.value) || 5) : 5;
+
     const { count } = await supabase.from('qr_sessions').select('*', { count: 'exact', head: true })
       .eq('created_by_faculty_id', facultyId)
       .eq('date', today);
 
-    if (count !== null && count >= 5) {
-      return res.status(403).json({ error: 'Daily limit reached. You can generate a maximum of 5 QR sessions per day.' });
+    if (count !== null && count >= dailyLimit) {
+      return res.status(403).json({ error: `Daily limit reached. You can generate a maximum of ${dailyLimit} QR session${dailyLimit === 1 ? '' : 's'} per day.` });
     }
 
     // Generate 8 random 16-character hex tokens (120 seconds valid, changed every 15 seconds)
@@ -177,6 +212,15 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
     if (result && result.id) {
       saveLocalSessionMeta('qr', result.id, subject, division);
     }
+
+    try {
+      const attendanceRouter = require('./attendance');
+      if (attendanceRouter && typeof attendanceRouter.invalidateMatrixCache === 'function') {
+        attendanceRouter.invalidateMatrixCache();
+      }
+    } catch (e) {}
+
+    notifyChange('DATA_CHANGED', { entity: 'qr_session', action: 'start', sessionId: result?.id });
 
     res.status(201).json({
       message: 'QR session started successfully',
@@ -258,13 +302,21 @@ router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) =>
       .order('id', { ascending: false });
     if (req.user.role === 'faculty') {
       const activeFacId = req.user.faculty_id || req.user.id;
-      sessionsQuery = sessionsQuery.or(`created_by_faculty_id.eq.${req.user.id},created_by_faculty_id.eq.${activeFacId}`);
+      const resolvedFacId = await resolveValidFacultyId(req.user);
+      const facIdSet = new Set([String(req.user.id), String(activeFacId), String(resolvedFacId)].filter(Boolean));
+      const orClause = Array.from(facIdSet).map(id => `created_by_faculty_id.eq.${id}`).join(',');
+      sessionsQuery = sessionsQuery.or(orClause);
     }
     const { data: sessions, error } = await sessionsQuery;
 
     if (error) throw error;
 
     const safeSessions = sessions || [];
+
+    let localMeta = {};
+    if (fs.existsSync(sessionMetaPath)) {
+      try { localMeta = JSON.parse(fs.readFileSync(sessionMetaPath, 'utf8')) || {}; } catch(e) {}
+    }
 
     // Get count of checkins for each session
     const sessionsWithCount = await Promise.all(safeSessions.map(async (sess) => {
@@ -274,14 +326,16 @@ router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) =>
         .eq('status', 'Success');
 
       const facultyName = facMap.get(String(sess.created_by_faculty_id)) || 'Faculty';
+      const meta = localMeta[`qr_${sess.id}`] || {};
 
       return {
         id: sess.id,
         created_at: sess.created_at,
         expires_at: sess.expires_at,
         date: sess.date,
-        semester: sess.semester || null,
-        division: sess.division || null,
+        semester: sess.semester || meta.semester || null,
+        division: sess.division || meta.division || null,
+        subject: sess.subject || meta.subject || null,
         created_by_faculty_id: sess.created_by_faculty_id,
         faculty_name: facultyName,
         presentCount: count || 0
@@ -304,6 +358,7 @@ router.post('/end', authenticateJWT, requireAdminOrFaculty, async (req, res) => 
       endQuery = endQuery.eq('created_by_faculty_id', req.user.id);
     }
     await endQuery;
+    notifyChange('DATA_CHANGED', { entity: 'qr_session', action: 'end' });
     res.json({ success: true, message: 'QR session ended successfully' });
   } catch (err) {
     console.error('Error ending QR session:', err);
@@ -317,8 +372,27 @@ router.delete('/clear-history', authenticateJWT, async (req, res) => {
     return res.status(403).json({ error: 'Access denied. Admins only.' });
   }
   try {
-    await supabase.from('qr_sessions').delete().neq('id', 0);
-    res.json({ success: true, message: 'QR session history cleared successfully' });
+    // 1. Unlink attendance records referencing qr_sessions or otp if foreign keys exist
+    try {
+      await supabase.from('attendance').update({ qr_session_id: null, otp_id: null }).not('id', 'is', null);
+    } catch (e) {
+      console.warn('Warning unlinking attendance records before clearing sessions:', e?.message);
+    }
+
+    // 2. Delete all records from qr_sessions
+    const { error: qrErr } = await supabase.from('qr_sessions').delete().not('id', 'is', null);
+    if (qrErr) {
+      console.error('Error deleting from qr_sessions:', qrErr);
+    }
+
+    // 3. Delete all records from otp
+    const { error: otpErr } = await supabase.from('otp').delete().not('id', 'is', null);
+    if (otpErr) {
+      console.error('Error deleting from otp:', otpErr);
+    }
+
+    notifyChange('DATA_CHANGED', { entity: 'qr_session', action: 'clear' });
+    res.json({ success: true, message: 'QR and OTP session history cleared successfully' });
   } catch (err) {
     console.error('Error clearing QR session history:', err);
     res.status(500).json({ error: 'Failed to clear session history' });

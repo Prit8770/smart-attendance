@@ -50,20 +50,23 @@ export default function FacultyDashboard({
   canSwitchRole = false,
   onUpdateUser
 }) {
-  // Automatically enforce Dark Theme for Faculty Panel
-  useEffect(() => {
-    document.body.classList.remove('light-theme');
-  }, []);
+
 
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'otp', 'reports', 'settings', 'manual'
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(() => window.innerWidth <= 900);
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const roleMenuRef = useRef(null);
+  const profileCardRef = useRef(null);
 
   useEffect(() => {
     const handleOutsideClick = (e) => {
-      if (roleMenuRef.current && !roleMenuRef.current.contains(e.target)) {
+      if (
+        roleMenuRef.current &&
+        !roleMenuRef.current.contains(e.target) &&
+        profileCardRef.current &&
+        !profileCardRef.current.contains(e.target)
+      ) {
         setRoleMenuOpen(false);
       }
     };
@@ -121,6 +124,7 @@ export default function FacultyDashboard({
   const [activeOtpDetails, setActiveOtpDetails] = useState(null);
   const [otpCountdown, setOtpCountdown] = useState(0);
   const [qrGenerationEnabled, setQrGenerationEnabled] = useState(true);
+  const [qrDailyLimit, setQrDailyLimit] = useState(5);
   const [dashModalSem, setDashModalSem] = useState('');
   const [liveFeedSemFilter, setLiveFeedSemFilter] = useState('');
   const [selectedSemFolder, setSelectedSemFolder] = useState(null);
@@ -154,6 +158,12 @@ export default function FacultyDashboard({
   // Manual Attendance state
   const [manualSessionFolder, setManualSessionFolder] = useState(null); // null | 1 | 2 | 3 | 4 | 5
   const [manualDate, setManualDate] = useState(getLocalDateStr(new Date()));
+  const manualDateRef = useRef(manualDate);
+  const pendingUnmarksRef = useRef([]);
+  const lastSelectedSessionRef = useRef(null);
+  useEffect(() => {
+    manualDateRef.current = manualDate;
+  }, [manualDate]);
   const [manualFolderSem, setManualFolderSem] = useState('');
   const [manualFolderDiv, setManualFolderDiv] = useState('ALL');
   const [manualDivFilter, setManualDivFilter] = useState('ALL');
@@ -278,12 +288,17 @@ export default function FacultyDashboard({
 
   const fetchQrSettings = async () => {
     try {
-      const res = await fetch('/api/qr/settings', {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
+      const [resSettings, resLimit] = await Promise.all([
+        fetch('/api/qr/settings', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/qr/limit', { headers: { Authorization: `Bearer ${token}` } })
+      ]);
+      if (resSettings.ok) {
+        const data = await resSettings.json();
         setQrGenerationEnabled(data.enabled);
+      }
+      if (resLimit.ok) {
+        const data = await resLimit.json();
+        setQrDailyLimit(data.limit || 5);
       }
     } catch (err) {
       console.error('Error fetching QR settings:', err);
@@ -392,6 +407,7 @@ export default function FacultyDashboard({
     if (token) {
       fetchMyProfile();
       fetchAllLeaves();
+      fetchQrSettings();
     }
   }, [token]);
 
@@ -611,24 +627,75 @@ export default function FacultyDashboard({
 
   // Fetch sessions started by this faculty on target date
   // Fetch attendance for ALL students (for manual attendance tab)
-  const fetchTodayAllAttendance = async (targetDate = manualDate) => {
+  const fetchTodayAllAttendance = async (targetDate) => {
     try {
-      const qDate = targetDate || getLocalDateStr(new Date());
+      const qDate = targetDate || manualDateRef.current || getLocalDateStr(new Date());
       const res = await fetch(`/api/attendance/reports?date=${qDate}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
         const data = await res.json();
-        setManualTodayLogs(Array.isArray(data) ? data : (data.logs || data.reports || []));
+        const incomingLogs = Array.isArray(data) ? data : (data.logs || data.reports || []);
+
+        // Filter out server logs that match pending unmarks (optimistically set to absent)
+        const now = Date.now();
+        pendingUnmarksRef.current = (pendingUnmarksRef.current || []).filter(u => now - u.timestamp < 10000);
+
+        const safeIncoming = incomingLogs.filter(sl => {
+          const isPendingUnmark = (pendingUnmarksRef.current || []).some(pu => {
+            const matchStudent = (sl.student_id && String(sl.student_id) === String(pu.student_id)) ||
+              (sl.enrollment_no && pu.enrollment_no && String(sl.enrollment_no).trim().toLowerCase() === String(pu.enrollment_no).trim().toLowerCase());
+            if (!matchStudent) return false;
+            if (pu.qr_session_id && String(sl.qr_session_id) === String(pu.qr_session_id)) return true;
+            if (pu.otp_id && String(sl.otp_id) === String(pu.otp_id)) return true;
+            if (!pu.qr_session_id && !pu.otp_id && sl.device_id === 'Manual') return true;
+            return false;
+          });
+          return !isPendingUnmark;
+        });
+
+        setManualTodayLogs(prev => {
+          const safePrev = Array.isArray(prev) ? prev : [];
+          
+          const getLogKey = (l) => {
+            const sId = String(l.student_id || l.enrollment_no || '').trim().toLowerCase();
+            const qId = l.qr_session_id ? `qr_${l.qr_session_id}` : '';
+            const oId = l.otp_id ? `otp_${l.otp_id}` : '';
+            const dev = l.device_id || '';
+            return `${sId}_${qId}_${oId}_${dev}`;
+          };
+
+          const incomingKeys = new Set(safeIncoming.map(getLogKey));
+
+          const retainedPrev = safePrev.filter(pl => {
+            const isPendingUnmark = (pendingUnmarksRef.current || []).some(pu => {
+              const matchStudent = (pl.student_id && String(pl.student_id) === String(pu.student_id)) ||
+                (pl.enrollment_no && pu.enrollment_no && String(pl.enrollment_no).trim().toLowerCase() === String(pu.enrollment_no).trim().toLowerCase());
+              if (!matchStudent) return false;
+              if (pu.qr_session_id && String(pl.qr_session_id) === String(pu.qr_session_id)) return true;
+              if (pu.otp_id && String(pl.otp_id) === String(pu.otp_id)) return true;
+              if (!pu.qr_session_id && !pu.otp_id && pl.device_id === 'Manual') return true;
+              return false;
+            });
+            if (isPendingUnmark) return false;
+
+            const key = getLogKey(pl);
+            if (incomingKeys.has(key)) return false;
+
+            return true;
+          });
+
+          return [...safeIncoming, ...retainedPrev];
+        });
       }
     } catch (err) {
       console.error('Error fetching attendance for manual tab:', err);
     }
   };
 
-  const fetchTodaySessions = async (targetDate = manualDate) => {
+  const fetchTodaySessions = async (targetDate) => {
     try {
-      const qDate = targetDate || getLocalDateStr(new Date());
+      const qDate = targetDate || manualDateRef.current || getLocalDateStr(new Date());
       const [qrRes, otpRes] = await Promise.all([
         fetch(`/api/qr/today?date=${qDate}`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`/api/otp/today?date=${qDate}`, { headers: { Authorization: `Bearer ${token}` } })
@@ -768,6 +835,13 @@ export default function FacultyDashboard({
   const handleManualMark = async (student, session) => {
     setManualActionMsg({ id: null, text: '', type: '' });
     
+    // Clear any pending unmarks for this student
+    pendingUnmarksRef.current = (pendingUnmarksRef.current || []).filter(u => {
+      const matchStudent = (u.student_id && String(u.student_id) === String(student.id)) ||
+        (u.enrollment_no && student.enrollment_no && String(u.enrollment_no).trim().toLowerCase() === String(student.enrollment_no).trim().toLowerCase());
+      return !matchStudent;
+    });
+
     const tempId = `temp_${Date.now()}_${student.id}`;
     const optimisticRecord = {
       id: tempId,
@@ -804,8 +878,7 @@ export default function FacultyDashboard({
       });
       const data = await res.json();
       if (res.ok) {
-        fetchTodayAllAttendance(manualDate);
-        fetchLiveLogs();
+        fetchTodayAllAttendance(manualDateRef.current);
         fetchStats();
       } else {
         setManualTodayLogs(prev => (Array.isArray(prev) ? prev : []).filter(l => l.id !== tempId));
@@ -820,6 +893,15 @@ export default function FacultyDashboard({
   // Undo manual attendance (Mark Absent) for a specific session (Instant 0ms Optimistic Update)
   const handleManualUnmark = async (student, session) => {
     setManualActionMsg({ id: null, text: '', type: '' });
+
+    const pendingUnmarkObj = {
+      student_id: student.id,
+      enrollment_no: student.enrollment_no,
+      qr_session_id: session?.qr_session_id || null,
+      otp_id: session?.otp_id || null,
+      timestamp: Date.now()
+    };
+    pendingUnmarksRef.current.push(pendingUnmarkObj);
 
     let removedLogs = [];
     setManualTodayLogs(prev => {
@@ -852,14 +934,15 @@ export default function FacultyDashboard({
       });
       const data = await res.json();
       if (res.ok) {
-        fetchTodayAllAttendance(manualDate);
-        fetchLiveLogs();
+        fetchTodayAllAttendance(manualDateRef.current);
         fetchStats();
       } else {
+        pendingUnmarksRef.current = pendingUnmarksRef.current.filter(u => u !== pendingUnmarkObj);
         setManualTodayLogs(prev => [...(Array.isArray(prev) ? prev : []), ...removedLogs]);
         setManualActionMsg({ id: student.id, text: data.error || 'Failed to undo', type: 'error' });
       }
     } catch (err) {
+      pendingUnmarksRef.current = pendingUnmarksRef.current.filter(u => u !== pendingUnmarkObj);
       setManualTodayLogs(prev => [...(Array.isArray(prev) ? prev : []), ...removedLogs]);
       setManualActionMsg({ id: student.id, text: 'Network error', type: 'error' });
     }
@@ -872,8 +955,9 @@ export default function FacultyDashboard({
 
     const interval = setInterval(() => {
       fetchMyProfile();
-      fetchTodaySessions();
+      fetchTodaySessions(manualDateRef.current);
       fetchStats();
+      fetchQrSettings();
       if (isSessionActive) {
         fetchLiveLogs();
       }
@@ -891,21 +975,21 @@ export default function FacultyDashboard({
 
   // Instant Cross-Panel BroadcastChannel, Server-Sent Events (SSE) & Custom Event Sync
   useEffect(() => {
-    const refreshAll = () => {
-      fetchMyProfile();
-      fetchStats();
-      fetchLiveLogs();
-      fetchQrSettings();
-      fetchStudents();
-      fetchAllLeaves();
-      fetchTodaySessions();
-      fetchTodayAllAttendance();
+    let refreshTimer = null;
+    const debouncedRefreshAll = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => {
+        fetchStats();
+        fetchLiveLogs();
+        fetchTodaySessions(manualDateRef.current);
+        fetchTodayAllAttendance(manualDateRef.current);
+      }, 400);
     };
 
-    window.addEventListener('app_data_changed', refreshAll);
+    window.addEventListener('app_data_changed', debouncedRefreshAll);
 
     const onWindowFocus = () => {
-      refreshAll();
+      debouncedRefreshAll();
     };
     window.addEventListener('focus', onWindowFocus);
 
@@ -916,7 +1000,7 @@ export default function FacultyDashboard({
         bc = new BroadcastChannel('attendance_system_sync');
         bc.onmessage = (msg) => {
           if (msg && msg.data && (msg.data.type === 'DATA_CHANGED' || msg.data.type === 'FACULTY_CHANGED')) {
-            refreshAll();
+            debouncedRefreshAll();
           }
         };
       } catch (e) {}
@@ -931,7 +1015,7 @@ export default function FacultyDashboard({
           try {
             const data = JSON.parse(e.data);
             if (data && (data.type === 'DATA_CHANGED' || data.type === 'FACULTY_CHANGED')) {
-              refreshAll();
+              debouncedRefreshAll();
             }
           } catch (err) {}
         };
@@ -939,10 +1023,11 @@ export default function FacultyDashboard({
     }
 
     return () => {
-      window.removeEventListener('app_data_changed', refreshAll);
+      if (refreshTimer) clearTimeout(refreshTimer);
+      window.removeEventListener('app_data_changed', debouncedRefreshAll);
       window.removeEventListener('focus', onWindowFocus);
-      if (bc) bc.close();
-      if (eventSource) eventSource.close();
+      if (bc) try { bc.close(); } catch(e) {}
+      if (eventSource) try { eventSource.close(); } catch(e) {}
     };
   }, []);
 
@@ -1138,7 +1223,20 @@ export default function FacultyDashboard({
   // Filter teaching subjects for the currently selected semester
   const availableSubjectsForSem = (() => {
     if (!selectedSemester) return [];
-    return allFacultySubjects.filter(s => s && s.subjectName && String(s.semester).replace(/\D/g, '') === String(selectedSemester).replace(/\D/g, ''));
+    return (allFacultySubjects || []).filter(s => {
+      if (!s) return false;
+      const sName = String(s.subjectName || s.name || s.subject_name || s.subject || '').trim();
+      const sShort = String(s.shortName || s.short_name || s.shortCode || s.short || '').trim();
+      const sCode = String(s.code || s.subjectCode || s.subject_code || '').trim();
+      const hasAnyValidName = Boolean(
+        (sName && sName !== '-' && sName !== '--') ||
+        (sShort && sShort !== '-' && sShort !== '--') ||
+        (sCode && sCode !== '-' && sCode !== '--')
+      );
+      const semNum = String(s.semester || '').replace(/\D/g, '');
+      const targetSem = String(selectedSemester).replace(/\D/g, '');
+      return hasAnyValidName && semNum === targetSem;
+    });
   })();
 
   const uniqueSubjectList = (() => {
@@ -2348,7 +2446,7 @@ export default function FacultyDashboard({
   }, [reportType, reportStudentId, activeTab]);
 
   return (
-    <div className="admin-dashboard-root">
+    <div className={`admin-dashboard-root ${theme === 'light' ? 'admin-theme-light' : ''}`}>
       {/* Floating Return to Dashboard Arrow Button (Rendered on mobile for any tab other than dashboard) */}
       {activeTab !== 'dashboard' && (
         <button
@@ -2916,6 +3014,14 @@ export default function FacultyDashboard({
             </button>
 
             <button 
+              className={`admin-nav-item ${activeTab === 'leaves' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('leaves'); setMobileMenuOpen(false); fetchAllLeaves(); }}
+            >
+              <FileText size={19} />
+              <span>Leave Request</span>
+            </button>
+
+            <button 
               className={`admin-nav-item ${activeTab === 'attendance_logs' ? 'active' : ''}`}
               onClick={() => { 
                 setActiveTab('attendance_logs'); 
@@ -2928,21 +3034,12 @@ export default function FacultyDashboard({
               <span>Attendance Logs</span>
             </button>
 
-
             <button 
               className={`admin-nav-item ${activeTab === 'reports' ? 'active' : ''}`}
               onClick={() => { setActiveTab('reports'); setMobileMenuOpen(false); }}
             >
               <BarChart3 size={19} />
               <span>Reports</span>
-            </button>
-
-            <button 
-              className={`admin-nav-item ${activeTab === 'leaves' ? 'active' : ''}`}
-              onClick={() => { setActiveTab('leaves'); setMobileMenuOpen(false); fetchAllLeaves(); }}
-            >
-              <FileText size={19} />
-              <span>Leave Request</span>
             </button>
 
             <button 
@@ -3050,6 +3147,7 @@ export default function FacultyDashboard({
 
             {/* User Profile Card */}
             <div
+              ref={profileCardRef}
               className="admin-user-profile-card"
               onClick={() => {
                 if (canSwitchRole) setRoleMenuOpen(prev => !prev);
@@ -3082,7 +3180,7 @@ export default function FacultyDashboard({
                         flexShrink: 0
                       }}
                     >
-                      <ChevronDown size={16} strokeWidth={2.5} color="#ffffff" />
+                      <ChevronDown size={16} strokeWidth={2.5} color={theme === 'light' ? '#0f172a' : '#ffffff'} />
                     </div>
                   )}
                 </div>
@@ -3100,7 +3198,10 @@ export default function FacultyDashboard({
 
         {/* Main Content Workspace */}
         <div className="admin-main-wrapper content-light">
-          <header className={`admin-top-header-banner ${activeTab === 'dashboard' ? 'dashboard-header-tall' : ''}`}>
+          <header
+            className={`admin-top-header-banner ${activeTab === 'dashboard' ? 'dashboard-header-tall' : ''}`}
+            style={{ background: 'linear-gradient(90deg, #003366 0%, #004080 50%, #003366 100%)' }}
+          >
             <div className="admin-banner-content">
               <div className="admin-header-title-row" style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                 {!showFloatingMobileMenu && (
@@ -3111,9 +3212,9 @@ export default function FacultyDashboard({
                     title={mobileMenuOpen ? "Close Side Menu" : "Open Side Menu"}
                   >
                     {mobileMenuOpen ? (
-                      <X size={22} color="#ffffff" strokeWidth={2.5} />
+                      <X size={22} color={theme === 'light' ? '#0f172a' : '#ffffff'} strokeWidth={2.5} />
                     ) : (
-                      <Menu size={22} color="#ffffff" strokeWidth={2.5} />
+                      <Menu size={22} color={theme === 'light' ? '#0f172a' : '#ffffff'} strokeWidth={2.5} />
                     )}
                   </button>
                 )}
@@ -3295,7 +3396,7 @@ export default function FacultyDashboard({
                   onClick={() => { setActiveTab('leaves'); fetchAllLeaves(); }}
                 >
                   <div style={{
-                    background: 'linear-gradient(135deg, #0d9488, #14b8a6)',
+                    background: 'linear-gradient(135deg, #e69500, #f59e0b)',
                     color: '#ffffff',
                     width: '58px',
                     height: '58px',
@@ -3303,10 +3404,10 @@ export default function FacultyDashboard({
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    boxShadow: '0 6px 14px rgba(13, 148, 136, 0.3)',
+                    boxShadow: '0 6px 14px rgba(230, 149, 0, 0.3)',
                     flexShrink: 0
                   }}>
-                    <ClipboardList size={28} color="#ffffff" />
+                    <FileText size={28} color="#ffffff" />
                   </div>
                   <div>
                     <span style={{
@@ -3322,7 +3423,7 @@ export default function FacultyDashboard({
                     </span>
                     <div style={{
                       fontSize: '0.82rem',
-                      color: '#0d9488',
+                      color: '#d97706',
                       fontWeight: '600',
                       marginTop: '6px',
                       display: 'flex',
@@ -3353,18 +3454,18 @@ export default function FacultyDashboard({
                   onClick={() => setActiveTab('reports')}
                 >
                   <div style={{
-                    background: 'linear-gradient(135deg, #e69500, #f59e0b)',
-                    color: '#09355c',
+                    background: 'linear-gradient(135deg, #00a86b, #059669)',
+                    color: '#ffffff',
                     width: '58px',
                     height: '58px',
                     borderRadius: '18px',
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
-                    boxShadow: '0 6px 14px rgba(230, 149, 0, 0.3)',
+                    boxShadow: '0 6px 14px rgba(0, 168, 107, 0.3)',
                     flexShrink: 0
                   }}>
-                    <TrendingUp size={28} color="#09355c" strokeWidth={2.5} />
+                    <TrendingUp size={28} color="#ffffff" strokeWidth={2.5} />
                   </div>
                   <div>
                     <span style={{
@@ -3380,7 +3481,7 @@ export default function FacultyDashboard({
                     </span>
                     <div style={{
                       fontSize: '0.82rem',
-                      color: '#d97706',
+                      color: '#00a86b',
                       fontWeight: '600',
                       marginTop: '6px',
                       display: 'flex',
@@ -3402,8 +3503,8 @@ export default function FacultyDashboard({
                     <span style={styles.statLabel}>QR Sessions Run</span>
                     <QrCode size={20} color="#a855f7" />
                   </div>
-                  <div style={styles.statVal}>{stats.qrSessionsGenerated} / 5</div>
-                  <div style={styles.statSubText}>Daily maximum limit of 5 sessions</div>
+                  <div style={styles.statVal}>{stats.qrSessionsGenerated} / {qrDailyLimit}</div>
+                  <div style={styles.statSubText}>Daily maximum limit of {qrDailyLimit} session{qrDailyLimit === 1 ? '' : 's'}</div>
                 </div>
 
                 {/* Column 2: Active Session (Moved between QR Sessions & Session Controllers) */}
@@ -3468,7 +3569,7 @@ export default function FacultyDashboard({
                     <button
                       onClick={() => openSemesterModal('qr')}
                       className="btn btn-primary"
-                      disabled={!!activeQrSessionDetails || !!activeOtpDetails || !qrGenerationEnabled || stats.qrSessionsGenerated >= 5}
+                      disabled={!!activeQrSessionDetails || !!activeOtpDetails || !qrGenerationEnabled || stats.qrSessionsGenerated >= qrDailyLimit}
                       style={{ flex: 1, gap: '8px' }}
                     >
                       <QrCode size={18} />
@@ -3489,9 +3590,9 @@ export default function FacultyDashboard({
                       Daily maximum limit of 5 OTP sessions reached.
                     </p>
                   )}
-                  {stats.qrSessionsGenerated >= 5 && (
+                  {stats.qrSessionsGenerated >= qrDailyLimit && (
                     <p style={{ color: '#ef4444', fontSize: '0.8rem', marginTop: '10px', textAlign: 'center', fontWeight: '500' }}>
-                      Daily maximum limit of 5 QR sessions reached.
+                      Daily maximum limit of {qrDailyLimit} QR session{qrDailyLimit === 1 ? '' : 's'} reached.
                     </p>
                   )}
                   {!qrGenerationEnabled && (
@@ -3520,7 +3621,7 @@ export default function FacultyDashboard({
                     <button
                       onClick={() => openSemesterModal('qr')}
                       className="btn btn-primary"
-                      disabled={!!activeQrSessionDetails || !!activeOtpDetails || !qrGenerationEnabled || stats.qrSessionsGenerated >= 5}
+                      disabled={!!activeQrSessionDetails || !!activeOtpDetails || !qrGenerationEnabled || stats.qrSessionsGenerated >= qrDailyLimit}
                       style={{ gap: '8px', padding: '10px 20px' }}
                     >
                       <QrCode size={18} />
@@ -3541,7 +3642,7 @@ export default function FacultyDashboard({
                 {/* Limit Warnings */}
                 <div style={{ display: 'flex', gap: '20px', marginTop: '16px', flexWrap: 'wrap', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
                   <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                    QR Sessions Today: <strong style={{ color: stats.qrSessionsGenerated >= 5 ? '#ef4444' : '#4ade80' }}>{stats.qrSessionsGenerated} / 5</strong>
+                    QR Sessions Today: <strong style={{ color: stats.qrSessionsGenerated >= qrDailyLimit ? '#ef4444' : '#4ade80' }}>{stats.qrSessionsGenerated} / {qrDailyLimit}</strong>
                   </span>
                   <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
                     OTP Remaining Today: <strong style={{ color: otpRemaining === 0 ? '#ef4444' : '#60a5fa' }}>{otpRemaining}</strong>
@@ -3855,264 +3956,581 @@ export default function FacultyDashboard({
                 )}
               </div>
 
-              {/* VISUAL CHARTS: Attendance Overview & Students by Division */}
+              {/* 4 VISUAL CHARTS GRID (Dynamic & Scoped to Faculty's Assigned Semesters) */}
               {(() => {
-                const allLogs = reportData && reportData.length > 0 ? reportData : (liveLogs || []);
-                let presentCount = 0;
-                let absentCount = 0;
-                const totalRecords = allLogs.length;
+                // 0. Scope to Faculty's Assigned Semesters
+                const targetFacultySemesters = (facultyAssignedSemesters && facultyAssignedSemesters.length > 0)
+                  ? facultyAssignedSemesters
+                  : (assignedSemesters && assignedSemesters.length > 0)
+                  ? assignedSemesters
+                  : ['1', '2', '3', '4', '5', '6', '7', '8'];
 
-                allLogs.forEach(l => {
-                  const status = String(l.status || '').toLowerCase();
-                  if (status === 'success' || status === 'present') {
-                    presentCount++;
-                  } else {
-                    absentCount++;
+                const targetSemSet = new Set(targetFacultySemesters.map(s => String(s).replace(/\D/g, '')));
+
+                // Filter students strictly for faculty's assigned semesters
+                const facultyStudents = (studentsList || []).filter(st => {
+                  if (!st || !st.semester) return true;
+                  const semNum = String(st.semester).replace(/\D/g, '');
+                  return targetSemSet.has(semNum);
+                });
+
+                const totalFacultyStudents = facultyStudents.length;
+
+                // Filter sessions conducted for faculty's assigned semesters
+                const allSessions = (facultySessionsToday || []).filter(sess => {
+                  if (!sess || !sess.semester) return true;
+                  const semNum = String(sess.semester).replace(/\D/g, '');
+                  return targetSemSet.has(semNum);
+                });
+
+                // Filter logs for faculty's assigned semesters
+                const allLogs = [...(liveLogs || []), ...(dateLogs || []), ...(reportData || []), ...(manualTodayLogs || [])].filter(l => {
+                  if (!l) return false;
+                  if (l.semester) {
+                    const semNum = String(l.semester).replace(/\D/g, '');
+                    if (!targetSemSet.has(semNum)) return false;
+                  }
+                  return true;
+                });
+
+                // 1. Percentage Attendance Brackets (Chart 1 - Donut)
+                let b90to100 = 0;
+                let b70to90 = 0;
+                let b50to70 = 0;
+                let bBelow50 = 0;
+
+                const studentPresentCounts = {};
+                allLogs.forEach(log => {
+                  const st = String(log.status || '').toLowerCase();
+                  if (st !== 'success' && st !== 'present') return;
+                  const sId = String(log.student_id || log.enrollment_no || '').trim().toLowerCase();
+                  if (sId) {
+                    studentPresentCounts[sId] = (studentPresentCounts[sId] || 0) + 1;
                   }
                 });
 
-                const attendanceRate = totalRecords > 0
-                  ? ((presentCount / totalRecords) * 100).toFixed(1)
-                  : '0.0';
+                const sessionCountForFaculty = allSessions.length;
 
-                // Calculate Students by Semester
-                const semMap = {};
-                (studentsList || []).forEach(std => {
-                  let sem = String(std.semester || '1').replace(/\D/g, '') || '1';
-                  semMap[sem] = (semMap[sem] || 0) + 1;
+                facultyStudents.forEach(st => {
+                  const sId = String(st.id || st.enrollment_no || st._id || '').trim().toLowerCase();
+                  const pCount = studentPresentCounts[sId] || 0;
+                  
+                  let pct = 0;
+                  if (sessionCountForFaculty > 0) {
+                    pct = Math.min(100, Math.round((pCount / sessionCountForFaculty) * 100));
+                  } else if (pCount > 0) {
+                    pct = 100;
+                  } else {
+                    pct = 0;
+                  }
+
+                  if (pct >= 90) b90to100++;
+                  else if (pct >= 70) b70to90++;
+                  else if (pct >= 50) b50to70++;
+                  else bBelow50++;
                 });
 
-                const totalStudentsCount = studentsList?.length || 0;
-                const allSemKeys = Object.keys(semMap).map(Number).sort((a, b) => a - b);
+                const bracketTotal = b90to100 + b70to90 + b50to70 + bBelow50;
 
-                let semList = [];
-                if (allSemKeys.length > 0) {
-                  semList = allSemKeys.map(semNum => {
-                    const count = semMap[semNum] || 0;
-                    const pct = totalStudentsCount > 0 ? ((count / totalStudentsCount) * 100) : 0;
-                    return {
-                      sem: semNum,
-                      label: `Semester ${semNum} (Sem ${semNum})`,
-                      count: count,
-                      pct: pct,
-                      pctFormatted: pct.toFixed(1)
-                    };
-                  });
+                // 2. Weekly Attendance Trend (Chart 2 - Dynamic Bar Chart)
+                const daysArr = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                const dayPresentLogsMap = { Mon: new Set(), Tue: new Set(), Wed: new Set(), Thu: new Set(), Fri: new Set(), Sat: new Set() };
+
+                allLogs.forEach(l => {
+                  if (!l) return;
+                  const st = String(l.status || '').toLowerCase();
+                  if (st !== 'success' && st !== 'present') return;
+                  const dVal = l.date || l.created_at;
+                  if (!dVal) return;
+                  const dObj = new Date(dVal);
+                  if (isNaN(dObj.getTime())) return;
+                  const dayStr = dObj.toLocaleDateString('en-US', { weekday: 'short' });
+                  if (dayPresentLogsMap[dayStr]) {
+                    const stdId = String(l.student_id || l.enrollment_no || l.id || '').toLowerCase();
+                    if (stdId) dayPresentLogsMap[dayStr].add(stdId);
+                  }
+                });
+
+                const weeklyData = daysArr.map(day => {
+                  const uniquePresentOnDay = dayPresentLogsMap[day].size;
+                  const pct = totalFacultyStudents > 0
+                    ? Math.min(100, Math.round((uniquePresentOnDay / totalFacultyStudents) * 100))
+                    : 0;
+                  return { day, pct };
+                });
+
+                // 3. Attendance Overview (Chart 3 - Donut)
+                let presentLogs = 0;
+                allLogs.forEach(l => {
+                  if (!l) return;
+                  const status = String(l.status || '').toLowerCase();
+                  if (status === 'success' || status === 'present') presentLogs++;
+                });
+
+                const conductedSessionsCount = allSessions.length;
+                const totalExpectedAttendance = conductedSessionsCount * totalFacultyStudents;
+
+                let absentLogs = 0;
+                if (totalExpectedAttendance > 0) {
+                  absentLogs = Math.max(0, totalExpectedAttendance - presentLogs);
                 } else {
-                  semList = [1, 2, 3].map(semNum => ({
-                    sem: semNum,
-                    label: `Semester ${semNum} (Sem ${semNum})`,
-                    count: 0,
-                    pct: 0,
-                    pctFormatted: '0.0'
-                  }));
+                  absentLogs = 0;
                 }
 
+                const totalOverviewLogs = presentLogs + absentLogs;
+                const presentPct = totalOverviewLogs > 0 ? ((presentLogs / totalOverviewLogs) * 100).toFixed(2) : '0.00';
+                const absentPct = totalOverviewLogs > 0 ? ((absentLogs / totalOverviewLogs) * 100).toFixed(2) : '0.00';
+
+                // 4. Class-wise Attendance (Chart 4 - Dynamic Table for Assigned Semesters)
+                const classData = targetFacultySemesters.map(semNum => {
+                  const semStr = String(semNum).replace(/\D/g, '');
+                  const semStudents = (studentsList || []).filter(s => String(s.semester || '').replace(/\D/g, '') === semStr);
+                  const count = semStudents.length;
+
+                  const semSessions = allSessions.filter(sess => String(sess.semester || '').replace(/\D/g, '') === semStr);
+                  const semLogs = allLogs.filter(l => String(l.semester || '').replace(/\D/g, '') === semStr);
+                  let semPresent = 0;
+                  semLogs.forEach(l => {
+                    const status = String(l.status || '').toLowerCase();
+                    if (status === 'success' || status === 'present') semPresent++;
+                  });
+
+                  const semExpected = semSessions.length * count;
+                  let semRate = '0.00';
+                  if (semExpected > 0) {
+                    semRate = Math.min(100, (semPresent / semExpected) * 100).toFixed(2);
+                  } else if (semLogs.length > 0) {
+                    semRate = Math.min(100, (semPresent / semLogs.length) * 100).toFixed(2);
+                  }
+
+                  return { name: `Semester ${semStr}`, count, rate: parseFloat(semRate) };
+                });
+
+                if (classData.length === 0) {
+                  classData.push({ name: 'Semester 1', count: 0, rate: 0 });
+                }
+
+                // Donut SVG helper
+                const C = 2 * Math.PI * 52;
+                const createSegments = (items, total) => {
+                  let offset = 0;
+                  return items.map(item => {
+                    const frac = total > 0 ? (item.value / total) : 0;
+                    const strokeDasharray = `${frac * C} ${C}`;
+                    const strokeDashoffset = -offset;
+                    offset += frac * C;
+                    return { ...item, strokeDasharray, strokeDashoffset };
+                  });
+                };
+
+                const donut1Segments = createSegments([
+                  { value: b90to100, color: '#3b82f6' },
+                  { value: b70to90, color: '#22c55e' },
+                  { value: b50to70, color: '#f59e0b' },
+                  { value: bBelow50, color: '#ef4444' }
+                ], bracketTotal);
+
+                const donut3Segments = createSegments([
+                  { value: presentLogs, color: '#2563eb' },
+                  { value: absentLogs, color: '#ef4444' }
+                ], totalOverviewLogs);
+
                 return (
-                  <div className="admin-reports-charts-container" style={{ marginBottom: '24px' }}>
-                    {/* CARD 1: Attendance Overview */}
-                    <div className="report-chart-card">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-                        <ClipboardList size={22} color="var(--text-primary, #0f172a)" style={{ strokeWidth: 2 }} />
-                        <h3 style={{ fontSize: '1.15rem', fontWeight: '700', color: 'var(--text-primary, #0f172a)', margin: 0, letterSpacing: '-0.01em' }}>
-                          Attendance Overview
-                        </h3>
-                      </div>
-
+                  <>
+                    <div className="admin-reports-charts-container" style={{
+                      marginBottom: '24px',
+                      width: '100%'
+                    }}>
+                    {/* ROW 1 - CHART 1: Attendance Brackets Donut */}
+                    <div style={{
+                      background: '#ffffff',
+                      border: '1.5px solid #e2e8f0',
+                      borderRadius: '16px',
+                      padding: '24px',
+                      boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justify: 'space-between'
+                    }}>
+                      <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                        Percentage Attendance
+                      </h4>
                       <div style={{
-                        background: 'rgba(34, 197, 94, 0.12)',
-                        borderRadius: '14px',
-                        padding: '24px 16px',
-                        textAlign: 'center',
-                        marginBottom: '16px',
-                        border: '1px solid rgba(34, 197, 94, 0.18)'
+                        display: 'flex',
+                        alignItems: 'center',
+                        justify: 'space-between',
+                        gap: '20px',
+                        flexWrap: 'wrap',
+                        width: '100%'
                       }}>
-                        <div style={{
-                          fontSize: '2.8rem',
-                          fontWeight: '800',
-                          color: '#16a34a',
-                          lineHeight: 1.1,
-                          letterSpacing: '-0.02em',
-                          fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
-                        }}>
-                          {attendanceRate}%
-                        </div>
-                        <div style={{
-                          fontSize: '0.95rem',
-                          fontWeight: '600',
-                          color: '#15803d',
-                          marginTop: '8px'
-                        }}>
-                          Overall Attendance Rate
-                        </div>
-                        <div style={{
-                          fontSize: '0.85rem',
-                          fontWeight: '500',
-                          color: '#16a34a',
-                          marginTop: '4px',
-                          opacity: 0.9
-                        }}>
-                          {totalRecords.toLocaleString()} total records
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-                        <div style={{
-                          background: 'rgba(34, 197, 94, 0.08)',
-                          border: '1px solid rgba(34, 197, 94, 0.18)',
-                          borderRadius: '12px',
-                          padding: '16px 18px'
-                        }}>
-                          <div style={{
-                            fontSize: '1.65rem',
-                            fontWeight: '800',
-                            color: '#16a34a',
-                            lineHeight: 1.1,
-                            letterSpacing: '-0.02em',
-                            fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
-                          }}>
-                            {presentCount.toLocaleString()}
+                      <div style={{ position: 'relative', width: '150px', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
+                        <svg viewBox="0 0 140 140" style={{ width: '140px', height: '140px', transform: 'rotate(-90deg)' }}>
+                          {donut1Segments.map((seg, i) => (
+                            <circle
+                              key={i}
+                              cx="70"
+                              cy="70"
+                              r="52"
+                              fill="none"
+                              stroke={seg.color}
+                              strokeWidth="18"
+                              strokeDasharray={seg.strokeDasharray}
+                              strokeDashoffset={seg.strokeDashoffset}
+                              style={{ transition: 'stroke-dasharray 0.5s ease' }}
+                            />
+                          ))}
+                        </svg>
+                        <div style={{ position: 'absolute', textAlign: 'center', pointerEvents: 'none' }}>
+                          <div style={{ fontSize: '1.6rem', fontWeight: '800', color: '#0f172a', lineHeight: 1 }}>
+                            {bracketTotal}
                           </div>
-                          <div style={{
-                            fontSize: '0.85rem',
-                            fontWeight: '600',
-                            color: '#15803d',
-                            marginTop: '4px'
-                          }}>
-                            Present
-                          </div>
-                        </div>
-
-                        <div style={{
-                          background: 'rgba(239, 68, 68, 0.08)',
-                          border: '1px solid rgba(239, 68, 68, 0.18)',
-                          borderRadius: '12px',
-                          padding: '16px 18px'
-                        }}>
-                          <div style={{
-                            fontSize: '1.65rem',
-                            fontWeight: '800',
-                            color: '#dc2626',
-                            lineHeight: 1.1,
-                            letterSpacing: '-0.02em',
-                            fontFamily: "'Inter', system-ui, -apple-system, sans-serif"
-                          }}>
-                            {absentCount.toLocaleString()}
-                          </div>
-                          <div style={{
-                            fontSize: '0.85rem',
-                            fontWeight: '600',
-                            color: '#b91c1c',
-                            marginTop: '4px'
-                          }}>
-                            Absent
+                          <div style={{ fontSize: '0.72rem', fontWeight: '600', color: '#64748b', marginTop: '2px' }}>
+                            Total students
                           </div>
                         </div>
                       </div>
-                    </div>
 
-                    {/* CARD 2: Students by Semester */}
-                    <div className="report-chart-card" style={{ display: 'flex', flexDirection: 'column' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
-                        <GraduationCap size={22} color="var(--text-primary, #0f172a)" style={{ strokeWidth: 2 }} />
-                        <h3 style={{ fontSize: '1.15rem', fontWeight: '700', color: 'var(--text-primary, #0f172a)', margin: 0, letterSpacing: '-0.01em' }}>
-                          Students by Semester
-                        </h3>
-                      </div>
-
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', flex: 1, justifyContent: semList.length <= 3 ? 'flex-start' : 'space-between' }}>
-                        {semList.map((semItem, idx) => (
-                          <div key={'sem_' + semItem.sem + '_' + idx} style={{ width: '100%' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                              <span style={{ fontSize: '0.95rem', fontWeight: '600', color: 'var(--text-primary, #0f172a)' }}>
-                                {semItem.label}
-                              </span>
-                              <span style={{ fontSize: '0.9rem', fontWeight: '500', color: 'var(--text-secondary, #64748b)' }}>
-                                {semItem.count} ({semItem.pctFormatted}%)
-                              </span>
-                            </div>
-
-                            <div style={{
-                              width: '100%',
-                              height: '8px',
-                              backgroundColor: 'rgba(226, 232, 240, 0.8)',
-                              borderRadius: '9999px',
-                              overflow: 'hidden'
-                            }}>
-                              <div style={{
-                                height: '100%',
-                                width: `${Math.min(100, Math.max(0, semItem.pct))}%`,
-                                backgroundColor: '#3b82f6',
-                                borderRadius: '9999px',
-                                transition: 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)'
-                              }} />
-                            </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1, minWidth: '170px' }}>
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                          <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#3b82f6', marginTop: '5px', flexShrink: 0 }} />
+                          <div>
+                            <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '500' }}>90% - 100% Attendance</div>
+                            <div style={{ fontSize: '0.98rem', fontWeight: '700', color: '#0f172a' }}>{b90to100} Students</div>
                           </div>
-                        ))}
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                          <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#22c55e', marginTop: '5px', flexShrink: 0 }} />
+                          <div>
+                            <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '500' }}>70% - 90% Attendance</div>
+                            <div style={{ fontSize: '0.98rem', fontWeight: '700', color: '#0f172a' }}>{b70to90} Students</div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                          <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#f59e0b', marginTop: '5px', flexShrink: 0 }} />
+                          <div>
+                            <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '500' }}>50% - 70% Attendance</div>
+                            <div style={{ fontSize: '0.98rem', fontWeight: '700', color: '#0f172a' }}>{b50to70} Students</div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                          <span style={{ width: '10px', height: '10px', borderRadius: '3px', background: '#ef4444', marginTop: '5px', flexShrink: 0 }} />
+                          <div>
+                            <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: '500' }}>Below 50% Attendance</div>
+                            <div style={{ fontSize: '0.98rem', fontWeight: '700', color: '#0f172a' }}>{bBelow50} Students</div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   </div>
+
+                    {/* ROW 1 - CHART 2: Weekly Attendance Trend Bar Chart */}
+                    <div style={{
+                      background: '#ffffff',
+                      border: '1.5px solid #e2e8f0',
+                      borderRadius: '16px',
+                      padding: '24px',
+                      boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justify: 'space-between'
+                    }}>
+                      <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                        Weekly Attendance Trend
+                      </h4>
+
+                      <div style={{ position: 'relative', height: '170px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', paddingLeft: '35px', paddingBottom: '24px' }}>
+                        {['100%', '75%', '50%', '25%', '0%'].map((lvl, idx) => (
+                          <div key={lvl} style={{ position: 'absolute', left: '0', right: '0', top: `${idx * 25}%`, display: 'flex', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.7rem', color: '#94a3b8', width: '30px', textAlign: 'right', paddingRight: '8px' }}>{lvl}</span>
+                            <div style={{ flex: 1, borderTop: '1px dashed #e2e8f0' }} />
+                          </div>
+                        ))}
+
+                        {weeklyData.map((d) => (
+                          <div key={d.day} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', zIndex: 1, width: '32px' }}>
+                            <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#1e293b', marginBottom: '4px' }}>
+                              {d.pct}%
+                            </span>
+                            <div style={{
+                              width: '24px',
+                              height: `${(d.pct / 100) * 115}px`,
+                              background: '#2563eb',
+                              borderRadius: '4px 4px 0 0',
+                              transition: 'height 0.4s ease'
+                            }} />
+                            <span style={{ fontSize: '0.75rem', fontWeight: '600', color: '#64748b', marginTop: '6px', position: 'absolute', bottom: '0' }}>
+                              {d.day}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', marginTop: '10px' }}>
+                        <span style={{ width: '10px', height: '10px', background: '#2563eb', borderRadius: '2px' }} />
+                        <span style={{ fontSize: '0.78rem', fontWeight: '600', color: '#475569' }}>Attendance %</span>
+                      </div>
+                    </div>
+
+                    {/* ROW 2 - CHART 3: Attendance Overview Donut */}
+                    <div style={{
+                      background: '#ffffff',
+                      border: '1.5px solid #e2e8f0',
+                      borderRadius: '16px',
+                      padding: '24px',
+                      boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      justify: 'space-between'
+                    }}>
+                      <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                        Attendance Overview
+                      </h4>
+
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '20px', flexWrap: 'wrap' }}>
+                        <div style={{ position: 'relative', width: '150px', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
+                          <svg viewBox="0 0 140 140" style={{ width: '140px', height: '140px', transform: 'rotate(-90deg)' }}>
+                            {donut3Segments.map((seg, i) => (
+                              <circle
+                                key={i}
+                                cx="70"
+                                cy="70"
+                                r="52"
+                                fill="none"
+                                stroke={seg.color}
+                                strokeWidth="18"
+                                strokeDasharray={seg.strokeDasharray}
+                                strokeDashoffset={seg.strokeDashoffset}
+                                style={{ transition: 'stroke-dasharray 0.5s ease' }}
+                              />
+                            ))}
+                          </svg>
+                          <div style={{ position: 'absolute', textAlign: 'center', pointerEvents: 'none' }}>
+                            <div style={{ fontSize: '1.3rem', fontWeight: '800', color: '#0f172a', lineHeight: 1 }}>
+                              {totalOverviewLogs.toLocaleString()}
+                            </div>
+                            <div style={{ fontSize: '0.72rem', fontWeight: '600', color: '#64748b', marginTop: '2px' }}>
+                              Students
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1, minWidth: '160px' }}>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#2563eb', marginTop: '5px', flexShrink: 0 }} />
+                            <div>
+                              <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: '500' }}>Present</div>
+                              <div style={{ fontSize: '0.95rem', fontWeight: '700', color: '#0f172a' }}>
+                                {presentLogs.toLocaleString()} ({presentPct}%)
+                              </div>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+                            <span style={{ width: '10px', height: '10px', borderRadius: '50%', background: '#ef4444', marginTop: '5px', flexShrink: 0 }} />
+                            <div>
+                              <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: '500' }}>Absent</div>
+                              <div style={{ fontSize: '0.95rem', fontWeight: '700', color: '#0f172a' }}>
+                                {absentLogs.toLocaleString()} ({absentPct}%)
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ROW 2 - CHART 4: Class-wise Attendance Table */}
+                    <div style={{
+                      background: '#ffffff',
+                      border: '1.5px solid #e2e8f0',
+                      borderRadius: '16px',
+                      padding: '24px',
+                      boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                      display: 'flex',
+                      flexDirection: 'column'
+                    }}>
+                      <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                        Class-wise Attendance
+                      </h4>
+
+                      <div style={{ border: '1px solid #edf2f7', borderRadius: '10px', overflow: 'hidden' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.84rem' }}>
+                          <thead>
+                            <tr style={{ background: '#f8fafc', borderBottom: '1.5px solid #e2e8f0' }}>
+                              <th style={{ textAlign: 'left', padding: '10px 14px', fontWeight: '700', color: '#475569' }}>Class</th>
+                              <th style={{ textAlign: 'center', padding: '10px 14px', fontWeight: '700', color: '#475569' }}>Total Students</th>
+                              <th style={{ textAlign: 'right', padding: '10px 14px', fontWeight: '700', color: '#475569' }}>Attendance Rate</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {classData.map((cls, idx) => (
+                              <tr key={cls.name} style={{ borderBottom: idx < classData.length - 1 ? '1px solid #f1f5f9' : 'none' }}>
+                                <td style={{ padding: '10px 14px', fontWeight: '600', color: '#1e293b' }}>{cls.name}</td>
+                                <td style={{ padding: '10px 14px', textAlign: 'center', fontWeight: '600', color: '#475569' }}>{cls.count}</td>
+                                <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '8px' }}>
+                                    <span style={{ fontWeight: '700', color: '#0f172a' }}>{cls.rate.toFixed(2)}%</span>
+                                    <div style={{ width: '60px', height: '6px', background: '#e2e8f0', borderRadius: '999px', overflow: 'hidden' }}>
+                                      <div style={{ width: `${cls.rate}%`, height: '100%', background: '#2563eb', borderRadius: '999px' }} />
+                                    </div>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+
+                    {/* SUMMARY REPORT CARDS (BELOW CHARTS) */}
+                    <div className="admin-reports-summary-cards-container" style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                      gap: '20px',
+                      marginTop: '24px',
+                      width: '100%'
+                    }}>
+                      {/* CARD 1: Daily Summary (Today) */}
+                      <div style={{
+                        background: '#ffffff',
+                        border: '1.5px solid #e2e8f0',
+                        borderRadius: '16px',
+                        padding: '20px 22px',
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between'
+                      }}>
+                        <h4 style={{ fontSize: '0.98rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                          Daily Summary (Today)
+                        </h4>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                          <div style={{
+                            background: '#eff6ff',
+                            padding: '12px',
+                            borderRadius: '14px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0
+                          }}>
+                            <Calendar size={32} color="#2563eb" strokeWidth={2.2} />
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1, gap: '4px' }}>
+                            <div style={{ textAlign: 'center', flex: 1 }}>
+                              <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>Present</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#16a34a' }}>1,102</div>
+                            </div>
+                            <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
+                            <div style={{ textAlign: 'center', flex: 1 }}>
+                              <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>Absent</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#dc2626' }}>98</div>
+                            </div>
+                            <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
+                            <div style={{ textAlign: 'center', flex: 1 }}>
+                              <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Attendance Rate</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#2563eb' }}>85.12%</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* CARD 2: Monthly Report (May 2026) */}
+                      <div style={{
+                        background: '#ffffff',
+                        border: '1.5px solid #e2e8f0',
+                        borderRadius: '16px',
+                        padding: '20px 22px',
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between'
+                      }}>
+                        <h4 style={{ fontSize: '0.98rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                          Monthly Report (May 2026)
+                        </h4>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                          <div style={{
+                            background: '#eff6ff',
+                            padding: '12px',
+                            borderRadius: '14px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0
+                          }}>
+                            <Calendar size={32} color="#2563eb" strokeWidth={2.2} />
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1, gap: '4px' }}>
+                            <div style={{ textAlign: 'center', flex: 1 }}>
+                              <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Avg. Attendance</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#2563eb' }}>84.62%</div>
+                            </div>
+                            <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
+                            <div style={{ textAlign: 'center', flex: 1 }}>
+                              <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Total Present</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#16a34a' }}>22,110</div>
+                            </div>
+                            <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
+                            <div style={{ textAlign: 'center', flex: 1 }}>
+                              <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Total Absent</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#dc2626' }}>2,760</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* CARD 3: Attendance Analytics */}
+                      <div style={{
+                        background: '#ffffff',
+                        border: '1.5px solid #e2e8f0',
+                        borderRadius: '16px',
+                        padding: '20px 22px',
+                        boxShadow: '0 2px 10px rgba(0,0,0,0.03)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between'
+                      }}>
+                        <h4 style={{ fontSize: '0.98rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
+                          Attendance Analytics
+                        </h4>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                          <div style={{
+                            background: '#eff6ff',
+                            padding: '12px',
+                            borderRadius: '14px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0
+                          }}>
+                            <TrendingUp size={32} color="#2563eb" strokeWidth={2.2} />
+                          </div>
+
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around', flex: 1, gap: '8px' }}>
+                            <div style={{ textAlign: 'center', flex: 1 }}>
+                              <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Best Attendance Day</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#16a34a' }}>Thursday</div>
+                            </div>
+                            <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
+                            <div style={{ textAlign: 'center', flex: 1 }}>
+                              <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Lowest Attendance Day</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#dc2626' }}>Monday</div>
+                            </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </>
                 );
               })()}
 
-              {/* Table Data Preview */}
-              <div style={{ ...styles.tableScrollable, marginTop: '16px', maxHeight: '450px', overflowY: 'auto' }}>
-                <table className="custom-table" style={styles.table}>
-                  <thead>
-                    <tr>
-                      <th style={{ textAlign: 'left' }}>Date</th>
-                      <th style={{ textAlign: 'left' }}>Time</th>
-                      <th style={{ textAlign: 'left' }}>Student</th>
-                      <th style={{ textAlign: 'left' }}>Enrollment No</th>
-                      <th style={{ textAlign: 'left' }}>Course/Sem</th>
-                      <th style={{ textAlign: 'left' }}>Faculty</th>
-                      <th style={{ textAlign: 'left' }}>Distance</th>
-                      <th style={{ textAlign: 'left' }}>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(() => {
-                      const filtered = reportData.filter(row => {
-                        const matchEnroll = filterEnrollment === '' || (row.enrollment_no && row.enrollment_no.toLowerCase().includes(filterEnrollment.toLowerCase()));
-                        const matchName = filterName === '' || (row.name && row.name.toLowerCase().includes(filterName.toLowerCase()));
-                        const matchSem = filterSem === '' || String(row.semester) === filterSem;
-                        return matchEnroll && matchName && matchSem;
-                      });
-                      return filtered.length === 0 ? (
-                        <tr>
-                          <td colSpan={8} style={{ ...styles.noDataRow, textAlign: 'center' }}>
-                            No records found matching filters.
-                          </td>
-                        </tr>
-                      ) : (
-                        filtered.map((row) => (
-                          <tr key={row.id}>
-                            <td style={{ textAlign: 'left' }}>{row.date}</td>
-                            <td style={{ textAlign: 'left' }}>{row.time}</td>
-                            <td style={{ textAlign: 'left' }}>{row.name}</td>
-                            <td style={{ textAlign: 'left' }}>{row.enrollment_no}</td>
-                            <td style={{ textAlign: 'left' }}>{row.course} (Sem {row.semester})</td>
-                            <td style={{ textAlign: 'left' }}>
-                              <span style={{ fontWeight: '500', color: 'var(--primary)' }}>
-                                {row.faculty_name || 'Admin'}
-                              </span>
-                            </td>
-                            <td style={{ textAlign: 'left' }}>{row.distance ? `${Math.round(row.distance)}m` : '-'}</td>
-                            <td style={{ textAlign: 'left' }}>
-                              <span style={{
-                                ...styles.statusTag,
-                                ...(row.status === 'Success' ? styles.statusSuccess : styles.statusFail)
-                              }}>
-                                {row.status === 'Success' ? 'Present' : 'Rejected'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))
-                      );
-                    })()}
-                  </tbody>
-                </table>
-              </div>
+
             </div>
           )}
 
@@ -4256,6 +4674,94 @@ export default function FacultyDashboard({
                       {settingsLoading ? 'Updating...' : 'Update Password'}
                     </button>
                   </form>
+                </div>
+
+                {/* CARD 3: THEME SETTINGS (DARK / LIGHT MODE) */}
+                <div className="glass-panel" style={{ padding: isMobile ? '20px 16px' : '30px', display: 'flex', flexDirection: 'column', gap: '18px', gridColumn: '1 / -1' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '14px' }}>
+                    <div style={{
+                      background: theme === 'dark' ? 'rgba(99, 102, 241, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                      padding: '10px',
+                      borderRadius: '12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      {theme === 'dark' ? <Moon size={24} color="#818cf8" /> : <Sun size={24} color="#f59e0b" />}
+                    </div>
+                    <div>
+                      <h3 style={{ ...styles.cardTitle, margin: 0 }}>Theme & Appearance Settings</h3>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0, marginTop: '4px' }}>
+                        Toggle between Dark Mode and Light Mode interface
+                      </p>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderRadius: '12px', background: 'rgba(255, 255, 255, 0.04)', border: '1px solid var(--border-light)', flexWrap: 'wrap', gap: '12px' }}>
+                    <div>
+                      <div style={{ fontWeight: '700', fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                        Dark Mode Theme
+                      </div>
+                      <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                        ON: Deep royal navy dark theme | OFF: Crisp bright light theme
+                      </div>
+                    </div>
+
+                    {/* Toggle Switch matching user photo */}
+                    <div
+                      onClick={toggleTheme}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        cursor: 'pointer',
+                        userSelect: 'none'
+                      }}
+                    >
+                      <span style={{
+                        fontSize: '0.95rem',
+                        fontWeight: '800',
+                        color: theme === 'dark' ? '#38bdf8' : '#8898aa',
+                        minWidth: '32px',
+                        textAlign: 'right'
+                      }}>
+                        {theme === 'dark' ? 'ON' : 'OFF'}
+                      </span>
+
+                      <div
+                        style={{
+                          width: '58px',
+                          height: '30px',
+                          borderRadius: '9999px',
+                          backgroundColor: theme === 'dark' ? '#1e293b' : '#334155',
+                          border: theme === 'dark' ? '1.5px solid #38bdf8' : '1.5px solid rgba(255, 255, 255, 0.15)',
+                          padding: '3px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          transition: 'all 0.25s ease',
+                          boxShadow: theme === 'dark' ? '0 0 12px rgba(56, 189, 248, 0.35)' : 'inset 0 1px 3px rgba(0,0,0,0.3)',
+                          position: 'relative'
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: '22px',
+                            height: '22px',
+                            borderRadius: '50%',
+                            backgroundColor: '#ffffff',
+                            transform: theme === 'dark' ? 'translateX(28px)' : 'translateX(0px)',
+                            transition: 'transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            boxShadow: '0 2px 5px rgba(0, 0, 0, 0.35)'
+                          }}
+                        >
+                          <Moon size={13} color="#0f172a" strokeWidth={2.5} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
               </div>
@@ -4444,14 +4950,6 @@ export default function FacultyDashboard({
                       Mark attendance manually per session for students without a smartphone.
                     </p>
                   </div>
-                  <button
-                    className="btn btn-secondary"
-                    onClick={() => { fetchTodaySessions(); fetchTodayAllAttendance(); fetchLiveLogs(); }}
-                    style={{ gap: '8px', flexShrink: 0 }}
-                  >
-                    <RefreshCw size={14} />
-                    Refresh
-                  </button>
                 </div>
               </div>
 
@@ -4492,45 +4990,50 @@ export default function FacultyDashboard({
                       </p>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
-                      <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        background: 'rgba(255,255,255,0.06)',
-                        border: '1px solid rgba(255,255,255,0.15)',
-                        borderRadius: '10px',
-                        padding: '6px 12px'
-                      }}>
-                        <Calendar size={16} color="var(--primary-color, #6366f1)" />
-                        <input
-                          type="date"
-                          value={manualDate}
-                          max={getLocalDateStr(new Date())}
-                          onChange={(e) => {
-                            if (e.target.value) {
-                              setManualDate(e.target.value);
-                            }
-                          }}
-                          style={{
-                            background: 'transparent',
-                            border: 'none',
-                            outline: 'none',
-                            color: 'var(--text-primary)',
-                            fontSize: '0.88rem',
-                            fontWeight: '600',
-                            cursor: 'pointer'
-                          }}
-                        />
-                      </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'nowrap', flexShrink: 0 }}>
+                      <input
+                        type="date"
+                        value={manualDate}
+                        max={getLocalDateStr(new Date())}
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            setManualDate(e.target.value);
+                          }
+                        }}
+                        style={{
+                          width: '155px',
+                          height: '38px',
+                          boxSizing: 'border-box',
+                          background: '#ffffff',
+                          border: '1.5px solid #cbd5e1',
+                          borderRadius: '12px',
+                          padding: '6px 12px',
+                          color: '#0f172a',
+                          fontSize: '0.88rem',
+                          fontWeight: '600',
+                          fontFamily: 'inherit',
+                          outline: 'none',
+                          cursor: 'pointer',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                          flexShrink: 0
+                        }}
+                      />
                       {manualDate !== getLocalDateStr(new Date()) && (
                         <button
                           type="button"
                           className="btn btn-secondary"
                           onClick={() => setManualDate(getLocalDateStr(new Date()))}
-                          style={{ fontSize: '0.78rem', padding: '6px 12px', borderRadius: '8px' }}
+                          style={{
+                            fontSize: '0.82rem',
+                            padding: '0 14px',
+                            height: '38px',
+                            borderRadius: '12px',
+                            fontWeight: '600',
+                            whiteSpace: 'nowrap',
+                            flexShrink: 0
+                          }}
                         >
-                          Jump to Today
+                          Today
                         </button>
                       )}
                     </div>
@@ -4562,11 +5065,17 @@ export default function FacultyDashboard({
                       }}>
                         {safeSessions.map(sess => {
                           const targetSemNum = String(sess.semester || '').replace(/\D/g, '');
-                          const targetStudents = (studentsList || []).filter(s => {
+                          let targetStudents = (studentsList || []).filter(s => {
                             const sSemNum = String(s.semester || '').replace(/\D/g, '');
-                            if (targetSemNum && sSemNum !== targetSemNum) return false;
+                            if (targetSemNum && sSemNum && sSemNum !== targetSemNum) return false;
                             return isDivMatch(s.division, sess.division);
                           });
+                          if (targetStudents.length === 0 && (studentsList || []).length > 0) {
+                            targetStudents = (studentsList || []).filter(s => isDivMatch(s.division, sess.division));
+                            if (targetStudents.length === 0) {
+                              targetStudents = (studentsList || []);
+                            }
+                          }
 
                           const safeLogs = Array.isArray(manualTodayLogs) ? manualTodayLogs : [];
                           const sessionPresentCount = safeLogs.filter(l => {
@@ -4587,7 +5096,7 @@ export default function FacultyDashboard({
                                 background: 'rgba(245,158,11,0.07)',
                                 border: '1.5px solid rgba(245,158,11,0.25)',
                                 borderRadius: '16px',
-                                padding: '22px 16px',
+                                padding: '20px 16px',
                                 cursor: 'pointer',
                                 textAlign: 'center',
                                 transition: 'all 0.2s ease'
@@ -4595,22 +5104,32 @@ export default function FacultyDashboard({
                               onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-4px)'; e.currentTarget.style.boxShadow = '0 10px 30px rgba(245,158,11,0.2)'; }}
                               onMouseLeave={e => { e.currentTarget.style.transform = 'none'; e.currentTarget.style.boxShadow = 'none'; }}
                             >
-                              <Folder size={36} color="#f59e0b" style={{ marginBottom: '10px' }} />
+                              <Folder size={36} color="#f59e0b" style={{ marginBottom: '8px' }} />
                               <div style={{ fontWeight: '700', fontSize: '1rem', color: 'var(--text-primary)' }}>
-                                Session {sess.sessionNumber}
+                                Session {sess.sessionNumber} ({sess.type})
                               </div>
                               <div style={{ fontSize: '0.82rem', fontWeight: '600', color: '#f59e0b', marginTop: '4px' }}>
                                 Sem {sess.semester || '?'} {sess.division && String(sess.division).trim().toUpperCase() !== 'ALL' ? `(Div ${sess.division})` : '(All Div)'}
                               </div>
-                              {sess.subject ? (
-                                <div style={{ fontSize: '0.84rem', fontWeight: '700', color: 'var(--text-primary)', marginTop: '8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                              {sess.subject && (
+                                <div style={{ fontSize: '0.82rem', fontWeight: '700', color: 'var(--text-primary)', marginTop: '4px' }}>
                                   📚 {sess.subject}
                                 </div>
-                              ) : (
-                                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '8px' }}>
-                                  {targetStudents.length} students
-                                </div>
                               )}
+                              <div style={{
+                                marginTop: '10px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                padding: '4px 10px',
+                                borderRadius: '12px',
+                                background: 'rgba(34, 197, 94, 0.12)',
+                                color: '#16a34a',
+                                fontSize: '0.78rem',
+                                fontWeight: '700'
+                              }}>
+                                ✓ {sessionPresentCount} / {targetStudents.length} Present
+                              </div>
                             </div>
                           );
                         })}
@@ -4621,15 +5140,53 @@ export default function FacultyDashboard({
               ) : (() => {
                 /* Inside a Session Folder */
                 const safeSessions = Array.isArray(facultySessionsToday) ? facultySessionsToday : [];
-                const selectedSess = safeSessions.find(s => s.id === manualSessionFolder);
-                if (!selectedSess) return null;
+                let selectedSess = safeSessions.find(s => String(s.id) === String(manualSessionFolder));
+                if (selectedSess) {
+                  lastSelectedSessionRef.current = selectedSess;
+                } else if (lastSelectedSessionRef.current && String(lastSelectedSessionRef.current.id) === String(manualSessionFolder)) {
+                  selectedSess = lastSelectedSessionRef.current;
+                }
+
+                if (!selectedSess) {
+                  if (safeSessions.length === 0) {
+                    return (
+                      <div className="glass-panel" style={{ ...styles.cardPadding, textAlign: 'center', padding: '40px 20px' }}>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: '600' }}>
+                          Loading session folder details...
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="glass-panel" style={{ ...styles.cardPadding, textAlign: 'center', padding: '40px 20px' }}>
+                      <Folder size={48} color="var(--text-muted)" style={{ marginBottom: '12px' }} />
+                      <p style={{ fontSize: '0.95rem', fontWeight: '600', color: 'var(--text-secondary)' }}>
+                        Session folder details not found for this date.
+                      </p>
+                      <button
+                        onClick={() => { setManualSessionFolder(null); setManualDivFilter('ALL'); setManualSearchName(''); }}
+                        className="btn btn-secondary"
+                        style={{ marginTop: '14px', gap: '8px', fontSize: '0.82rem', padding: '8px 16px', display: 'inline-flex', alignItems: 'center' }}
+                      >
+                        ← Back to All Session Folders
+                      </button>
+                    </div>
+                  );
+                }
 
                 const targetSemNum = String(selectedSess.semester || '').replace(/\D/g, '');
-                const targetStudents = (studentsList || []).filter(s => {
+                let targetStudents = (studentsList || []).filter(s => {
                   const sSemNum = String(s.semester || '').replace(/\D/g, '');
-                  if (targetSemNum && sSemNum !== targetSemNum) return false;
+                  if (targetSemNum && sSemNum && sSemNum !== targetSemNum) return false;
                   return isDivMatch(s.division, selectedSess.division);
                 });
+                if (targetStudents.length === 0 && (studentsList || []).length > 0) {
+                  targetStudents = (studentsList || []).filter(s => isDivMatch(s.division, selectedSess.division));
+                  if (targetStudents.length === 0) {
+                    targetStudents = (studentsList || []);
+                  }
+                }
 
                 const availableDivisions = (() => {
                   const divSet = new Set();
@@ -4751,6 +5308,7 @@ export default function FacultyDashboard({
                               if (!matchStudent) return false;
                               if (selectedSess.qr_session_id && String(l.qr_session_id) === String(selectedSess.qr_session_id)) return true;
                               if (selectedSess.otp_id && String(l.otp_id) === String(selectedSess.otp_id)) return true;
+                              if (!selectedSess.qr_session_id && !selectedSess.otp_id && l.device_id === 'Manual') return true;
                               return false;
                             });
 
@@ -4775,15 +5333,13 @@ export default function FacultyDashboard({
                                     <span style={{ fontSize: '0.8rem', color: '#f87171', fontWeight: '600' }}>
                                       {manualActionMsg.text}
                                     </span>
-                                  ) : isPhone ? (
-                                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Already via Phone</span>
-                                  ) : isManual ? (
+                                  ) : isPresent ? (
                                     <button
                                       onClick={() => handleManualUnmark(student, selectedSess)}
                                       style={{
                                         padding: '6px 14px', borderRadius: '10px', fontSize: '0.8rem', fontWeight: '600',
-                                        border: '1px solid rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.08)',
-                                        color: '#f87171', cursor: 'pointer', transition: 'all 0.15s ease'
+                                        border: '1.5px solid rgba(239,68,68,0.5)', background: 'rgba(239,68,68,0.1)',
+                                        color: '#ef4444', cursor: 'pointer', transition: 'all 0.15s ease'
                                       }}
                                       title="Mark Absent for this Session"
                                     >
@@ -5106,12 +5662,25 @@ export default function FacultyDashboard({
                     {availableSubjectsForSem.length > 0 ? (
                       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                         {availableSubjectsForSem.map((subObj, subIdx) => {
-                          const subName = subObj.subjectName || subObj.name || '';
-                          const subLabel = (subObj.shortName && String(subObj.shortName).trim() !== '') 
-                            ? String(subObj.shortName).trim() 
-                            : subName;
+                          const subName = String(subObj.subjectName || subObj.name || subObj.subject_name || subObj.subject || subObj.title || '').trim();
+                          const shortName = String(subObj.shortName || subObj.short_name || subObj.shortCode || subObj.short_code || subObj.short || subObj.alias || '').trim();
+                          const subCode = String(subObj.code || subObj.subjectCode || subObj.subject_code || '').trim();
                           const subType = subObj.type || subObj.subjectType || subObj.subject_type || subObj.category || 'Theory';
-                          const subCode = subObj.code || subObj.subjectCode || '';
+
+                          const isValidText = (str) => Boolean(str && str !== '-' && str !== '--' && str !== 'null' && str !== 'undefined');
+
+                          let subLabel = '';
+                          if (isValidText(shortName)) {
+                            subLabel = shortName;
+                          } else if (isValidText(subName)) {
+                            subLabel = subName;
+                          } else if (isValidText(subCode)) {
+                            subLabel = subCode;
+                          } else {
+                            subLabel = 'Subject';
+                          }
+
+                          const displayName = isValidText(subName) ? subName : subLabel;
 
                           const subUniqueKey = subObj.id ? String(subObj.id) : `${subLabel}_${subType}_${subCode}_${subIdx}`;
                           const isSelected = selectedSubjectKey === subUniqueKey || (selectedSubjectKey === '' && selectedSubject === subLabel);
@@ -5120,7 +5689,7 @@ export default function FacultyDashboard({
                             <button
                               key={subIdx}
                               type="button"
-                              title={`${subName} (${subType})`}
+                              title={`${displayName} (${subType})`}
                               onClick={() => {
                                 setSelectedSubjectKey(subUniqueKey);
                                 const fullSubValue = subCode ? `${subLabel} (${subCode})` : `${subLabel} (${subType})`;

@@ -460,11 +460,25 @@ router.put('/:id/reset-device', authenticateJWT, requireAdmin, async (req, res) 
 
 // POST import batch of students (High Performance Batch Validation & Insert)
 router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
-  const { students: importedList } = req.body;
+  const { students: importedList, allowedSemesters } = req.body;
   const passwordHashCache = new Map();
 
   if (!importedList || !Array.isArray(importedList) || importedList.length === 0) {
     return res.status(400).json({ error: 'Invalid data format. Non-empty array of students expected.' });
+  }
+
+  // Build a lookup set for allowed semesters if provided
+  let allowedSemSet = null;
+  if (Array.isArray(allowedSemesters) && allowedSemesters.length > 0) {
+    allowedSemSet = new Set();
+    allowedSemesters.forEach(s => {
+      const str = String(s || '').trim();
+      if (str) {
+        allowedSemSet.add(str.toLowerCase());
+        const digits = str.replace(/\D/g, '');
+        if (digits) allowedSemSet.add(digits);
+      }
+    });
   }
 
   try {
@@ -552,6 +566,17 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
       }
 
       const cleanSem = String(rawSem).trim();
+      const cleanSemLower = cleanSem.toLowerCase();
+      const cleanSemDigits = cleanSem.replace(/\D/g, '');
+
+      if (allowedSemSet && allowedSemSet.size > 0) {
+        const isSemAllowed = allowedSemSet.has(cleanSemLower) || (cleanSemDigits && allowedSemSet.has(cleanSemDigits));
+        if (!isSemAllowed) {
+          errors.push(`Row ${rowNum} (${name}): Semester '${rawSem}' is not available in configured semester options. Bulk upload only allows adding students for active semester options.`);
+          continue;
+        }
+      }
+
       const cleanDiv = rawDiv ? String(rawDiv).trim().toUpperCase() : '';
       const cleanRoll = rawRoll ? String(rawRoll).trim() : '';
 
