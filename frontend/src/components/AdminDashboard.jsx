@@ -1493,7 +1493,7 @@ export default function AdminDashboard({
 
         const facNameDisplay = fNames.length > 0
           ? fNames.join(', ')
-          : (s.facultyName && s.facultyName !== 'Unassigned' ? s.facultyName : 'Unassigned');
+          : ((Array.isArray(s.facultyIds) && s.facultyIds.length === 0) ? 'Unassigned' : (s.facultyName && s.facultyName !== 'Unassigned' ? s.facultyName : 'Unassigned'));
 
         subjectMap.set(groupKey, {
           ...s,
@@ -1516,23 +1516,31 @@ export default function AdminDashboard({
         if (s.code && !existing.code) existing.code = s.code;
         if (s.subjectCode && !existing.subjectCode) existing.subjectCode = s.subjectCode;
 
-        // Merge any assigned faculty IDs from s in globalSubjectsCatalog
-        let fIds = Array.isArray(s.facultyIds) ? s.facultyIds.map(String) : [];
-        if (fIds.length === 0 && s.facultyId) {
-          fIds = [String(s.facultyId)];
-        }
-        fIds.forEach(fid => {
-          if (fid && !existing.facultyIds.includes(fid)) {
-            existing.facultyIds.push(fid);
-            const fac = (faculties || []).find(f => String(f.id) === String(fid));
-            const facName = fac ? (fac.name || 'Faculty') : null;
-            if (facName && !existing.facultyNamesList.includes(facName)) {
-              existing.facultyNamesList.push(facName);
-            }
+        // If s.facultyIds is explicitly empty array [] (all faculties deassigned in catalog), override existing!
+        if (Array.isArray(s.facultyIds) && s.facultyIds.length === 0) {
+          existing.facultyIds = [];
+          existing.facultyNamesList = [];
+          existing.facultyName = 'Unassigned';
+          existing.facultyId = null;
+        } else {
+          // Merge any assigned faculty IDs from s in globalSubjectsCatalog
+          let fIds = Array.isArray(s.facultyIds) ? s.facultyIds.map(String) : [];
+          if (fIds.length === 0 && s.facultyId) {
+            fIds = [String(s.facultyId)];
           }
-        });
-        if (existing.facultyNamesList.length > 0) {
-          existing.facultyName = existing.facultyNamesList.join(', ');
+          fIds.forEach(fid => {
+            if (fid && !existing.facultyIds.includes(fid)) {
+              existing.facultyIds.push(fid);
+              const fac = (faculties || []).find(f => String(f.id) === String(fid));
+              const facName = fac ? (fac.name || 'Faculty') : null;
+              if (facName && !existing.facultyNamesList.includes(facName)) {
+                existing.facultyNamesList.push(facName);
+              }
+            }
+          });
+          if (existing.facultyNamesList.length > 0) {
+            existing.facultyName = existing.facultyNamesList.join(', ');
+          }
         }
       }
     });
@@ -2942,6 +2950,17 @@ export default function AdminDashboard({
         type: assigningSubject.type || assigningSubject.subjectType || 'Theory'
       };
 
+      const isSameSub = (sObj) => {
+        if (!sObj) return false;
+        const sCode = String(sObj.code || sObj.subjectCode || sObj.subject_code || sObj.subCode || sObj.sub_code || '').toLowerCase().trim();
+        const sSem = String(sObj.semester || '1').replace(/\D/g, '');
+        const sType = String(sObj.type || sObj.subjectType || 'Theory').toLowerCase().trim();
+        const sName = String(sObj.subjectName || sObj.name || '').toLowerCase().trim();
+
+        if (targetCode && sCode && targetCode === sCode && targetSem === sSem && sType === targetType) return true;
+        return sName === targetSubName && sSem === targetSem && sType === targetType;
+      };
+
       const updatePromises = [];
 
       const updatedFacultiesList = (faculties || []).map(f => {
@@ -2952,16 +2971,7 @@ export default function AdminDashboard({
           currentSubs = [...f.subjects];
         }
 
-        const hasThisSub = currentSubs.some(s => {
-          const sCode = String(s.code || s.subjectCode || '').toLowerCase().trim();
-          const sSem = String(s.semester || '1').replace(/\D/g, '');
-          const sType = String(s.type || s.subjectType || 'Theory').toLowerCase().trim();
-          if (targetCode && sCode && targetCode === sCode && targetSem === sSem && sType === targetType) return true;
-          return String(s.subjectName || s.name || '').toLowerCase().trim() === targetSubName &&
-                 sSem === targetSem &&
-                 sType === targetType;
-        });
-
+        const hasThisSub = currentSubs.some(isSameSub);
         const shouldHave = selectedAssignFacultyIds.includes(String(f.id));
 
         if (shouldHave && !hasThisSub) {
@@ -2977,16 +2987,7 @@ export default function AdminDashboard({
           );
           return { ...f, subjects: updatedSubs };
         } else if (!shouldHave && hasThisSub) {
-          const updatedSubs = currentSubs.filter(s => {
-            const sCode = String(s.code || s.subjectCode || '').toLowerCase().trim();
-            const sSem = String(s.semester || '1').replace(/\D/g, '');
-            const sType = String(s.type || s.subjectType || 'Theory').toLowerCase().trim();
-            if (targetCode && sCode && targetCode === sCode && targetSem === sSem && sType === targetType) return false;
-            const sameName = String(s.subjectName || s.name || '').toLowerCase().trim() === targetSubName;
-            const sameSem = sSem === targetSem;
-            const sameType = sType === targetType;
-            return !(sameName && sameSem && sameType);
-          });
+          const updatedSubs = currentSubs.filter(s => !isSameSub(s));
           const payload = { ...f, subjects: updatedSubs };
           delete payload.password;
           updatePromises.push(
@@ -3020,6 +3021,7 @@ export default function AdminDashboard({
         ...assigningSubject,
         ...subObjToAssign,
         globalKey,
+        facultyId: selectedAssignFacultyIds[0] || null,
         facultyIds: selectedAssignFacultyIds,
         facultyNamesList: assignedFacultyNames,
         facultyName: assignedFacultyNameStr
