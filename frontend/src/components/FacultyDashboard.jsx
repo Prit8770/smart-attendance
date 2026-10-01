@@ -3,7 +3,7 @@ import {
   Users, KeyRound, QrCode, BarChart3, Download, Search, CheckCircle,
   XCircle, Clock, ShieldAlert, LogOut, RefreshCw, Sun, Moon, Menu, X, Folder, Calendar,
   ClipboardList, UserCheck, UserX, Smartphone, HandIcon, GraduationCap, User, Settings, MapPin, Plus, Trash2, Edit,
-  LayoutGrid, ChevronDown, FileText, Check, TrendingUp, RotateCcw, ArrowLeft
+  LayoutGrid, ChevronDown, FileText, Check, TrendingUp, RotateCcw, ArrowLeft, Paperclip
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -951,7 +951,10 @@ export default function FacultyDashboard({
   // Smart Auto-Polling for Live Sessions, Profile & Stats (Fallback sync)
   useEffect(() => {
     const isSessionActive = activeQrSessionDetails !== null || activeOtpDetails !== null;
-    const intervalTime = isSessionActive ? 3000 : 4000;
+    if (!isSessionActive && activeTab === 'attendance_logs') {
+      return;
+    }
+    const intervalTime = isSessionActive ? 3000 : 30000;
 
     const interval = setInterval(() => {
       fetchMyProfile();
@@ -3956,9 +3959,17 @@ export default function FacultyDashboard({
                 )}
               </div>
 
-              {/* 4 VISUAL CHARTS GRID (Dynamic & Scoped to Faculty's Assigned Semesters) */}
-              {(() => {
-                // 0. Scope to Faculty's Assigned Semesters
+              {/* Reports charts and analytics cards removed */}
+              {false && (() => {
+                // Helpers for division, semester, and normalization
+                const getSemNum = (val) => String(val || '').replace(/\D/g, '') || null;
+                const getDivCode = (val) => {
+                  if (!val || String(val).trim() === '' || String(val).toUpperCase() === 'ALL') return null;
+                  return String(val).replace(/Div(?:ision)?\s*/i, '').trim().toUpperCase();
+                };
+                const normStr = (val) => String(val || '').trim().toLowerCase();
+
+                // 0. Scope to Faculty's Assigned Semesters & Subjects
                 const targetFacultySemesters = (facultyAssignedSemesters && facultyAssignedSemesters.length > 0)
                   ? facultyAssignedSemesters
                   : (assignedSemesters && assignedSemesters.length > 0)
@@ -3967,30 +3978,96 @@ export default function FacultyDashboard({
 
                 const targetSemSet = new Set(targetFacultySemesters.map(s => String(s).replace(/\D/g, '')));
 
-                // Filter students strictly for faculty's assigned semesters
+                // Filter active students strictly for faculty's assigned semesters and dropdown filters
                 const facultyStudents = (studentsList || []).filter(st => {
-                  if (!st || !st.semester) return true;
-                  const semNum = String(st.semester).replace(/\D/g, '');
-                  return targetSemSet.has(semNum);
+                  if (!st) return false;
+                  const stdSem = getSemNum(st.semester || st.sem);
+                  if (stdSem && !targetSemSet.has(stdSem)) return false;
+
+                  if (reportSemFilter && reportSemFilter !== 'ALL') {
+                    if (stdSem !== getSemNum(reportSemFilter)) return false;
+                  }
+                  if (reportDivFilter && reportDivFilter !== 'ALL') {
+                    const stdDiv = getDivCode(st.division || st.div);
+                    if (stdDiv !== getDivCode(reportDivFilter)) return false;
+                  }
+                  return true;
                 });
 
                 const totalFacultyStudents = facultyStudents.length;
 
-                // Filter sessions conducted for faculty's assigned semesters
+                // Filter sessions conducted for faculty's assigned semesters and dropdown filters
                 const allSessions = (facultySessionsToday || []).filter(sess => {
-                  if (!sess || !sess.semester) return true;
-                  const semNum = String(sess.semester).replace(/\D/g, '');
-                  return targetSemSet.has(semNum);
+                  if (!sess) return false;
+                  const sessSem = getSemNum(sess.semester);
+                  if (sessSem && !targetSemSet.has(sessSem)) return false;
+
+                  if (reportSemFilter && reportSemFilter !== 'ALL') {
+                    if (sessSem !== getSemNum(reportSemFilter)) return false;
+                  }
+                  if (reportDivFilter && reportDivFilter !== 'ALL') {
+                    const sessDiv = getDivCode(sess.division);
+                    if (sessDiv && sessDiv !== getDivCode(reportDivFilter)) return false;
+                  }
+                  if (reportSubjectFilter && reportSubjectFilter !== 'ALL') {
+                    const sessSub = normStr(sess.subject || sess.subject_name);
+                    if (sessSub && sessSub !== normStr(reportSubjectFilter)) return false;
+                  }
+                  return true;
                 });
 
-                // Filter logs for faculty's assigned semesters
+                // Filter logs for faculty's assigned semesters & dropdown filters
                 const allLogs = [...(liveLogs || []), ...(dateLogs || []), ...(reportData || []), ...(manualTodayLogs || [])].filter(l => {
                   if (!l) return false;
                   if (l.semester) {
-                    const semNum = String(l.semester).replace(/\D/g, '');
-                    if (!targetSemSet.has(semNum)) return false;
+                    const logSem = getSemNum(l.semester);
+                    if (logSem && !targetSemSet.has(logSem)) return false;
+                    if (reportSemFilter && reportSemFilter !== 'ALL' && logSem !== getSemNum(reportSemFilter)) return false;
+                  }
+                  if (reportDivFilter && reportDivFilter !== 'ALL' && l.division) {
+                    const logDiv = getDivCode(l.division);
+                    if (logDiv && logDiv !== getDivCode(reportDivFilter)) return false;
+                  }
+                  if (reportSubjectFilter && reportSubjectFilter !== 'ALL' && l.subject) {
+                    const logSub = normStr(l.subject);
+                    if (logSub && logSub !== normStr(reportSubjectFilter)) return false;
                   }
                   return true;
+                });
+
+                // Build session map per (Sem + Div)
+                const semDivSessionKeysMap = {};
+                const getSessKey = (item) => {
+                  if (!item) return null;
+                  if (item.qr_session_id) return `qr_${item.qr_session_id}`;
+                  if (item.otp_id) return `otp_${item.otp_id}`;
+                  if (item.session_id) return `sess_${item.session_id}`;
+                  const d = item.date || item.created_at || '';
+                  const sub = normStr(item.subject || item.subject_name);
+                  const t = item.time || item.id || '';
+                  return `${d}_${sub}_${t}`;
+                };
+
+                allSessions.forEach(sess => {
+                  const sSem = getSemNum(sess.semester) || '1';
+                  const sDiv = getDivCode(sess.division) || 'ALL';
+                  const sKey = getSessKey(sess);
+                  const comboKey = `${sSem}_${sDiv}`;
+                  if (!semDivSessionKeysMap[comboKey]) semDivSessionKeysMap[comboKey] = new Set();
+                  semDivSessionKeysMap[comboKey].add(sKey);
+                });
+
+                // Map student attendance
+                const studentAttendedMap = {};
+                allLogs.forEach(l => {
+                  const status = String(l.status || '').toLowerCase();
+                  if (status === 'success' || status === 'present') {
+                    const sId = normStr(l.student_id || l.enrollment_no || l.id);
+                    if (sId) {
+                      if (!studentAttendedMap[sId]) studentAttendedMap[sId] = new Set();
+                      studentAttendedMap[sId].add(getSessKey(l));
+                    }
+                  }
                 });
 
                 // 1. Percentage Attendance Brackets (Chart 1 - Donut)
@@ -3998,36 +4075,38 @@ export default function FacultyDashboard({
                 let b70to90 = 0;
                 let b50to70 = 0;
                 let bBelow50 = 0;
-
-                const studentPresentCounts = {};
-                allLogs.forEach(log => {
-                  const st = String(log.status || '').toLowerCase();
-                  if (st !== 'success' && st !== 'present') return;
-                  const sId = String(log.student_id || log.enrollment_no || '').trim().toLowerCase();
-                  if (sId) {
-                    studentPresentCounts[sId] = (studentPresentCounts[sId] || 0) + 1;
-                  }
-                });
-
-                const sessionCountForFaculty = allSessions.length;
+                let presentLogs = 0;
+                let totalExpectedAttendance = 0;
 
                 facultyStudents.forEach(st => {
-                  const sId = String(st.id || st.enrollment_no || st._id || '').trim().toLowerCase();
-                  const pCount = studentPresentCounts[sId] || 0;
-                  
-                  let pct = 0;
-                  if (sessionCountForFaculty > 0) {
-                    pct = Math.min(100, Math.round((pCount / sessionCountForFaculty) * 100));
-                  } else if (pCount > 0) {
-                    pct = 100;
-                  } else {
-                    pct = 0;
-                  }
+                  const stSem = getSemNum(st.semester || st.sem || '1');
+                  const stDiv = getDivCode(st.division || st.div || 'A');
 
-                  if (pct >= 90) b90to100++;
-                  else if (pct >= 70) b70to90++;
-                  else if (pct >= 50) b50to70++;
-                  else bBelow50++;
+                  const divSpecificKeys = semDivSessionKeysMap[`${stSem}_${stDiv}`];
+                  const semAllKeys = semDivSessionKeysMap[`${stSem}_ALL`];
+
+                  const combinedKeys = new Set();
+                  if (divSpecificKeys) divSpecificKeys.forEach(k => combinedKeys.add(k));
+                  if (semAllKeys) semAllKeys.forEach(k => combinedKeys.add(k));
+
+                  const totalConducted = combinedKeys.size;
+                  const stId = normStr(st.id || st.enrollment_no || st._id);
+                  const attendedSet = studentAttendedMap[stId];
+                  const attendedCount = attendedSet ? attendedSet.size : 0;
+
+                  if (totalConducted > 0) {
+                    totalExpectedAttendance += totalConducted;
+                    presentLogs += Math.min(totalConducted, attendedCount);
+                    const pct = Math.min(100, Math.round((attendedCount / totalConducted) * 100));
+                    if (pct >= 90) b90to100++;
+                    else if (pct >= 70) b70to90++;
+                    else if (pct >= 50) b50to70++;
+                    else bBelow50++;
+                  } else if (attendedCount > 0) {
+                    totalExpectedAttendance += attendedCount;
+                    presentLogs += attendedCount;
+                    b90to100++;
+                  }
                 });
 
                 const bracketTotal = b90to100 + b70to90 + b50to70 + bBelow50;
@@ -4060,23 +4139,7 @@ export default function FacultyDashboard({
                 });
 
                 // 3. Attendance Overview (Chart 3 - Donut)
-                let presentLogs = 0;
-                allLogs.forEach(l => {
-                  if (!l) return;
-                  const status = String(l.status || '').toLowerCase();
-                  if (status === 'success' || status === 'present') presentLogs++;
-                });
-
-                const conductedSessionsCount = allSessions.length;
-                const totalExpectedAttendance = conductedSessionsCount * totalFacultyStudents;
-
-                let absentLogs = 0;
-                if (totalExpectedAttendance > 0) {
-                  absentLogs = Math.max(0, totalExpectedAttendance - presentLogs);
-                } else {
-                  absentLogs = 0;
-                }
-
+                const absentLogs = Math.max(0, totalExpectedAttendance - presentLogs);
                 const totalOverviewLogs = presentLogs + absentLogs;
                 const presentPct = totalOverviewLogs > 0 ? ((presentLogs / totalOverviewLogs) * 100).toFixed(2) : '0.00';
                 const absentPct = totalOverviewLogs > 0 ? ((absentLogs / totalOverviewLogs) * 100).toFixed(2) : '0.00';
@@ -4135,6 +4198,136 @@ export default function FacultyDashboard({
                   { value: absentLogs, color: '#ef4444' }
                 ], totalOverviewLogs);
 
+                // 5. Dynamic Summary Cards Metrics (Daily Summary, Monthly Report, Attendance Analytics)
+                const todayStr = new Date().toISOString().split('T')[0];
+
+                // A. Daily Summary (Today)
+                const todaySessions = allSessions.filter(sess => {
+                  if (!sess) return false;
+                  const dVal = sess.date || sess.created_at;
+                  if (!dVal) return false;
+                  return dVal.split('T')[0] === todayStr;
+                });
+
+                const todayPresentSet = new Set();
+                allLogs.forEach(l => {
+                  if (!l) return;
+                  const st = String(l.status || '').toLowerCase();
+                  if (st !== 'success' && st !== 'present') return;
+                  const dVal = l.date || l.created_at;
+                  if (!dVal) return;
+                  if (dVal.split('T')[0] === todayStr) {
+                    const stdId = String(l.student_id || l.enrollment_no || l.id || '').toLowerCase();
+                    const sId = l.qr_session_id || l.otp_id || l.session_id || l.time || 'gen';
+                    todayPresentSet.add(`${stdId}_${sId}`);
+                  }
+                });
+                const todayPresentCount = todayPresentSet.size;
+
+                let todayExpectedCount = 0;
+                if (todaySessions.length > 0) {
+                  todaySessions.forEach(sess => {
+                    const sSem = getSemNum(sess.semester);
+                    const sDiv = getDivCode(sess.division);
+
+                    const matchingStudents = facultyStudents.filter(std => {
+                      const stdSem = getSemNum(std.semester || std.sem);
+                      const stdDiv = getDivCode(std.division || std.div);
+
+                      if (sSem && stdSem && stdSem !== sSem) return false;
+                      if (sDiv && stdDiv && stdDiv !== sDiv) return false;
+                      return true;
+                    });
+
+                    todayExpectedCount += matchingStudents.length > 0 ? matchingStudents.length : totalFacultyStudents;
+                  });
+                } else {
+                  if (todayPresentCount > 0) {
+                    todayExpectedCount = Math.max(todayPresentCount, totalFacultyStudents);
+                  }
+                }
+                const todayAbsentCount = Math.max(0, todayExpectedCount - todayPresentCount);
+                const todayRate = todayExpectedCount > 0 ? ((todayPresentCount / todayExpectedCount) * 100).toFixed(2) : '0.00';
+
+                // B. Monthly Summary
+                let targetMonthStr = '';
+                if ((reportType === 'subject_date_wise' || reportType === 'semester_date_wise') && reportStartDate) {
+                  targetMonthStr = reportStartDate.substring(0, 7);
+                }
+                if (!targetMonthStr || !targetMonthStr.includes('-')) {
+                  const d = new Date();
+                  targetMonthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                }
+
+                const [targetYr, targetMo] = targetMonthStr.split('-').map(Number);
+                const targetMonthDateObj = new Date(targetYr, targetMo - 1, 1);
+                const nowMonthName = isNaN(targetMonthDateObj.getTime())
+                  ? new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+                  : targetMonthDateObj.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
+                const monthlySessions = allSessions.filter(sess => {
+                  if (!sess) return false;
+                  const dVal = sess.date || sess.created_at;
+                  if (!dVal) return false;
+                  return dVal.startsWith(targetMonthStr);
+                });
+
+                const monthlyPresentSet = new Set();
+                allLogs.forEach(l => {
+                  if (!l) return;
+                  const st = String(l.status || '').toLowerCase();
+                  if (st !== 'success' && st !== 'present') return;
+                  const dVal = l.date || l.created_at;
+                  if (!dVal) return;
+                  if (dVal.startsWith(targetMonthStr)) {
+                    const stdId = String(l.student_id || l.enrollment_no || l.id || '').toLowerCase();
+                    const sId = l.qr_session_id || l.otp_id || l.session_id || l.time || 'gen';
+                    monthlyPresentSet.add(`${stdId}_${sId}`);
+                  }
+                });
+                const monthlyPresentCount = monthlyPresentSet.size;
+
+                let monthlyExpectedCount = 0;
+                if (monthlySessions.length > 0) {
+                  monthlySessions.forEach(sess => {
+                    const sSem = getSemNum(sess.semester);
+                    const sDiv = getDivCode(sess.division);
+
+                    const matchingStudents = facultyStudents.filter(std => {
+                      const stdSem = getSemNum(std.semester || std.sem);
+                      const stdDiv = getDivCode(std.division || std.div);
+
+                      if (sSem && stdSem && stdSem !== sSem) return false;
+                      if (sDiv && stdDiv && stdDiv !== sDiv) return false;
+                      return true;
+                    });
+
+                    monthlyExpectedCount += matchingStudents.length > 0 ? matchingStudents.length : totalFacultyStudents;
+                  });
+                } else {
+                  if (monthlyPresentCount > 0) {
+                    monthlyExpectedCount = Math.max(monthlyPresentCount, totalFacultyStudents);
+                  }
+                }
+                const monthlyAbsentCount = Math.max(0, monthlyExpectedCount - monthlyPresentCount);
+                const monthlyAvgRate = monthlyExpectedCount > 0 ? ((monthlyPresentCount / monthlyExpectedCount) * 100).toFixed(2) : '0.00';
+
+                // C. Attendance Analytics (Best & Lowest Day)
+                const fullDayNames = { Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday', Sat: 'Saturday' };
+                let bestDay = 'N/A';
+                let lowestDay = 'N/A';
+
+                if (weeklyData && weeklyData.length > 0) {
+                  const activeDays = weeklyData.filter(d => d.pct > 0);
+                  if (activeDays.length > 0) {
+                    const sortedBest = [...activeDays].sort((a, b) => b.pct - a.pct);
+                    bestDay = `${fullDayNames[sortedBest[0].day] || sortedBest[0].day} (${sortedBest[0].pct}%)`;
+
+                    const sortedLowest = [...activeDays].sort((a, b) => a.pct - b.pct);
+                    lowestDay = `${fullDayNames[sortedLowest[0].day] || sortedLowest[0].day} (${sortedLowest[0].pct}%)`;
+                  }
+                }
+
                 return (
                   <>
                     <div className="admin-reports-charts-container" style={{
@@ -4165,6 +4358,7 @@ export default function FacultyDashboard({
                       }}>
                       <div style={{ position: 'relative', width: '150px', height: '150px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto' }}>
                         <svg viewBox="0 0 140 140" style={{ width: '140px', height: '140px', transform: 'rotate(-90deg)' }}>
+                          <circle cx="70" cy="70" r="52" fill="none" stroke="#e2e8f0" strokeWidth="18" />
                           {donut1Segments.map((seg, i) => (
                             <circle
                               key={i}
@@ -4423,17 +4617,17 @@ export default function FacultyDashboard({
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1, gap: '4px' }}>
                             <div style={{ textAlign: 'center', flex: 1 }}>
                               <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>Present</div>
-                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#16a34a' }}>1,102</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#16a34a' }}>{todayPresentCount.toLocaleString()}</div>
                             </div>
                             <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
                             <div style={{ textAlign: 'center', flex: 1 }}>
                               <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px' }}>Absent</div>
-                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#dc2626' }}>98</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#dc2626' }}>{todayAbsentCount.toLocaleString()}</div>
                             </div>
                             <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
                             <div style={{ textAlign: 'center', flex: 1 }}>
                               <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Attendance Rate</div>
-                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#2563eb' }}>85.12%</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#2563eb' }}>{todayRate}%</div>
                             </div>
                           </div>
                         </div>
@@ -4451,7 +4645,7 @@ export default function FacultyDashboard({
                         justifyContent: 'space-between'
                       }}>
                         <h4 style={{ fontSize: '0.98rem', fontWeight: '700', color: '#1e293b', margin: '0 0 16px 0' }}>
-                          Monthly Report (May 2026)
+                          Monthly Report ({nowMonthName})
                         </h4>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
                           <div style={{
@@ -4469,17 +4663,17 @@ export default function FacultyDashboard({
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flex: 1, gap: '4px' }}>
                             <div style={{ textAlign: 'center', flex: 1 }}>
                               <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Avg. Attendance</div>
-                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#2563eb' }}>84.62%</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#2563eb' }}>{monthlyAvgRate}%</div>
                             </div>
                             <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
                             <div style={{ textAlign: 'center', flex: 1 }}>
                               <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Total Present</div>
-                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#16a34a' }}>22,110</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#16a34a' }}>{monthlyPresentCount.toLocaleString()}</div>
                             </div>
                             <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
                             <div style={{ textAlign: 'center', flex: 1 }}>
                               <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Total Absent</div>
-                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#dc2626' }}>2,760</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#dc2626' }}>{monthlyAbsentCount.toLocaleString()}</div>
                             </div>
                           </div>
                         </div>
@@ -4515,12 +4709,12 @@ export default function FacultyDashboard({
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around', flex: 1, gap: '8px' }}>
                             <div style={{ textAlign: 'center', flex: 1 }}>
                               <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Best Attendance Day</div>
-                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#16a34a' }}>Thursday</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#16a34a' }}>{bestDay}</div>
                             </div>
                             <div style={{ width: '1px', height: '36px', background: '#e2e8f0' }} />
                             <div style={{ textAlign: 'center', flex: 1 }}>
                               <div style={{ fontSize: '0.73rem', fontWeight: '600', color: '#64748b', marginBottom: '4px', whiteSpace: 'nowrap' }}>Lowest Attendance Day</div>
-                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#dc2626' }}>Monday</div>
+                              <div style={{ fontSize: '1.2rem', fontWeight: '800', color: '#dc2626' }}>{lowestDay}</div>
                             </div>
                         </div>
                       </div>
@@ -4589,7 +4783,7 @@ export default function FacultyDashboard({
                         className="glass-input"
                         placeholder="Enter Faculty Email Address"
                         value={profileForm.email}
-                        onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
+                        onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value.toLowerCase() })}
                         required
                       />
                     </div>
@@ -5510,7 +5704,25 @@ export default function FacultyDashboard({
                               </tr>
                               <tr key={`reason-${l.id}`} style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1.5px solid var(--border-light)' }}>
                                 <td colSpan="6" style={{ padding: '8px 16px 12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                  📝 <strong style={{ color: 'var(--text-primary)' }}>Reason / Remarks:</strong> {l.reason || 'No detailed reason provided.'}
+                                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                                    <div>
+                                      📝 <strong style={{ color: 'var(--text-primary)' }}>Reason / Remarks:</strong> {l.reason || 'No detailed reason provided.'}
+                                    </div>
+                                    {l.attachment && (
+                                      <div>
+                                        <a
+                                          href={l.attachment}
+                                          download={l.file_name || `Leave_Attachment_${l.id}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="btn btn-sm btn-primary"
+                                          style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', fontSize: '0.8rem', borderRadius: '8px', textDecoration: 'none', background: '#2563eb', color: '#fff', fontWeight: '600' }}
+                                        >
+                                          <Paperclip size={14} /> Download File ({l.file_name || 'Attachment'})
+                                        </a>
+                                      </div>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             </React.Fragment>

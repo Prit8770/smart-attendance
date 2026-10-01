@@ -244,10 +244,10 @@ export default function SemesterAttendanceMatrix({
     });
   };
 
-  // Re-fetch when semester or filters or session history change
+  // Re-fetch when semester or filter selections change
   useEffect(() => {
     fetchSemesterMatrix(selectedSem);
-  }, [selectedSem, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter, qrSessionHistory, liveLogs]);
+  }, [selectedSem, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
 
   // Available semesters for filter dropdown (Strictly assigned semesters if in Faculty mode)
   const allSemestersList = useMemo(() => {

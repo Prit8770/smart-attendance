@@ -1,8 +1,176 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
+const fs = require('fs');
+const path = require('path');
 const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
+const { notifyChange } = require('../syncEmitter');
+
+/**
+ * Permanently purge all traces of student(s) from database and local storage:
+ * - attendance table (by student_id and enrollment_no)
+ * - leaves table & local leaves.json (by student_id, enrollment_no, student_enrollment, email)
+ * - notices table & local notices.json (by studentId, studentEnrollment, student_id, enrollment_no & readBy arrays)
+ * - otp table (by email, mobile, enrollment_no)
+ * - students table (parent record)
+ */
+async function purgeStudentRecords(studentIdList) {
+  if (!studentIdList || !Array.isArray(studentIdList) || studentIdList.length === 0) return;
+
+  const idSet = new Set();
+  studentIdList.forEach(id => {
+    if (id !== null && id !== undefined && String(id).trim() !== '') {
+      idSet.add(id);
+      idSet.add(String(id));
+      if (!isNaN(Number(id))) idSet.add(Number(id));
+    }
+  });
+  const targetIds = Array.from(idSet);
+  if (targetIds.length === 0) return;
+
+  // 1. Fetch target student metadata before deleting
+  let targetStudents = [];
+  try {
+    const { data } = await supabase.from('students').select('id, enrollment_no, email, mobile').in('id', targetIds);
+    if (data && data.length > 0) targetStudents = data;
+  } catch (err) {
+    console.warn('Error fetching student details for purge:', err.message);
+  }
+
+  const enrollments = Array.from(new Set(
+    targetStudents
+      .map(s => s.enrollment_no)
+      .filter(Boolean)
+      .flatMap(e => [String(e).trim(), String(e).trim().toLowerCase(), String(e).trim().toUpperCase()])
+  ));
+
+  const emails = Array.from(new Set(
+    targetStudents
+      .map(s => s.email)
+      .filter(Boolean)
+      .flatMap(e => [String(e).trim(), String(e).trim().toLowerCase()])
+  ));
+
+  const mobiles = Array.from(new Set(
+    targetStudents
+      .map(s => s.mobile)
+      .filter(Boolean)
+      .map(m => String(m).trim())
+  ));
+
+  // 2. Delete attendance child rows
+  try {
+    await supabase.from('attendance').delete().in('student_id', targetIds);
+    if (enrollments.length > 0) {
+      await supabase.from('attendance').delete().in('enrollment_no', enrollments);
+    }
+  } catch (attErr) {
+    console.warn('Attendance deletion cleanup warning:', attErr.message);
+  }
+
+  // 3. Delete leaves (Supabase + local leaves.json)
+  try {
+    await supabase.from('leaves').delete().in('student_id', targetIds);
+    if (enrollments.length > 0) {
+      await supabase.from('leaves').delete().in('enrollment_no', enrollments);
+      await supabase.from('leaves').delete().in('student_enrollment', enrollments);
+    }
+    if (emails.length > 0) {
+      await supabase.from('leaves').delete().in('email', emails);
+    }
+  } catch (leafErr) {
+    console.warn('Leaves Supabase purge warning:', leafErr.message);
+  }
+
+  try {
+    const leavesFilePath = path.join(__dirname, '../data/leaves.json');
+    if (fs.existsSync(leavesFilePath)) {
+      const content = fs.readFileSync(leavesFilePath, 'utf8');
+      const leavesList = JSON.parse(content) || [];
+      const filteredLeaves = leavesList.filter(l => {
+        const sId = l.student_id;
+        const eNo = l.enrollment_no || l.student_enrollment;
+        const em = l.email;
+        if (sId && targetIds.some(id => String(id) === String(sId))) return false;
+        if (eNo && enrollments.some(e => String(e).toLowerCase() === String(eNo).toLowerCase())) return false;
+        if (em && emails.some(e => String(e).toLowerCase() === String(em).toLowerCase())) return false;
+        return true;
+      });
+      fs.writeFileSync(leavesFilePath, JSON.stringify(filteredLeaves, null, 2), 'utf8');
+    }
+  } catch (localLeafErr) {
+    console.warn('Local leaves.json purge warning:', localLeafErr.message);
+  }
+
+  // 4. Delete notices (Supabase + local notices.json)
+  try {
+    if (targetIds.length > 0) {
+      await supabase.from('notices').delete().in('student_id', targetIds);
+      await supabase.from('notices').delete().in('studentId', targetIds);
+    }
+    if (enrollments.length > 0) {
+      await supabase.from('notices').delete().in('student_enrollment', enrollments);
+      await supabase.from('notices').delete().in('studentEnrollment', enrollments);
+      await supabase.from('notices').delete().in('enrollment_no', enrollments);
+    }
+  } catch (notErr) {
+    console.warn('Notices Supabase purge warning:', notErr.message);
+  }
+
+  try {
+    const noticesFilePath = path.join(__dirname, '../data/notices.json');
+    if (fs.existsSync(noticesFilePath)) {
+      const content = fs.readFileSync(noticesFilePath, 'utf8');
+      const noticesList = JSON.parse(content) || [];
+      const updatedNotices = noticesList.filter(n => {
+        const sId = n.studentId || n.student_id;
+        const eNo = n.studentEnrollment || n.student_enrollment || n.enrollment_no;
+        if (sId && targetIds.some(id => String(id) === String(sId))) return false;
+        if (eNo && enrollments.some(e => String(e).toLowerCase() === String(eNo).toLowerCase())) return false;
+        return true;
+      }).map(n => {
+        if (Array.isArray(n.readBy)) {
+          n.readBy = n.readBy.filter(rb => 
+            !targetIds.some(id => String(id).toLowerCase() === String(rb).toLowerCase()) &&
+            !enrollments.some(e => String(e).toLowerCase() === String(rb).toLowerCase()) &&
+            !emails.some(e => String(e).toLowerCase() === String(rb).toLowerCase())
+          );
+        }
+        return n;
+      });
+      fs.writeFileSync(noticesFilePath, JSON.stringify(updatedNotices, null, 2), 'utf8');
+    }
+  } catch (localNotErr) {
+    console.warn('Local notices.json purge warning:', localNotErr.message);
+  }
+
+  // 5. Delete OTP records
+  try {
+    if (emails.length > 0) await supabase.from('otp').delete().in('email', emails);
+    if (mobiles.length > 0) await supabase.from('otp').delete().in('mobile', mobiles);
+  } catch (otpErr) {
+    console.warn('OTP purge warning:', otpErr.message);
+  }
+
+  // 6. Delete parent row(s) from students table
+  try {
+    await supabase.from('students').delete().in('id', targetIds);
+    if (enrollments.length > 0) {
+      await supabase.from('students').delete().in('enrollment_no', enrollments);
+    }
+  } catch (stuErr) {
+    console.error('Students parent table deletion error:', stuErr);
+    throw stuErr;
+  }
+
+  // 7. Realtime broadcast sync
+  try {
+    notifyChange('DATA_CHANGED', { entity: 'students', action: 'delete' });
+    notifyChange('DATA_CHANGED', { entity: 'attendance', action: 'delete' });
+    notifyChange('DATA_CHANGED', { entity: 'leaves', action: 'delete' });
+  } catch (e) {}
+}
 
 // Helper to generate a strong password meeting policy (min 8 chars, 1 uppercase, 1 digit, 1 special character)
 function generatePassword() {
@@ -203,6 +371,14 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
     };
     if (cleanRoll) newStudentObj.roll_no = cleanRoll;
     if (cleanDiv) newStudentObj.division = cleanDiv;
+
+    // Pre-insert cleanup for cleanEnroll to guarantee fresh zero-data student start
+    if (cleanEnroll) {
+      try {
+        await supabase.from('attendance').delete().eq('enrollment_no', cleanEnroll);
+        await supabase.from('leaves').delete().or(`enrollment_no.eq.${cleanEnroll},student_enrollment.eq.${cleanEnroll}`);
+      } catch (e) {}
+    }
 
     let { data: result, error } = await supabase.from('students').insert([newStudentObj]).select().single();
 
@@ -712,7 +888,7 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
   }
 });
 
-// POST bulk delete students (Sequential FK-Safe Chunked Execution for Unlimited Students)
+// POST bulk delete students (Sequential FK-Safe Permanent Purge)
 router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
   const { studentIds } = req.body;
 
@@ -729,31 +905,11 @@ router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
     });
     const allIds = Array.from(idSet);
 
-    // Process in batches of 500 to handle thousands of records safely without payload or Postgres IN-clause limits
+    // Process in batches of 500
     const chunkSize = 500;
     for (let i = 0; i < allIds.length; i += chunkSize) {
       const chunkIds = allIds.slice(i, i + chunkSize);
-
-      // 1. Fetch enrollment numbers for chunk students
-      const { data: targetStudents } = await supabase.from('students').select('id, enrollment_no').in('id', chunkIds);
-      const enrollments = (targetStudents || []).map(s => s.enrollment_no).filter(Boolean);
-
-      // 2. Delete attendance child rows FIRST
-      try {
-        await supabase.from('attendance').delete().in('student_id', chunkIds);
-        if (enrollments.length > 0) {
-          await supabase.from('attendance').delete().in('enrollment_no', enrollments);
-        }
-      } catch (attErr) {
-        console.warn('Attendance bulk cleanup warning:', attErr.message);
-      }
-
-      // 3. Delete parent rows from students table
-      const { error: stuErr } = await supabase.from('students').delete().in('id', chunkIds);
-      if (stuErr) {
-        console.error('Bulk delete student chunk error:', stuErr);
-        return res.status(400).json({ error: stuErr.message || 'Failed to delete selected students.' });
-      }
+      await purgeStudentRecords(chunkIds);
     }
 
     res.json({ success: true, message: `Successfully deleted ${studentIds.length} student(s).` });
@@ -763,36 +919,12 @@ router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
   }
 });
 
-// DELETE single student (Sequential FK-Safe Execution)
+// DELETE single student (Permanent FK-Safe Purge)
 router.delete('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
 
   try {
-    const idSet = new Set([id, String(id)]);
-    if (!isNaN(Number(id))) idSet.add(Number(id));
-    const targetIds = Array.from(idSet);
-
-    // 1. Fetch student enrollment_no if present
-    const { data: studentObj } = await supabase.from('students').select('id, enrollment_no').in('id', targetIds).maybeSingle();
-    const enrollNo = studentObj ? studentObj.enrollment_no : null;
-
-    // 2. Delete attendance child rows FIRST to avoid foreign key violation
-    try {
-      await supabase.from('attendance').delete().in('student_id', targetIds);
-      if (enrollNo) {
-        await supabase.from('attendance').delete().eq('enrollment_no', enrollNo);
-      }
-    } catch (attErr) {
-      console.warn('Attendance cleanup warning:', attErr.message);
-    }
-
-    // 3. Delete parent student row from database
-    const { error: stuError } = await supabase.from('students').delete().in('id', targetIds);
-    if (stuError) {
-      console.error('Error deleting student:', stuError);
-      return res.status(400).json({ error: stuError.message || 'Failed to delete student' });
-    }
-
+    await purgeStudentRecords([id]);
     res.json({ success: true, message: 'Student deleted successfully' });
   } catch (err) {
     console.error('Error deleting student:', err);
@@ -845,23 +977,12 @@ router.post('/promote', authenticateJWT, requireAdmin, async (req, res) => {
     let graduatedCount = 0;
     let promotedCount = 0;
 
-    // Delete Sem 8 students and their attendance records
+    // Delete Sem 8 students and all associated records permanently
     if (sem8StudentIds.length > 0) {
       const chunkSize = 500;
       for (let i = 0; i < sem8StudentIds.length; i += chunkSize) {
         const chunkIds = sem8StudentIds.slice(i, i + chunkSize);
-        const chunkEnrollments = sem8Enrollments.slice(i, i + chunkSize);
-
-        try {
-          await supabase.from('attendance').delete().in('student_id', chunkIds);
-          if (chunkEnrollments.length > 0) {
-            await supabase.from('attendance').delete().in('enrollment_no', chunkEnrollments);
-          }
-        } catch (attErr) {
-          console.warn('Attendance sem 8 cleanup warning:', attErr.message);
-        }
-
-        await supabase.from('students').delete().in('id', chunkIds);
+        await purgeStudentRecords(chunkIds);
       }
       graduatedCount = sem8StudentIds.length;
     }

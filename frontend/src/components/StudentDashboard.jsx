@@ -4,7 +4,7 @@ import {
   Smartphone, Sun, Moon, QrCode, Camera, ShieldAlert, ZoomIn, ZoomOut, GraduationCap,
   LayoutGrid, BarChart3, Calendar, FileText, Bell, Settings, ShieldCheck, Clock, 
   BookOpen, Menu, X, ChevronRight, Send, Check, AlertCircle, Award, Info, Search, Building2,
-  KeyRound, ClipboardList, Download
+  KeyRound, ClipboardList, Download, Paperclip
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -122,9 +122,53 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   const [leaveFrom, setLeaveFrom] = useState(getTodayString());
   const [leaveTo, setLeaveTo] = useState(getTodayString());
   const [leaveReason, setLeaveReason] = useState('');
+  const [leaveFile, setLeaveFile] = useState(null);
+  const [leaveFileName, setLeaveFileName] = useState('');
   const [leaveMsg, setLeaveMsg] = useState(null);
   const [recipientsList, setRecipientsList] = useState([]);
   const [selectedRecipientId, setSelectedRecipientId] = useState('ADMIN');
+
+  const handleLeaveFileChange = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 1024 * 1024) {
+      const errMsg = 'Maximum size is 1MB';
+      if (typeof showToast === 'function') showToast(errMsg, 'error');
+      setLeaveMsg({ text: errMsg, type: 'danger' });
+      e.target.value = '';
+      return;
+    }
+
+    const fileType = (file.type || '').toLowerCase();
+    const fileName = (file.name || '').toLowerCase();
+    const isPdf = fileType === 'application/pdf' || fileName.endsWith('.pdf');
+    const isImage = fileType.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(fileName);
+
+    if (!isPdf && !isImage) {
+      const errMsg = 'Only PDF or Photo/Image files are allowed!';
+      if (typeof showToast === 'function') showToast(errMsg, 'error');
+      setLeaveMsg({ text: errMsg, type: 'danger' });
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      setLeaveFile(reader.result);
+      setLeaveFileName(file.name);
+      if (typeof showToast === 'function') showToast(`Attached: ${file.name}`, 'info');
+      setLeaveMsg({ text: `File attached: ${file.name}`, type: 'success' });
+      setTimeout(() => setLeaveMsg(null), 3000);
+    };
+    reader.onerror = () => {
+      const errMsg = 'Failed to read file';
+      if (typeof showToast === 'function') showToast(errMsg, 'error');
+      setLeaveMsg({ text: errMsg, type: 'danger' });
+      e.target.value = '';
+    };
+    reader.readAsDataURL(file);
+  };
 
   // Get or generate device ID for hardware cooldown
   const getDeviceId = () => {
@@ -1035,7 +1079,9 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           recipient_name: recipientName,
           from: finalFrom,
           to: finalTo,
-          reason: leaveReason
+          reason: leaveReason,
+          attachment: leaveFile,
+          file_name: leaveFileName
         })
       });
 
@@ -1045,6 +1091,10 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
         setLeaveFrom(getTodayString());
         setLeaveTo(getTodayString());
         setLeaveReason('');
+        setLeaveFile(null);
+        setLeaveFileName('');
+        const fileInp = document.getElementById('leave-file-input');
+        if (fileInp) fileInp.value = '';
         setLeaveMsg({ text: 'Leave application submitted successfully for review!', type: 'success' });
         fetchLeaves();
         setTimeout(() => setLeaveMsg(null), 4000);
@@ -2338,7 +2388,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                     </>
                   )}
 
-                  <div style={{ gridColumn: isMobile ? '1 / -1' : (leaveDurationMode === 'multiple' ? '1 / span 3' : '1 / span 2'), display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <div style={{ gridColumn: isMobile ? '1 / -1' : 'span 2', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                     <label style={{ fontSize: '0.82rem', color: '#94a3b8' }}>Reason / Remarks</label>
                     <textarea
                       rows={2}
@@ -2347,6 +2397,67 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                       onChange={(e) => setLeaveReason(e.target.value)}
                       style={{ padding: '10px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: '#fff', resize: 'vertical' }}
                     />
+                  </div>
+
+                  {/* File Upload Field beside Reason / Remarks */}
+                  <div style={{ gridColumn: isMobile ? '1 / -1' : 'span 1', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    <label style={{ fontSize: '0.82rem', color: '#94a3b8', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span>Attach Document</span>
+                      <span style={{ fontSize: '0.75rem', color: '#64748b' }}>PDF / Image (Max 1MB)</span>
+                    </label>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <input
+                        type="file"
+                        id="leave-file-input"
+                        accept="application/pdf,image/*,.pdf,.jpg,.jpeg,.png,.webp"
+                        onChange={handleLeaveFileChange}
+                        style={{ display: 'none' }}
+                      />
+                      <label
+                        htmlFor="leave-file-input"
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justify: 'center',
+                          gap: '8px',
+                          padding: '10px 14px',
+                          borderRadius: '8px',
+                          border: '1px dashed rgba(59, 130, 246, 0.4)',
+                          background: leaveFileName ? 'rgba(16, 185, 129, 0.1)' : 'rgba(59, 130, 246, 0.08)',
+                          color: leaveFileName ? '#34d399' : '#60a5fa',
+                          fontSize: '0.84rem',
+                          fontWeight: '600',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease',
+                          textAlign: 'center'
+                        }}
+                      >
+                        <Paperclip size={16} />
+                        {leaveFileName ? 'Change File' : 'Upload File (PDF / Photo)'}
+                      </label>
+
+                      {leaveFileName && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.25)', padding: '6px 10px', borderRadius: '6px', fontSize: '0.78rem', color: '#34d399' }}>
+                          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '170px' }}>
+                            📎 {leaveFileName}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLeaveFile(null);
+                              setLeaveFileName('');
+                              const inp = document.getElementById('leave-file-input');
+                              if (inp) inp.value = '';
+                            }}
+                            style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 4px', fontSize: '0.9rem', fontWeight: 'bold' }}
+                            title="Remove attached file"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div style={{ gridColumn: isMobile ? '1 / -1' : 'span 1', display: 'flex', alignItems: 'flex-end' }}>
@@ -2388,7 +2499,33 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                             <td><strong>{l.type}</strong></td>
                             <td><span style={{ fontSize: '0.82rem', color: '#60a5fa', fontWeight: '600' }}>{l.recipient_name || 'All Admin & Faculty'}</span></td>
                             <td>{l.from_date || l.from} to {l.to_date || l.to}</td>
-                            <td>{l.reason}</td>
+                            <td>
+                              <div>{l.reason}</div>
+                              {l.attachment && (
+                                <div style={{ marginTop: '4px' }}>
+                                  <a
+                                    href={l.attachment}
+                                    download={l.file_name || `Leave_Attachment_${l.id}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                      fontSize: '0.78rem',
+                                      color: '#60a5fa',
+                                      textDecoration: 'none',
+                                      background: 'rgba(59, 130, 246, 0.15)',
+                                      padding: '2px 8px',
+                                      borderRadius: '4px',
+                                      border: '1px solid rgba(59, 130, 246, 0.3)'
+                                    }}
+                                  >
+                                    <Paperclip size={12} /> {l.file_name || 'Attached Document'}
+                                  </a>
+                                </div>
+                              )}
+                            </td>
                             <td>{l.date_submitted || l.dateSubmitted}</td>
                             <td>
                               <span className={`status-badge ${l.status === 'Approved' ? 'success' : l.status === 'Pending' ? 'warning' : 'failed'}`}>

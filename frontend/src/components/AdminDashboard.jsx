@@ -3,7 +3,7 @@ import {
   Users, KeyRound, QrCode, MapPin, BarChart3, Download, Upload, TrendingUp, Plus, Search,
   Trash2, Edit, Check, CheckCircle, XCircle, Clock, Shield, ShieldAlert, LogOut, RefreshCw, Unlock,
   Sun, Moon, GraduationCap, User, Settings, Folder, FolderOpen, Calendar, Menu, RotateCcw, X,
-  LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileText, ClipboardList, AlertTriangle, UserPlus, BookOpen, FileSpreadsheet, Send, MessageSquare, ArrowLeft, Printer, Layers, SlidersHorizontal, Filter, Copy
+  LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileText, ClipboardList, AlertTriangle, UserPlus, BookOpen, FileSpreadsheet, Send, MessageSquare, ArrowLeft, Printer, Layers, SlidersHorizontal, Filter, Copy, Paperclip
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -1581,7 +1581,8 @@ export default function AdminDashboard({
 
     const getDivCode = (val) => {
       if (!val) return 'ALL';
-      return String(val).trim().toUpperCase();
+      const clean = String(val).replace(/Div(?:ision)?\s*/i, '').trim().toUpperCase();
+      return clean === '' ? 'ALL' : clean;
     };
 
     // Extract all identifiers for a student or log object
@@ -1707,15 +1708,6 @@ export default function AdminDashboard({
       const combinedKeys = new Set();
       if (divSpecificKeys) divSpecificKeys.forEach(k => combinedKeys.add(k));
       if (semAllKeys) semAllKeys.forEach(k => combinedKeys.add(k));
-
-      // Fallback: If no division specific or ALL keys found, check any key for this semester
-      if (combinedKeys.size === 0) {
-        Object.keys(semDivSessionKeysMap).forEach(key => {
-          if (key.startsWith(`${semStr}_`)) {
-            semDivSessionKeysMap[key].forEach(k => combinedKeys.add(k));
-          }
-        });
-      }
 
       const totalConducted = combinedKeys.size;
 
@@ -7307,7 +7299,8 @@ export default function AdminDashboard({
               <GraduationCap size={24} color="#0f172a" strokeWidth={2.5} />
             </div>
             <div className="admin-brand-text">
-              <span className="admin-brand-title">EduMark</span>
+              <span className="admin-brand-title">Edu<span className="brand-mark-accent">Mark</span></span>
+              <span className="admin-brand-subtitle">Admin Hub</span>
             </div>
           </div>
 
@@ -13132,7 +13125,25 @@ export default function AdminDashboard({
                                 </tr>
                                 <tr key={`reason-${l.id}`} style={{ background: 'rgba(255, 255, 255, 0.02)', borderBottom: '1.5px solid var(--border-light)' }}>
                                   <td colSpan="6" style={{ padding: '8px 16px 12px 16px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                                    📝 <strong style={{ color: 'var(--text-primary)' }}>Reason / Remarks:</strong> {l.reason || 'No detailed reason provided.'}
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                                      <div>
+                                        📝 <strong style={{ color: 'var(--text-primary)' }}>Reason / Remarks:</strong> {l.reason || 'No detailed reason provided.'}
+                                      </div>
+                                      {l.attachment && (
+                                        <div>
+                                          <a
+                                            href={l.attachment}
+                                            download={l.file_name || `Leave_Attachment_${l.id}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="btn btn-sm btn-primary"
+                                            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', fontSize: '0.8rem', borderRadius: '8px', textDecoration: 'none', background: '#2563eb', color: '#fff', fontWeight: '600' }}
+                                          >
+                                            <Paperclip size={14} /> Download File ({l.file_name || 'Attachment'})
+                                          </a>
+                                        </div>
+                                      )}
+                                    </div>
                                   </td>
                                 </tr>
                               </React.Fragment>
@@ -13423,7 +13434,8 @@ export default function AdminDashboard({
                     </div>
                   </div>
                 </div>
-                {(() => {
+                {/* Reports charts and analytics cards removed */}
+                {false && (() => {
                   const allStudents = (students || []);
                   const totalStudentsCount = allStudents.length > 0 ? allStudents.length : 50;
 
@@ -13460,11 +13472,14 @@ export default function AdminDashboard({
                       return true;
                     });
                     subjFiltered.forEach(st => {
+                      const totalAtt = parseInt(st.total_attendance || st.total_sessions || st.total_lectures || 0);
                       const pct = parseFloat(st.raw_percentage !== undefined ? st.raw_percentage : (st.attendance_percentage || 0));
-                      if (pct >= 90) b90to100++;
-                      else if (pct >= 70) b70to90++;
-                      else if (pct >= 50) b50to70++;
-                      else bBelow50++;
+                      if (st.hasSession || totalAtt > 0 || (st.present !== undefined && parseInt(st.present) > 0)) {
+                        if (pct >= 90) b90to100++;
+                        else if (pct >= 70) b70to90++;
+                        else if (pct >= 50) b50to70++;
+                        else bBelow50++;
+                      }
                     });
                   } else {
                     defSource.forEach(st => {
@@ -14242,7 +14257,7 @@ export default function AdminDashboard({
                           className="glass-input"
                           placeholder="Enter Admin Email Address"
                           value={profileForm.email}
-                          onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })}
+                          onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value.toLowerCase() })}
                           required
                         />
                       </div>
@@ -14715,7 +14730,7 @@ export default function AdminDashboard({
                         className="glass-input"
                         placeholder="e.g. student@college.com"
                         value={studentForm.email || ''}
-                        onChange={(e) => setStudentForm({ ...studentForm, email: e.target.value })}
+                        onChange={(e) => setStudentForm({ ...studentForm, email: e.target.value.toLowerCase() })}
                         required
                         tabIndex={3}
                         onBlur={(e) => {
@@ -15055,7 +15070,7 @@ export default function AdminDashboard({
                         className="glass-input"
                         placeholder="e.g. faculty@college.com"
                         value={facultyForm.email || ''}
-                        onChange={(e) => setFacultyForm({ ...facultyForm, email: e.target.value })}
+                        onChange={(e) => setFacultyForm({ ...facultyForm, email: e.target.value.toLowerCase() })}
                         tabIndex={2}
                         onBlur={(e) => {
                           const val = e.target.value.trim();

@@ -88,7 +88,7 @@ router.post('/apply', authenticateJWT, async (req, res) => {
     return res.status(403).json({ error: 'Only students can submit leave applications.' });
   }
 
-  const { type, from, to, reason, recipient_id, recipient_name } = req.body;
+  const { type, from, to, reason, recipient_id, recipient_name, attachment, file_name } = req.body;
 
   if (!from || !to || !reason) {
     return res.status(400).json({ error: 'Please provide all leave details (From Date, To Date, Reason).' });
@@ -115,6 +115,8 @@ router.post('/apply', authenticateJWT, async (req, res) => {
       from_date: from,
       to_date: to,
       reason: reason,
+      attachment: attachment || null,
+      file_name: file_name || null,
       status: 'Pending',
       admin_remarks: '',
       date_submitted: today,
@@ -172,7 +174,16 @@ router.get('/my', authenticateJWT, async (req, res) => {
     const localLeaves = getLocalLeaves().filter(l => String(l.student_id) === String(req.user.id));
     const mergedMap = new Map();
     [...leavesList, ...localLeaves].forEach(item => {
-      if (item && item.id) mergedMap.set(String(item.id), item);
+      if (item && item.id) {
+        const key = String(item.id);
+        const existing = mergedMap.get(key) || {};
+        mergedMap.set(key, {
+          ...existing,
+          ...item,
+          attachment: item.attachment || existing.attachment || null,
+          file_name: item.file_name || existing.file_name || null
+        });
+      }
     });
 
     const finalLeaves = Array.from(mergedMap.values()).sort((a, b) => Number(b.id) - Number(a.id));
@@ -208,7 +219,16 @@ router.get('/all', authenticateJWT, async (req, res) => {
     const localLeaves = getLocalLeaves();
     const mergedMap = new Map();
     [...leavesList, ...localLeaves].forEach(item => {
-      if (item && item.id) mergedMap.set(String(item.id), item);
+      if (item && item.id) {
+        const key = String(item.id);
+        const existing = mergedMap.get(key) || {};
+        mergedMap.set(key, {
+          ...existing,
+          ...item,
+          attachment: item.attachment || existing.attachment || null,
+          file_name: item.file_name || existing.file_name || null
+        });
+      }
     });
 
     let finalLeaves = Array.from(mergedMap.values()).sort((a, b) => Number(b.id) - Number(a.id));
