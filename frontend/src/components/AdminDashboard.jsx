@@ -300,9 +300,34 @@ export default function AdminDashboard({
     if (e) e.preventDefault();
     const cleanNum = semesterFormData.semNumber.trim();
     const cleanName = semesterFormData.name.trim() || `Semester ${cleanNum}`;
+    const cleanNumDigits = cleanNum.replace(/\D/g, '');
 
     if (!cleanNum) {
       showToast('Please enter a semester number or title', 'error');
+      return;
+    }
+
+    // Check if duplicate semester number/code or display name already exists
+    const duplicate = allSemestersList.find(s => {
+      // Ignore current item if editing
+      if (isEditingSemester && (String(s.id) === String(editingSemId) || String(s.semNumber) === String(editingSemId))) {
+        return false;
+      }
+
+      const sSemNumStr = String(s.semNumber || s.id || '').trim();
+      const sSemDigits = sSemNumStr.replace(/\D/g, '');
+      const sNameStr = String(s.name || s.semester_display_name || '').trim();
+
+      const isCodeMatch = sSemNumStr.toLowerCase() === cleanNum.toLowerCase() ||
+        (cleanNumDigits && sSemDigits && cleanNumDigits === sSemDigits);
+
+      const isNameMatch = sNameStr.toLowerCase() === cleanName.toLowerCase();
+
+      return isCodeMatch || isNameMatch;
+    });
+
+    if (duplicate) {
+      showToast(`Semester with code/number '${cleanNum}' already exists! Please use a unique semester code.`, 'error');
       return;
     }
 
@@ -345,12 +370,6 @@ export default function AdminDashboard({
         localStorage.setItem('admin_custom_semesters', JSON.stringify(updatedCustom));
         showToast(`Semester '${cleanName}' updated successfully!`, 'success');
       } else {
-        const exists = allSemestersList.some(s => String(s.semNumber) === cleanNum || s.name.toLowerCase() === cleanName.toLowerCase());
-        if (exists) {
-          showToast(`Semester ${cleanNum} (${cleanName}) already exists!`, 'error');
-          return;
-        }
-
         const res = await fetch('/api/semesters', {
           method: 'POST',
           headers: {
@@ -2678,18 +2697,18 @@ export default function AdminDashboard({
       return editingSubjectIdx === idx;
     };
 
-    // 1. Check duplicate Subject Code within the SAME semester (Same code in different semesters is allowed)
+    // 1. Check duplicate Subject Code across ALL semesters (Subject code must be unique globally across all semesters)
     if (subCodeVal) {
       const dupCodeSubject = (allFacultySubjects || []).find((s, idx) => {
         if (isEditingThisSubject(s, idx)) return false;
-        const sSem = String(s.semester || '1').replace(/\D/g, '');
         const existingCode = String(s.code || s.subjectCode || s.subject_code || s.subCode || s.sub_code || '').trim().toLowerCase();
-        return sSem === newSemNum && existingCode && existingCode === subCodeVal.toLowerCase();
+        return existingCode && existingCode === subCodeVal.toLowerCase();
       });
 
       if (dupCodeSubject) {
         const dupName = dupCodeSubject.subjectName || dupCodeSubject.name || 'another subject';
-        showToast(`Subject Code "${subCodeVal}" is already assigned to "${dupName}" in Semester ${newSemNum}!`, 'error', 4500);
+        const dupSem = String(dupCodeSubject.semester || '1').replace(/\D/g, '');
+        showToast(`Subject Code "${subCodeVal}" is already assigned to "${dupName}" in Semester ${dupSem}! Subject code must be unique across all semesters.`, 'error', 5000);
         return;
       }
     }
@@ -2953,8 +2972,7 @@ export default function AdminDashboard({
         return sName === targetSubName && sSem === targetSem && sType === targetType;
       };
 
-      const updatePromises = [];
-
+      // 1. Optimistically compute updated faculties list
       const updatedFacultiesList = (faculties || []).map(f => {
         let currentSubs = [];
         if (typeof f.subjects === 'string') {
@@ -2968,38 +2986,15 @@ export default function AdminDashboard({
 
         if (shouldHave && !hasThisSub) {
           const updatedSubs = [...currentSubs, subObjToAssign];
-          const payload = { ...f, subjects: updatedSubs };
-          delete payload.password;
-          updatePromises.push(
-            fetch(`/api/faculty/${f.id}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-              body: JSON.stringify(payload)
-            })
-          );
           return { ...f, subjects: updatedSubs };
         } else if (!shouldHave && hasThisSub) {
           const updatedSubs = currentSubs.filter(s => !isSameSub(s));
-          const payload = { ...f, subjects: updatedSubs };
-          delete payload.password;
-          updatePromises.push(
-            fetch(`/api/faculty/${f.id}`, {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-              body: JSON.stringify(payload)
-            })
-          );
           return { ...f, subjects: updatedSubs };
         }
         return f;
       });
 
-      setFaculties(updatedFacultiesList);
-      try {
-        sessionStorage.setItem('cached_admin_faculties', JSON.stringify(updatedFacultiesList));
-      } catch (e) {}
-
-      // Always preserve subject in global subjects catalog
+      // 2. Optimistically compute updated global subjects catalog
       const globalKey = assigningSubject.globalKey || assigningSubject.subKey || `global_${targetSubName}_${targetSem}_${targetType}`;
 
       const assignedFacultyNames = selectedAssignFacultyIds.map(fid => {
@@ -3037,43 +3032,44 @@ export default function AdminDashboard({
         updatedGlobal.push(updatedSubObj);
       }
 
+      // 3. INSTANT OPTIMISTIC UI UPDATES (< 1ms)
+      setFaculties(updatedFacultiesList);
       setGlobalSubjectsCatalog(updatedGlobal);
-      localStorage.setItem('admin_global_subjects_catalog', JSON.stringify(updatedGlobal));
+      try {
+        sessionStorage.setItem('cached_admin_faculties', JSON.stringify(updatedFacultiesList));
+        localStorage.setItem('admin_global_subjects_catalog', JSON.stringify(updatedGlobal));
+      } catch (e) {}
 
-      if (updatePromises.length > 0) {
-        await Promise.all(updatePromises);
-      }
-
-      // ALSO sync assigned faculty IDs directly into Supabase subjects table!
-      if (token) {
-        try {
-          const resSync = await fetch('/api/subjects/assign-faculty', {
-            method: 'PUT',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`
-            },
-            body: JSON.stringify({ assigningSubject, facultyIds: selectedAssignFacultyIds })
-          });
-          const resData = await resSync.json();
-          console.log('Faculty assignment synced to Supabase DB:', resData);
-        } catch (err) {
-          console.error('Error syncing faculty assignment to Supabase DB:', err);
-        }
-      }
-
-      await fetchFaculties();
-      notifyDataChanged();
-
+      // Close modal & toast instantly!
       const actionText = selectedAssignFacultyIds.length > 0 
         ? `Faculty assigned successfully to "${assigningSubject.subjectName || assigningSubject.name}"!` 
         : `Faculty unassigned for "${assigningSubject.subjectName || assigningSubject.name}".`;
       showToast(actionText, 'success', 3000);
       setShowAssignFacultyModal(false);
+      setSavingFacultyAssignment(false);
+
+      // 4. Background DB Sync call
+      if (token) {
+        fetch('/api/subjects/assign-faculty', {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ assigningSubject, facultyIds: selectedAssignFacultyIds })
+        })
+          .then(res => res.json())
+          .then(resData => {
+            console.log('Faculty assignment synced to Supabase DB:', resData);
+            notifyDataChanged();
+          })
+          .catch(err => {
+            console.error('Background sync error:', err);
+          });
+      }
     } catch (err) {
       console.error('Error saving faculty assignment:', err);
       showToast('Failed to update faculty assignment. Please try again.', 'error');
-    } finally {
       setSavingFacultyAssignment(false);
     }
   };
@@ -9846,7 +9842,6 @@ export default function AdminDashboard({
                       >
                         <option value="Odd">Odd Term</option>
                         <option value="Even">Even Term</option>
-                        <option value="Summer">Summer Term</option>
                       </select>
                     </div>
 

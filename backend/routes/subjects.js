@@ -43,20 +43,33 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
   const finalShort = (shortName || '').toString().trim() || '-';
   const finalType = (type || 'Theory').toString().trim();
 
-  let insertObj = {
-    subject_name: finalName,
-    short_name: finalShort,
-    subject_code: finalCode,
-    semester: finalSem,
-    type: finalType
-  };
-
   try {
+    if (finalCode) {
+      const { data: existingCode } = await supabase
+        .from('subjects')
+        .select('id, subject_name, semester, subject_code')
+        .ilike('subject_code', finalCode);
+
+      if (existingCode && existingCode.length > 0) {
+        const dup = existingCode[0];
+        return res.status(400).json({
+          error: `Subject Code "${finalCode}" is already assigned to "${dup.subject_name}" in Semester ${dup.semester}! Subject code must be unique across all semesters.`
+        });
+      }
+    }
+
+    let insertObj = {
+      subject_name: finalName,
+      short_name: finalShort,
+      subject_code: finalCode,
+      semester: finalSem,
+      type: finalType
+    };
+
     let { data, error } = await supabase.from('subjects').insert([insertObj]).select().single();
 
     if (error) {
       console.error('Supabase insert subject error:', error);
-      // If error is duplicate key or constraint, attempt update or return error
       return res.status(400).json({ error: error.message || 'Failed to insert subject into database' });
     }
 
@@ -85,15 +98,37 @@ router.put('/update-match', authenticateJWT, requireAdmin, async (req, res) => {
   const newSem = String(newSubObj.semester || '1').replace(/\D/g, '') || '1';
   const newType = String(newSubObj.type || 'Theory').trim();
 
-  const updateFields = {
-    subject_name: newName,
-    short_name: newShort,
-    subject_code: newCode,
-    semester: newSem,
-    type: newType
-  };
-
   try {
+    if (newCode) {
+      let queryCheck = supabase
+        .from('subjects')
+        .select('id, subject_name, semester, subject_code')
+        .ilike('subject_code', newCode);
+
+      if (origId) {
+        queryCheck = queryCheck.neq('id', origId);
+      }
+
+      const { data: existingCode } = await queryCheck;
+
+      if (existingCode && existingCode.length > 0) {
+        const dup = existingCode.find(s => String(s.id) !== String(origId));
+        if (dup) {
+          return res.status(400).json({
+            error: `Subject Code "${newCode}" is already assigned to "${dup.subject_name}" in Semester ${dup.semester}! Subject code must be unique across all semesters.`
+          });
+        }
+      }
+    }
+
+    const updateFields = {
+      subject_name: newName,
+      short_name: newShort,
+      subject_code: newCode,
+      semester: newSem,
+      type: newType
+    };
+
     let query = supabase.from('subjects').update(updateFields);
 
     if (origId) {
@@ -128,7 +163,7 @@ router.put('/update-match', authenticateJWT, requireAdmin, async (req, res) => {
   }
 });
 
-// PUT /api/subjects/assign-faculty - Sync assigned faculty IDs for a subject in Supabase DB
+// PUT /api/subjects/assign-faculty - Sync assigned faculty IDs for a subject in Supabase DB and update faculty.subjects JSON
 router.put('/assign-faculty', authenticateJWT, requireAdmin, async (req, res) => {
   const { assigningSubject, facultyIds } = req.body;
   if (!assigningSubject) return res.status(400).json({ error: 'assigningSubject is required' });
@@ -139,22 +174,41 @@ router.put('/assign-faculty', authenticateJWT, requireAdmin, async (req, res) =>
   const subType = (assigningSubject.type || 'Theory').toString().trim();
   const subName = (assigningSubject.subjectName || assigningSubject.name || '').toString().trim();
 
-  // Fetch all faculty from Supabase to resolve IDs
-  let cleanFacultyIds = [];
+  const subObjToAssign = {
+    subjectName: assigningSubject.subjectName || assigningSubject.name || '',
+    shortName: assigningSubject.shortName || assigningSubject.shortCode || '',
+    code: subCode,
+    subjectCode: subCode,
+    semester: subSem,
+    type: subType
+  };
+
+  const isSameSub = (sObj) => {
+    if (!sObj) return false;
+    const sCode = String(sObj.code || sObj.subjectCode || sObj.subject_code || sObj.subCode || sObj.sub_code || '').toLowerCase().trim();
+    const sSem = String(sObj.semester || '1').replace(/\D/g, '');
+    const sType = String(sObj.type || sObj.subjectType || 'Theory').toLowerCase().trim();
+    const sName = String(sObj.subjectName || sObj.name || '').toLowerCase().trim();
+
+    if (subCode && sCode && subCode.toLowerCase() === sCode && subSem === sSem && sType === subType.toLowerCase()) return true;
+    return sName === subName.toLowerCase() && sSem === subSem && sType === subType.toLowerCase();
+  };
+
   try {
     const { data: dbFaculties } = await supabase.from('faculty').select('*');
-    if (Array.isArray(facultyIds) && facultyIds.length > 0) {
-      facultyIds.forEach(rawId => {
+    const selectedAssignFacultyIds = (facultyIds || []).map(id => String(id).trim());
+
+    let cleanFacultyIds = [];
+    if (selectedAssignFacultyIds.length > 0) {
+      selectedAssignFacultyIds.forEach(rawId => {
         const strId = String(rawId).trim().toLowerCase();
         if (!strId) return;
 
-        // Try direct numeric match
         if (!isNaN(Number(strId))) {
           cleanFacultyIds.push(Number(strId));
           return;
         }
 
-        // Try matching email / username / employee_no in DB faculty
         const matched = (dbFaculties || []).find(f =>
           String(f.id) === strId ||
           (f.email && String(f.email).toLowerCase() === strId) ||
@@ -167,24 +221,19 @@ router.put('/assign-faculty', authenticateJWT, requireAdmin, async (req, res) =>
         }
       });
     }
-  } catch(e) {
-    console.warn('Error resolving faculty IDs for Supabase update:', e);
-  }
 
-  // Remove duplicates and limit to 3
-  cleanFacultyIds = Array.from(new Set(cleanFacultyIds)).slice(0, 3);
+    cleanFacultyIds = Array.from(new Set(cleanFacultyIds)).slice(0, 3);
 
-  const f1 = cleanFacultyIds[0] || null;
-  const f2 = cleanFacultyIds[1] || null;
-  const f3 = cleanFacultyIds[2] || null;
+    const f1 = cleanFacultyIds[0] || null;
+    const f2 = cleanFacultyIds[1] || null;
+    const f3 = cleanFacultyIds[2] || null;
 
-  const updateFields = {
-    faculty_id_1: f1,
-    faculty_id_2: f2,
-    faculty_id_3: f3
-  };
+    const updateFields = {
+      faculty_id_1: f1,
+      faculty_id_2: f2,
+      faculty_id_3: f3
+    };
 
-  try {
     let query = supabase.from('subjects').update(updateFields);
 
     if (subId && !isNaN(Number(subId))) {
@@ -195,15 +244,40 @@ router.put('/assign-faculty', authenticateJWT, requireAdmin, async (req, res) =>
       query = query.ilike('subject_name', subName).eq('semester', subSem).eq('type', subType);
     }
 
-    let { data, error } = await query.select();
+    let { data: subData, error: subError } = await query.select();
 
-    if (error) {
-      console.error('Supabase assign-faculty update error:', error);
-      return res.status(400).json({ error: error.message });
+    if (subError) {
+      console.error('Supabase assign-faculty update error:', subError);
     }
 
-    notifyChange('SUBJECTS_CHANGED', { action: 'assign_faculty', subject: data });
-    res.json({ message: 'Faculty assignment saved in Supabase DB successfully', subject: data });
+    // Sync faculty.subjects JSON column in DB for affected faculty in parallel
+    const facultyPromises = (dbFaculties || []).map(async (f) => {
+      let currentSubs = [];
+      if (typeof f.subjects === 'string') {
+        try { currentSubs = JSON.parse(f.subjects); } catch (e) { currentSubs = []; }
+      } else if (Array.isArray(f.subjects)) {
+        currentSubs = [...f.subjects];
+      }
+
+      const hasThisSub = currentSubs.some(isSameSub);
+      const shouldHave = selectedAssignFacultyIds.includes(String(f.id)) ||
+        cleanFacultyIds.includes(Number(f.id)) ||
+        (f.email && selectedAssignFacultyIds.includes(String(f.email).toLowerCase()));
+
+      if (shouldHave && !hasThisSub) {
+        const updatedSubs = [...currentSubs, subObjToAssign];
+        await supabase.from('faculty').update({ subjects: updatedSubs }).eq('id', f.id);
+      } else if (!shouldHave && hasThisSub) {
+        const updatedSubs = currentSubs.filter(s => !isSameSub(s));
+        await supabase.from('faculty').update({ subjects: updatedSubs }).eq('id', f.id);
+      }
+    });
+
+    await Promise.all(facultyPromises);
+
+    notifyChange('SUBJECTS_CHANGED', { action: 'assign_faculty', subject: subData });
+    notifyChange('FACULTY_CHANGED', { action: 'assign_faculty' });
+    res.json({ message: 'Faculty assignment saved in Supabase DB successfully', subject: subData });
   } catch (err) {
     console.error('Server error assigning faculty to subject in Supabase:', err);
     res.status(500).json({ error: 'Server error saving faculty assignment to database' });

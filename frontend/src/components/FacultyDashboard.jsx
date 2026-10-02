@@ -1205,21 +1205,35 @@ export default function FacultyDashboard({
     return subs;
   })();
 
-  // Extract unique semester numbers strictly assigned to this faculty member
+  // Extract unique semester numbers strictly assigned to this faculty member THAT ALSO HAVE REGISTERED STUDENTS
   const facultyAssignedSemesters = (() => {
     const semSet = new Set();
+    const semestersWithStudents = new Set(
+      (studentsList || []).map(st => String(st.semester || '').replace(/\D/g, '').trim()).filter(Boolean)
+    );
+
     (allFacultySubjects || []).forEach(s => {
       if (s && s.semester) {
         const num = String(s.semester).replace(/\D/g, '').trim();
-        if (num) semSet.add(num);
+        if (num && (semestersWithStudents.size === 0 || semestersWithStudents.has(num))) {
+          semSet.add(num);
+        }
       }
     });
+
     if (semSet.size > 0) {
       return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
     }
-    if (assignedSemesters && assignedSemesters.length > 0) {
-      return assignedSemesters;
+
+    const fallbackSems = (assignedSemesters || []).filter(s => {
+      const num = String(s).replace(/\D/g, '').trim();
+      return num && (semestersWithStudents.size === 0 || semestersWithStudents.has(num));
+    });
+
+    if (fallbackSems.length > 0) {
+      return fallbackSems;
     }
+
     return [];
   })();
 
@@ -1825,23 +1839,30 @@ export default function FacultyDashboard({
       const dParts = dStr.split('-');
       const formattedDate = dParts.length === 3 ? `${dParts[2]}-${dParts[1]}-${dParts[0]}` : dStr;
 
+      const seenSlotKeys = new Set();
       finalSesses.forEach((sess, sIdx) => {
         const semVal = sess.semester || targetSem;
         const resolvedSub = resolveSessionSubject(sess, sIdx, dStr, semVal);
         const sessionLabel = resolvedSub;
         const sessId = sess.id || sess.qr_session_id || `${dStr}_${sessionCols.length}`;
         const sessDiv = String(sess.division || 'ALL').trim().toUpperCase();
+        const formattedTime = sess.created_at ? new Date(sess.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (sess.time || 'Session');
+        const slotKey = `${dStr}_${resolvedSub.toLowerCase().replace(/\s+/g, '_')}_${sessDiv}_${formattedTime}`;
 
-        sessionCols.push({
-          key: `col_${sessionCols.length}_${sessId}`,
-          dateStr: formattedDate,
-          rawDate: dStr,
-          sessionLabel,
-          sessId,
-          sessDiv,
-          subject: resolvedSub,
-          semester: String(semVal)
-        });
+        if (!seenSlotKeys.has(slotKey)) {
+          seenSlotKeys.add(slotKey);
+          sessionCols.push({
+            key: `col_${sessionCols.length}_${sessId}`,
+            dateStr: formattedDate,
+            rawDate: dStr,
+            sessionLabel,
+            sessId,
+            sessDiv,
+            subject: resolvedSub,
+            semester: String(semVal),
+            time: formattedTime
+          });
+        }
       });
     });
 

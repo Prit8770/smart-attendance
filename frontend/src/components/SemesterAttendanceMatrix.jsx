@@ -152,17 +152,26 @@ export default function SemesterAttendanceMatrix({
       const sSem = String(sess.semester || '').replace(/\D/g, '');
       if (isAll || sSem === targetSemClean) {
         const dateStr = getLocalDateStr(sess.date || sess.created_at);
-        const sId = sess.id || sess.qr_session_id || sess.otp_id || 'sess';
-        const colKey = `${dateStr}_${sId}`;
-        sessionMap.set(colKey, {
-          columnKey: colKey,
-          date: dateStr,
-          subject: cleanSubjectTitle(sess.subject || 'Subject'),
-          faculty_name: sess.faculty_name || 'Faculty',
-          time: sess.created_at ? new Date(sess.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (sess.time || 'Session'),
-          type: sess.type || (sess.qr_session_id || sess.tokens ? 'QR' : (sess.otp_id || sess.otp ? 'OTP' : 'Manual')),
-          division: sess.division || 'ALL'
-        });
+        const sub = cleanSubjectTitle(sess.subject || 'Subject');
+        const formattedTime = sess.created_at ? new Date(sess.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (sess.time || 'Session');
+        const sessDiv = (sess.division && String(sess.division).toUpperCase() !== 'ALL') ? String(sess.division).toUpperCase() : 'ALL';
+        const colKey = `${dateStr}_${sub.toLowerCase().replace(/\s+/g, '_')}_${sessDiv}_${formattedTime}`;
+
+        if (!sessionMap.has(colKey)) {
+          sessionMap.set(colKey, {
+            columnKey: colKey,
+            sessionIds: new Set([sess.id || sess.qr_session_id || sess.otp_id].filter(Boolean)),
+            date: dateStr,
+            subject: sub,
+            faculty_name: sess.faculty_name || 'Faculty',
+            time: formattedTime,
+            type: sess.type || (sess.qr_session_id || sess.tokens ? 'QR' : (sess.otp_id || sess.otp ? 'OTP' : 'Manual')),
+            division: sess.division || 'ALL'
+          });
+        } else {
+          const sId = sess.id || sess.qr_session_id || sess.otp_id;
+          if (sId) sessionMap.get(colKey).sessionIds.add(sId);
+        }
       }
     });
 
@@ -170,18 +179,25 @@ export default function SemesterAttendanceMatrix({
       const lDate = getLocalDateStr(l.date || l.timestamp || l.created_at);
       const lSem = String(l.semester || '').replace(/\D/g, '');
       if (isAll || lSem === targetSemClean) {
-        const sId = l.qr_session_id ? `qr_${l.qr_session_id}` : (l.otp_id ? `otp_${l.otp_id}` : `manual_${lDate}_${cleanSubjectTitle(l.subject).replace(/\s+/g, '_')}`);
-        const colKey = `${lDate}_${sId}`;
+        const sub = cleanSubjectTitle(l.subject || 'Subject');
+        const formattedTime = l.time || (l.created_at ? new Date(l.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Session');
+        const sessDiv = (l.division && String(l.division).toUpperCase() !== 'ALL') ? String(l.division).toUpperCase() : 'ALL';
+        const colKey = `${lDate}_${sub.toLowerCase().replace(/\s+/g, '_')}_${sessDiv}_${formattedTime}`;
+
         if (!sessionMap.has(colKey)) {
           sessionMap.set(colKey, {
             columnKey: colKey,
+            sessionIds: new Set([l.qr_session_id || l.otp_id || l.id].filter(Boolean)),
             date: lDate,
-            subject: cleanSubjectTitle(l.subject || 'Subject'),
+            subject: sub,
             faculty_name: l.faculty_name || 'Faculty',
-            time: l.time || (l.created_at ? new Date(l.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Session'),
+            time: formattedTime,
             type: l.qr_session_id ? 'QR' : (l.otp_id ? 'OTP' : 'Manual'),
             division: l.division || 'ALL'
           });
+        } else {
+          const sId = l.qr_session_id || l.otp_id || l.id;
+          if (sId) sessionMap.get(colKey).sessionIds.add(sId);
         }
       }
     });
@@ -201,7 +217,10 @@ export default function SemesterAttendanceMatrix({
           const matchStudent = String(l.student_id) === String(st.id) ||
             String(l.enrollment_no || '').toLowerCase() === String(st.enrollment_no || '').toLowerCase();
           const lDate = getLocalDateStr(l.date || l.timestamp || l.created_at);
-          return matchStudent && lDate === col.date;
+          const lSub = cleanSubjectTitle(l.subject || '');
+          const matchSub = !lSub || !col.subject || lSub.toLowerCase() === col.subject.toLowerCase();
+          const matchSession = col.sessionIds && (col.sessionIds.has(l.qr_session_id) || col.sessionIds.has(l.otp_id) || col.sessionIds.has(l.id));
+          return matchStudent && lDate === col.date && (matchSession || matchSub);
         });
 
         if (hasLog) {
@@ -249,13 +268,19 @@ export default function SemesterAttendanceMatrix({
     fetchSemesterMatrix(selectedSem);
   }, [selectedSem, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
 
-  // Available semesters for filter dropdown (Strictly assigned semesters if in Faculty mode)
+  // Available semesters for filter dropdown (Strictly assigned semesters that have registered students)
   const allSemestersList = useMemo(() => {
+    const studentSemSet = new Set(
+      (studentsList || []).map(s => String(s.semester || '').replace(/\D/g, '').trim()).filter(Boolean)
+    );
+
     if (availableSemesters && Array.isArray(availableSemesters) && availableSemesters.length > 0) {
       const semSet = new Set();
       availableSemesters.forEach(s => {
         const num = String(s).replace(/\D/g, '').trim();
-        if (num) semSet.add(num);
+        if (num && (studentSemSet.size === 0 || studentSemSet.has(num))) {
+          semSet.add(num);
+        }
       });
       if (semSet.size > 0) {
         return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
@@ -274,12 +299,14 @@ export default function SemesterAttendanceMatrix({
     return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
   }, [availableSemesters, studentsList]);
 
-  // Auto-sync selectedSem if allSemestersList has exactly 1 semester
+  // Auto-sync selectedSem if allSemestersList updates
   useEffect(() => {
     if (allSemestersList.length === 1 && selectedSem !== allSemestersList[0]) {
       setSelectedSem(allSemestersList[0]);
+    } else if (allSemestersList.length > 0 && selectedSem !== 'ALL' && !allSemestersList.includes(String(selectedSem))) {
+      setSelectedSem(allSemestersList.length === 1 ? allSemestersList[0] : 'ALL');
     }
-  }, [allSemestersList]);
+  }, [allSemestersList, selectedSem]);
 
   // Dynamic list of available subjects for subject filter dropdown (Strictly assigned subjects for this faculty)
   const availableFilterSubjects = useMemo(() => {

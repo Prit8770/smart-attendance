@@ -1826,7 +1826,7 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
       return String(sub).replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim() || String(sub).trim();
     };
 
-    // 3. Identify and collect all sessions conducted for this semester
+    // 3. Identify and collect all sessions conducted for this semester (grouped by Date, Subject, Division & TimeSlot)
     const sessionMap = new Map();
 
     // Collect matching QR sessions
@@ -1853,19 +1853,30 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
           } catch(e) {}
         }
 
-        const key = `qr_${q.id}`;
-        sessionMap.set(key, {
-          key,
-          id: q.id,
-          type: 'QR',
-          date: sessDate,
-          time: formattedTime,
-          created_at: q.created_at || sessDate,
-          subject: sub,
-          faculty_name: facName,
-          division: q.division || 'ALL',
-          logs: []
-        });
+        const divKey = (q.division && String(q.division).toUpperCase() !== 'ALL') ? String(q.division).toUpperCase() : 'ALL';
+        const slotKey = `${sessDate}_${sub.toLowerCase().replace(/\s+/g, '_')}_${divKey}_${formattedTime}`;
+
+        if (!sessionMap.has(slotKey)) {
+          sessionMap.set(slotKey, {
+            key: slotKey,
+            sessionIds: new Set([q.id]),
+            qrSessionIds: new Set([q.id]),
+            otpSessionIds: new Set(),
+            id: q.id,
+            type: 'QR',
+            date: sessDate,
+            time: formattedTime,
+            created_at: q.created_at || sessDate,
+            subject: sub,
+            faculty_name: facName,
+            division: q.division || 'ALL',
+            logs: []
+          });
+        } else {
+          const sObj = sessionMap.get(slotKey);
+          sObj.sessionIds.add(q.id);
+          sObj.qrSessionIds.add(q.id);
+        }
       }
     });
 
@@ -1895,19 +1906,30 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
           } catch(e) {}
         }
 
-        const key = `otp_${o.id}`;
-        sessionMap.set(key, {
-          key,
-          id: o.id,
-          type: 'OTP',
-          date: sessDate,
-          time: formattedTime,
-          created_at: rawTime || sessDate,
-          subject: sub,
-          faculty_name: facName,
-          division: o.division || 'ALL',
-          logs: []
-        });
+        const divKey = (o.division && String(o.division).toUpperCase() !== 'ALL') ? String(o.division).toUpperCase() : 'ALL';
+        const slotKey = `${sessDate}_${sub.toLowerCase().replace(/\s+/g, '_')}_${divKey}_${formattedTime}`;
+
+        if (!sessionMap.has(slotKey)) {
+          sessionMap.set(slotKey, {
+            key: slotKey,
+            sessionIds: new Set([o.id]),
+            qrSessionIds: new Set(),
+            otpSessionIds: new Set([o.id]),
+            id: o.id,
+            type: 'OTP',
+            date: sessDate,
+            time: formattedTime,
+            created_at: rawTime || sessDate,
+            subject: sub,
+            faculty_name: facName,
+            division: o.division || 'ALL',
+            logs: []
+          });
+        } else {
+          const sObj = sessionMap.get(slotKey);
+          sObj.sessionIds.add(o.id);
+          sObj.otpSessionIds.add(o.id);
+        }
       }
     });
 
@@ -1921,14 +1943,22 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
       if (date && attDate !== date) return;
       if (startDate && endDate && (attDate < startDate || attDate > endDate)) return;
 
-      if (att.qr_session_id && sessionMap.has(`qr_${att.qr_session_id}`)) {
-        sessionMap.get(`qr_${att.qr_session_id}`).logs.push(att);
-        return;
+      if (att.qr_session_id) {
+        for (const sessObj of sessionMap.values()) {
+          if (sessObj.qrSessionIds && sessObj.qrSessionIds.has(att.qr_session_id)) {
+            sessObj.logs.push(att);
+            return;
+          }
+        }
       }
 
-      if (att.otp_id && sessionMap.has(`otp_${att.otp_id}`)) {
-        sessionMap.get(`otp_${att.otp_id}`).logs.push(att);
-        return;
+      if (att.otp_id) {
+        for (const sessObj of sessionMap.values()) {
+          if (sessObj.otpSessionIds && sessObj.otpSessionIds.has(att.otp_id)) {
+            sessObj.logs.push(att);
+            return;
+          }
+        }
       }
 
       const rawSub = att.subject || 'Class Lecture';

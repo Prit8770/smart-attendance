@@ -40,13 +40,22 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
   const nameVal = String(semester_display_name || name || `Semester ${numVal}`).trim();
   const termVal = String(term_type || term || 'Odd').trim();
 
-  const insertObj = {
-    semester_number: numVal,
-    semester_display_name: nameVal,
-    term_type: termVal
-  };
-
   try {
+    const { data: existing } = await supabase
+      .from('semesters')
+      .select('id, semester_number, semester_display_name')
+      .eq('semester_number', numVal);
+
+    if (existing && existing.length > 0) {
+      return res.status(400).json({ error: `Semester with code/number ${numVal} already exists in database!` });
+    }
+
+    const insertObj = {
+      semester_number: numVal,
+      semester_display_name: nameVal,
+      term_type: termVal
+    };
+
     const { data, error } = await supabase
       .from('semesters')
       .insert([insertObj])
@@ -83,6 +92,18 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   }
 
   try {
+    if (updateObj.semester_number) {
+      const { data: existing } = await supabase
+        .from('semesters')
+        .select('id, semester_number')
+        .eq('semester_number', updateObj.semester_number)
+        .neq('id', id);
+
+      if (existing && existing.length > 0) {
+        return res.status(400).json({ error: `Semester with code/number ${updateObj.semester_number} already exists in database!` });
+      }
+    }
+
     const { data, error } = await supabase
       .from('semesters')
       .update(updateObj)

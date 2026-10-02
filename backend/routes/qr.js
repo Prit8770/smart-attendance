@@ -181,31 +181,62 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
     const createdAt = now.toISOString();
     const expiresAt = new Date(now.getTime() + 2 * 60 * 1000).toISOString(); // 2 minutes
 
-    let insertPayload = {
-      created_at: createdAt,
-      expires_at: expiresAt,
-      created_by_faculty_id: facultyId,
-      date: today,
-      tokens: JSON.stringify(tokens),
-      semester: semester ? parseInt(semester) : null,
-      division: (division && String(division).trim() !== '') ? String(division).trim().toUpperCase() : null,
-      subject: (subject && String(subject).trim() !== '') ? String(subject).trim() : null
-    };
+    // Check if an active QR session already exists for this faculty, semester, division, and subject
+    const { data: activeExisting } = await supabase.from('qr_sessions')
+      .select('*')
+      .eq('created_by_faculty_id', facultyId)
+      .eq('date', today)
+      .gt('expires_at', now.toISOString())
+      .order('id', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-    let { data: result, error } = await supabase.from('qr_sessions').insert([insertPayload]).select().single();
+    let result = null;
+    let error = null;
 
-    // Fallback: If DB table lacks 'subject' or 'division' columns, retry without missing column and save local meta
-    if (error && error.message && (error.message.includes('subject') || error.message.includes('division') || error.message.includes('schema cache'))) {
-      if (error.message.includes('subject')) delete insertPayload.subject;
-      if (error.message.includes('division')) delete insertPayload.division;
+    if (activeExisting) {
+      const updateRes = await supabase.from('qr_sessions')
+        .update({
+          tokens: JSON.stringify(tokens),
+          expires_at: expiresAt,
+          semester: semester ? parseInt(semester) : activeExisting.semester,
+          division: (division && String(division).trim() !== '') ? String(division).trim().toUpperCase() : activeExisting.division,
+          subject: (subject && String(subject).trim() !== '') ? String(subject).trim() : activeExisting.subject
+        })
+        .eq('id', activeExisting.id)
+        .select()
+        .single();
+      result = updateRes.data;
+      error = updateRes.error;
+    } else {
+      let insertPayload = {
+        created_at: createdAt,
+        expires_at: expiresAt,
+        created_by_faculty_id: facultyId,
+        date: today,
+        tokens: JSON.stringify(tokens),
+        semester: semester ? parseInt(semester) : null,
+        division: (division && String(division).trim() !== '') ? String(division).trim().toUpperCase() : null,
+        subject: (subject && String(subject).trim() !== '') ? String(subject).trim() : null
+      };
 
-      const retry = await supabase.from('qr_sessions').insert([insertPayload]).select().single();
-      result = retry.data;
-      error = retry.error;
+      let insertRes = await supabase.from('qr_sessions').insert([insertPayload]).select().single();
+      result = insertRes.data;
+      error = insertRes.error;
+
+      // Fallback: If DB table lacks 'subject' or 'division' columns, retry without missing column and save local meta
+      if (error && error.message && (error.message.includes('subject') || error.message.includes('division') || error.message.includes('schema cache'))) {
+        if (error.message.includes('subject')) delete insertPayload.subject;
+        if (error.message.includes('division')) delete insertPayload.division;
+
+        const retry = await supabase.from('qr_sessions').insert([insertPayload]).select().single();
+        result = retry.data;
+        error = retry.error;
+      }
     }
 
     if (error) {
-      console.error('QR Session Insert Error:', error);
+      console.error('QR Session Start Error:', error);
       return res.status(500).json({ error: 'Failed to start QR session: ' + error.message });
     }
 
