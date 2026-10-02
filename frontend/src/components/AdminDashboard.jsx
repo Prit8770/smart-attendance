@@ -5090,23 +5090,38 @@ export default function AdminDashboard({
       setStats(prev => ({ ...prev, totalFaculty: Math.max(0, (prev.totalFaculty || 0) - targetIdsList.length) }));
 
       try {
-        let failedCount = 0;
-        for (const fId of targetIdsList) {
-          const res = await fetch(`/api/faculty/${fId}`, {
+        if (targetIdsList.length > 1) {
+          const res = await fetch('/api/faculty/bulk-delete', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({ facultyIds: targetIdsList })
+          });
+          if (res.ok) {
+            showToast(`Successfully deleted ${targetIdsList.length} faculty member(s).`, 'success');
+            fetchFaculties();
+            fetchStats();
+            notifyDataChanged();
+          } else {
+            setFaculties(prevFacs);
+            showToast('Failed to delete faculty members', 'error');
+          }
+        } else if (targetIdsList.length === 1) {
+          const res = await fetch(`/api/faculty/${targetIdsList[0]}`, {
             method: 'DELETE',
             headers: { Authorization: `Bearer ${token}` }
           });
-          if (!res.ok) failedCount++;
-        }
-
-        if (failedCount === 0) {
-          showToast(targetIdsList.length === 1 ? 'Faculty member deleted successfully!' : `Successfully deleted ${targetIdsList.length} faculty member(s).`, 'success');
-          fetchFaculties();
-          fetchStats();
-          notifyDataChanged();
-        } else {
-          fetchFaculties();
-          showToast(`Failed to delete ${failedCount} faculty member(s)`, 'error');
+          if (res.ok) {
+            showToast('Faculty member deleted successfully!', 'success');
+            fetchFaculties();
+            fetchStats();
+            notifyDataChanged();
+          } else {
+            setFaculties(prevFacs);
+            showToast('Failed to delete faculty member', 'error');
+          }
         }
       } catch (err) {
         console.error('Error deleting faculty:', err);
@@ -6480,8 +6495,23 @@ export default function AdminDashboard({
     }
   };
 
-  // Send imported faculty batch to backend
+  // Send imported faculty batch to backend (Optimistic + Fast Batch)
   const sendBulkFacultyImport = async (facultyList) => {
+    const prevFacs = [...faculties];
+    const optimisticNewFacs = facultyList.map((fac, idx) => ({
+      id: `temp_${Date.now()}_${idx}`,
+      name: fac.name || 'Faculty',
+      email: fac.email || `faculty_${Date.now()}@college.edu`,
+      department: fac.department || 'BCA',
+      mobile: fac.mobile || '0000000000',
+      username: fac.email,
+      subjects: fac.subjects || []
+    }));
+
+    // Optimistic local state update (0ms UI latency)
+    setFaculties(prev => [...optimisticNewFacs, ...prev]);
+    setStats(prev => ({ ...prev, totalFaculty: (prev.totalFaculty || 0) + facultyList.length }));
+
     try {
       const response = await fetch('/api/faculty/import', {
         method: 'POST',
@@ -6499,12 +6529,15 @@ export default function AdminDashboard({
         }
         showToast(msg, 'success');
         fetchFaculties();
+        fetchStats();
         notifyDataChanged();
       } else {
+        setFaculties(prevFacs);
         showToast(data.error || 'Failed to import faculty data.', 'error');
       }
     } catch (err) {
       console.error('Faculty import error:', err);
+      setFaculties(prevFacs);
       showToast('Network error while importing faculty data.', 'error');
     }
   };

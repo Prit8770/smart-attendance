@@ -806,24 +806,67 @@ router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
   }
 
   try {
-    const targetIds = (facultyIds || []).filter(id => id !== 'admin_primary' && !String(id).startsWith('admin') && String(id) !== '78');
-    for (const id of targetIds) {
-      const { data: qrSessions } = await supabase.from('qr_sessions').select('id').eq('created_by_faculty_id', id);
-      const qrIds = (qrSessions || []).map(q => q.id);
+    const rawTargetIds = (facultyIds || []).filter(id => id !== 'admin_primary' && !String(id).startsWith('admin') && String(id) !== '78');
+    
+    // Normalize target IDs to handle both strings and numbers for Supabase postgrest type matching
+    const expandedIds = Array.from(new Set(
+      rawTargetIds.flatMap(id => {
+        const str = String(id).trim();
+        const num = Number(id);
+        return !isNaN(num) && str !== '' ? [str, num] : [str];
+      })
+    ));
 
-      const { data: otps } = await supabase.from('otp').select('id').eq('generated_by', id);
-      const otpIds = (otps || []).map(o => o.id);
+    if (expandedIds.length > 0) {
+      // 1. Fetch all dependent QR session and OTP IDs in batch queries
+      const [qrRes, otpRes] = await Promise.all([
+        supabase.from('qr_sessions').select('id').in('created_by_faculty_id', expandedIds),
+        supabase.from('otp').select('id').in('generated_by', expandedIds)
+      ]);
 
+      const qrIds = (qrRes.data || []).map(q => q.id);
+      const otpIds = (otpRes.data || []).map(o => o.id);
+
+      // 2. Batch delete attendance records dependent on QR or OTP sessions
+      const deleteAttendanceTasks = [];
       if (qrIds.length > 0) {
-        await supabase.from('attendance').delete().in('qr_session_id', qrIds);
+        deleteAttendanceTasks.push(supabase.from('attendance').delete().in('qr_session_id', qrIds));
       }
       if (otpIds.length > 0) {
-        await supabase.from('attendance').delete().in('otp_id', otpIds);
+        deleteAttendanceTasks.push(supabase.from('attendance').delete().in('otp_id', otpIds));
+      }
+      if (deleteAttendanceTasks.length > 0) {
+        await Promise.all(deleteAttendanceTasks);
       }
 
-      await supabase.from('qr_sessions').delete().eq('created_by_faculty_id', id);
-      await supabase.from('otp').delete().eq('generated_by', id);
-      await supabase.from('faculty').delete().eq('id', id);
+      // 3. Batch delete qr_sessions & otps FIRST to release FK constraints
+      await Promise.all([
+        supabase.from('qr_sessions').delete().in('created_by_faculty_id', expandedIds),
+        supabase.from('otp').delete().in('generated_by', expandedIds)
+      ]);
+
+      // 4. Delete faculty rows AFTER child session records are completely deleted
+      const { error: deleteErr } = await supabase.from('faculty').delete().in('id', expandedIds);
+      if (deleteErr) {
+        console.error('Error deleting faculty rows in bulk-delete:', deleteErr.message);
+      }
+
+      // 5. Clean up subjects and roles mapping in local JSON files
+      try {
+        const subjectsMap = loadFacultySubjectsMap();
+        let mapChanged = false;
+        for (const id of expandedIds) {
+          if (subjectsMap[id]) {
+            delete subjectsMap[id];
+            mapChanged = true;
+          }
+        }
+        if (mapChanged) {
+          saveFacultySubjectsMap(subjectsMap);
+        }
+      } catch (e) {
+        console.error('Error updating subjects map after bulk deletion:', e);
+      }
     }
 
     // Emit real-time synchronization event
@@ -914,73 +957,118 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
   try {
     let successCount = 0;
     const errors = [];
-
     const subjectsMap = loadFacultySubjectsMap();
 
-    for (const fac of importedList) {
-      if (!fac.name && !fac.email) continue;
+    // 1. Parallelize password validation & hashing across all rows
+    const hashedRows = await Promise.all(importedList.map(async (fac, index) => {
+      if (!fac || (!fac.name && !fac.email)) return null;
 
       const name = String(fac.name || 'Faculty').trim();
-      const email = fac.email ? String(fac.email).trim() : `faculty_${Date.now()}@college.edu`;
+      const email = fac.email ? String(fac.email).trim() : `faculty_${Date.now()}_${index}@college.edu`;
       const department = fac.department ? String(fac.department).trim() : 'BCA';
       const mobile = fac.mobile ? String(fac.mobile).trim() : '0000000000';
       const rawPassword = fac.password ? String(fac.password).trim() : generatePassword();
 
       const valRes = validateStrongPassword(rawPassword);
       const plain_password = valRes.isValid ? rawPassword : generatePassword();
-
       const hashedPassword = await bcrypt.hash(plain_password, 10);
 
-      let subjectsToSave = [];
-      if (Array.isArray(fac.subjects)) {
-        subjectsToSave = fac.subjects;
-      }
-
+      const subjectsToSave = Array.isArray(fac.subjects) ? fac.subjects : [];
       const cleanDept = department ? String(department).split('||SUB:')[0].trim() : 'BCA';
-      const encodedDept = cleanDept;
 
-      const employee_no = String(fac.employee_no || fac.employeeNo || `EMP${String(Date.now()).slice(-6)}${Math.floor(100 + Math.random() * 900)}`).trim();
-
-      const { data: deptMatches } = await supabase.from('faculty').select('*').eq('email', email);
-      const existingInSameDept = (deptMatches || []).find(f => {
-        const fDept = String(f.department || '').split('||SUB:')[0].trim().toLowerCase();
-        return fDept === department.trim().toLowerCase();
-      });
-
-      let finalUsername = email;
-      const { data: usernameMatch } = await supabase.from('faculty').select('id').eq('username', email).maybeSingle();
-      if (usernameMatch && (!existingInSameDept || usernameMatch.id !== existingInSameDept.id)) {
-        const deptSlug = department.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-        finalUsername = `${email.toLowerCase()}_${deptSlug}_${Math.floor(100 + Math.random() * 900)}`;
-      }
-
-      const payload = {
+      return {
+        fac,
         name,
         email,
-        department: encodedDept,
+        department: cleanDept,
         mobile,
+        plain_password,
+        hashedPassword,
+        subjectsToSave
+      };
+    }));
+
+    const validRows = hashedRows.filter(Boolean);
+
+    // 2. Fetch existing faculty in ONE batch query for fast in-memory matching
+    const { data: existingFaculties } = await supabase.from('faculty').select('id, email, department, username');
+    const existingMap = new Map();
+    const usernameSet = new Set();
+
+    (existingFaculties || []).forEach(f => {
+      if (f.email && f.department) {
+        const key = `${String(f.email).trim().toLowerCase()}_${String(f.department).split('||SUB:')[0].trim().toLowerCase()}`;
+        existingMap.set(key, f);
+      }
+      if (f.username) {
+        usernameSet.add(String(f.username).trim().toLowerCase());
+      }
+    });
+
+    const toInsert = [];
+    const toUpdate = [];
+
+    // 3. Build payloads in memory
+    for (const item of validRows) {
+      const matchKey = `${item.email.toLowerCase()}_${item.department.toLowerCase()}`;
+      const existingInSameDept = existingMap.get(matchKey);
+
+      let finalUsername = item.email;
+      if (usernameSet.has(finalUsername.toLowerCase()) && (!existingInSameDept || existingInSameDept.username?.toLowerCase() !== finalUsername.toLowerCase())) {
+        const deptSlug = item.department.toLowerCase().replace(/[^a-z0-9]/g, '');
+        finalUsername = `${item.email.toLowerCase()}_${deptSlug}_${Math.floor(100 + Math.random() * 900)}`;
+      }
+      usernameSet.add(finalUsername.toLowerCase());
+
+      const payload = {
+        name: item.name,
+        email: item.email,
+        department: item.department,
+        mobile: item.mobile,
         username: finalUsername,
-        password: hashedPassword,
-        plain_password
+        password: item.hashedPassword,
+        plain_password: item.plain_password
       };
 
       if (existingInSameDept) {
-        await supabase.from('faculty').update(payload).eq('id', existingInSameDept.id);
-        subjectsMap[existingInSameDept.id] = subjectsToSave;
+        toUpdate.push({ id: existingInSameDept.id, payload, subjectsToSave: item.subjectsToSave });
       } else {
-        const { data: newFac, error: insErr } = await supabase.from('faculty').insert([payload]).select().single();
-
-        if (insErr) {
-          errors.push(`Email ${email} (${department}): ${insErr.message}`);
-          continue;
-        }
-
-        if (newFac) {
-          subjectsMap[newFac.id] = subjectsToSave;
-        }
+        toInsert.push({ payload, subjectsToSave: item.subjectsToSave, email: item.email, dept: item.department });
       }
+    }
 
-      successCount++;
+    // 4. Batch insert new records in 1 query
+    if (toInsert.length > 0) {
+      const payloadsToInsert = toInsert.map(i => i.payload);
+      const { data: newFacList, error: insErr } = await supabase.from('faculty').insert(payloadsToInsert).select();
+
+      if (insErr) {
+        console.error('Batch insert faculty error:', insErr);
+        // Fallback or record error
+        errors.push(`Bulk insert error: ${insErr.message}`);
+      } else if (newFacList && newFacList.length > 0) {
+        successCount += newFacList.length;
+        newFacList.forEach((newFac, idx) => {
+          if (toInsert[idx] && toInsert[idx].subjectsToSave) {
+            subjectsMap[newFac.id] = toInsert[idx].subjectsToSave;
+          }
+        });
+      }
+    }
+
+    // 5. Batch update existing records concurrently
+    if (toUpdate.length > 0) {
+      const updateResults = await Promise.allSettled(
+        toUpdate.map(u => supabase.from('faculty').update(u.payload).eq('id', u.id))
+      );
+      updateResults.forEach((res, idx) => {
+        if (res.status === 'fulfilled') {
+          successCount++;
+          subjectsMap[toUpdate[idx].id] = toUpdate[idx].subjectsToSave;
+        } else {
+          errors.push(`Update error for ID ${toUpdate[idx].id}: ${res.reason?.message}`);
+        }
+      });
     }
 
     saveFacultySubjectsMap(subjectsMap);
