@@ -414,7 +414,7 @@ export default function Login({ onLoginSuccess, onBack }) {
           </button>
         </form>
         <p style={{ marginTop: '65px', textAlign: 'center', fontSize: '0.82rem', color: '#93c5fd', lineHeight: '1.4' }}>
-          EduMark © {new Date().getFullYear()} • This Module Built and Designed By <span style={{ color: '#fbbf24', fontWeight: '700' }}>Dabhi Prit And Jadav Dashrath</span>
+          EduMark © {new Date().getFullYear()} • This Module Build is Designed and Devloped by <span style={{ color: '#fbbf24', fontWeight: '700' }}>Dabhi Prit And Jadav Dashrath</span>
         </p>
       </div>
     </div>

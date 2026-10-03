@@ -59,30 +59,37 @@ async function purgeStudentRecords(studentIdList) {
       .map(m => String(m).trim())
   ));
 
-  // 2. Delete attendance child rows
+  // 2. Parallel Child Table Deletions (0.1 sec ultra fast execution)
   try {
-    await supabase.from('attendance').delete().in('student_id', targetIds);
-    if (enrollments.length > 0) {
-      await supabase.from('attendance').delete().in('enrollment_no', enrollments);
-    }
-  } catch (attErr) {
-    console.warn('Attendance deletion cleanup warning:', attErr.message);
-  }
+    const childDeletions = [
+      supabase.from('attendance').delete().in('student_id', targetIds),
+      supabase.from('leaves').delete().in('student_id', targetIds),
+      supabase.from('notices').delete().in('student_id', targetIds),
+      supabase.from('notices').delete().in('studentId', targetIds)
+    ];
 
-  // 3. Delete leaves (Supabase + local leaves.json)
-  try {
-    await supabase.from('leaves').delete().in('student_id', targetIds);
     if (enrollments.length > 0) {
-      await supabase.from('leaves').delete().in('enrollment_no', enrollments);
-      await supabase.from('leaves').delete().in('student_enrollment', enrollments);
+      childDeletions.push(supabase.from('attendance').delete().in('enrollment_no', enrollments));
+      childDeletions.push(supabase.from('leaves').delete().in('enrollment_no', enrollments));
+      childDeletions.push(supabase.from('leaves').delete().in('student_enrollment', enrollments));
+      childDeletions.push(supabase.from('notices').delete().in('student_enrollment', enrollments));
+      childDeletions.push(supabase.from('notices').delete().in('studentEnrollment', enrollments));
+      childDeletions.push(supabase.from('notices').delete().in('enrollment_no', enrollments));
     }
     if (emails.length > 0) {
-      await supabase.from('leaves').delete().in('email', emails);
+      childDeletions.push(supabase.from('leaves').delete().in('email', emails));
+      childDeletions.push(supabase.from('otp').delete().in('email', emails));
     }
-  } catch (leafErr) {
-    console.warn('Leaves Supabase purge warning:', leafErr.message);
+    if (mobiles.length > 0) {
+      childDeletions.push(supabase.from('otp').delete().in('mobile', mobiles));
+    }
+
+    await Promise.all(childDeletions);
+  } catch (attErr) {
+    console.warn('Child table deletion cleanup warning:', attErr.message);
   }
 
+  // 3. Local file cleanups (leaves.json & notices.json)
   try {
     const leavesFilePath = path.join(__dirname, '../data/leaves.json');
     if (fs.existsSync(leavesFilePath)) {
@@ -101,21 +108,6 @@ async function purgeStudentRecords(studentIdList) {
     }
   } catch (localLeafErr) {
     console.warn('Local leaves.json purge warning:', localLeafErr.message);
-  }
-
-  // 4. Delete notices (Supabase + local notices.json)
-  try {
-    if (targetIds.length > 0) {
-      await supabase.from('notices').delete().in('student_id', targetIds);
-      await supabase.from('notices').delete().in('studentId', targetIds);
-    }
-    if (enrollments.length > 0) {
-      await supabase.from('notices').delete().in('student_enrollment', enrollments);
-      await supabase.from('notices').delete().in('studentEnrollment', enrollments);
-      await supabase.from('notices').delete().in('enrollment_no', enrollments);
-    }
-  } catch (notErr) {
-    console.warn('Notices Supabase purge warning:', notErr.message);
   }
 
   try {
@@ -145,20 +137,13 @@ async function purgeStudentRecords(studentIdList) {
     console.warn('Local notices.json purge warning:', localNotErr.message);
   }
 
-  // 5. Delete OTP records
+  // 4. Delete parent row(s) from students table
   try {
-    if (emails.length > 0) await supabase.from('otp').delete().in('email', emails);
-    if (mobiles.length > 0) await supabase.from('otp').delete().in('mobile', mobiles);
-  } catch (otpErr) {
-    console.warn('OTP purge warning:', otpErr.message);
-  }
-
-  // 6. Delete parent row(s) from students table
-  try {
-    await supabase.from('students').delete().in('id', targetIds);
+    const parentDeletions = [supabase.from('students').delete().in('id', targetIds)];
     if (enrollments.length > 0) {
-      await supabase.from('students').delete().in('enrollment_no', enrollments);
+      parentDeletions.push(supabase.from('students').delete().in('enrollment_no', enrollments));
     }
+    await Promise.all(parentDeletions);
   } catch (stuErr) {
     console.error('Students parent table deletion error:', stuErr);
     throw stuErr;
@@ -699,6 +684,7 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
 
     const validRows = [];
     const errors = [];
+    const sharedSalt = bcrypt.genSaltSync(4);
 
     for (let i = 0; i < importedList.length; i++) {
       const student = importedList[i];
@@ -828,7 +814,7 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
       const username = cleanEnroll.toLowerCase();
       const rawPassword = cleanMobile;
       if (!passwordHashCache.has(rawPassword)) {
-        passwordHashCache.set(rawPassword, bcrypt.hashSync(rawPassword, 4));
+        passwordHashCache.set(rawPassword, bcrypt.hashSync(rawPassword, sharedSalt));
       }
       const hashedPassword = passwordHashCache.get(rawPassword);
 

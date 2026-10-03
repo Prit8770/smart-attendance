@@ -259,7 +259,7 @@ const LandingPage = ({ onGetStarted }) => {
           <span style={{ ...s.navBrand, fontSize: '1.2rem' }}>Edu<span style={{ color: '#fbbf24' }}>Mark</span></span>
         </div>
         <p style={s.footerText}>&#169; {new Date().getFullYear()} EduMark Smart Attendance System.</p>
-        <p style={s.footerCredit}>This Module Built and Designed By <span style={{ color: '#fbbf24' }}>Dabhi Prit And Jadav Dashrath</span></p>
+        <p style={s.footerCredit}>This Module Build is Designed and Devloped by <span style={{ color: '#fbbf24' }}>Dabhi Prit And Jadav Dashrath</span></p>
       </footer>
     </div>
   );

@@ -25,12 +25,32 @@ router.get('/', async (req, res) => {
       console.error('Supabase fetch semesters error:', error);
       return res.status(500).json({ error: error.message });
     }
-    res.json(data || []);
+    const list = data || [];
+    list.sort((a, b) => {
+      const semNumA = String(a.semester_number || a.id || '').trim();
+      const semNumB = String(b.semester_number || b.id || '').trim();
+      const digitsA = parseInt(semNumA.replace(/\D/g, ''), 10);
+      const digitsB = parseInt(semNumB.replace(/\D/g, ''), 10);
+
+      if (!isNaN(digitsA) && !isNaN(digitsB) && digitsA !== digitsB) {
+        return digitsA - digitsB;
+      }
+      return semNumA.localeCompare(semNumB, undefined, { numeric: true, sensitivity: 'base' });
+    });
+    res.json(list);
   } catch (err) {
     console.error('Server error fetching semesters:', err);
     res.status(500).json({ error: 'Failed to fetch semesters from database' });
   }
 });
+
+const normalizeAndValidateTermType = (rawTerm) => {
+  if (!rawTerm) return 'Odd';
+  const clean = String(rawTerm).trim().toLowerCase();
+  if (clean === 'odd' || clean === 'odd term') return 'Odd';
+  if (clean === 'even' || clean === 'even term') return 'Even';
+  return null;
+};
 
 // POST /api/semesters - Add new semester to Supabase DB
 router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
@@ -38,7 +58,11 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
 
   const numVal = parseInt(String(semester_number || semNumber || '1').replace(/\D/g, ''), 10) || 1;
   const nameVal = String(semester_display_name || name || `Semester ${numVal}`).trim();
-  const termVal = String(term_type || term || 'Odd').trim();
+  const termVal = normalizeAndValidateTermType(term_type || term);
+
+  if (!termVal) {
+    return res.status(400).json({ error: `Invalid Term Type '${term_type || term}'. Allowed values are 'Odd', 'Even', 'Odd Term', or 'Even Term'.` });
+  }
 
   try {
     const { data: existing } = await supabase
@@ -88,7 +112,11 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
     updateObj.semester_display_name = String(semester_display_name || name || '').trim();
   }
   if (term_type !== undefined || term !== undefined) {
-    updateObj.term_type = String(term_type || term || '').trim();
+    const validTerm = normalizeAndValidateTermType(term_type || term);
+    if (!validTerm) {
+      return res.status(400).json({ error: `Invalid Term Type '${term_type || term}'. Allowed values are 'Odd', 'Even', 'Odd Term', or 'Even Term'.` });
+    }
+    updateObj.term_type = validTerm;
   }
 
   try {
@@ -147,6 +175,76 @@ router.delete('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   }
 });
 
+// POST /api/semesters/bulk - Bulk add semesters into Supabase DB
+router.post('/bulk', authenticateJWT, requireAdmin, async (req, res) => {
+  const { semesters } = req.body;
+  if (!Array.isArray(semesters) || semesters.length === 0) {
+    return res.status(400).json({ error: 'Semesters array is required' });
+  }
+
+  try {
+    const { data: existingData, error: fetchErr } = await supabase
+      .from('semesters')
+      .select('*');
+
+    if (fetchErr) {
+      console.error('Supabase fetch semesters error during bulk insert:', fetchErr);
+      return res.status(500).json({ error: fetchErr.message });
+    }
+
+    const existingSemesters = existingData || [];
+    const insertedSemesters = [];
+    const skippedSemesters = [];
+
+    for (const sem of semesters) {
+      const numVal = parseInt(String(sem.semester_number || sem.semNumber || '1').replace(/\D/g, ''), 10) || 1;
+      const nameVal = String(sem.semester_display_name || sem.name || `Semester ${numVal}`).trim();
+      const termVal = normalizeAndValidateTermType(sem.term_type || sem.term);
+
+      if (!termVal) {
+        return res.status(400).json({ error: `Invalid Term Type '${sem.term_type || sem.term}' for ${nameVal}. Allowed values are 'Odd', 'Even', 'Odd Term', or 'Even Term'.` });
+      }
+
+      const isDuplicateInDb = existingSemesters.some(e => e.semester_number === numVal || (e.semester_display_name && e.semester_display_name.toLowerCase() === nameVal.toLowerCase()));
+      const isDuplicateInBatch = insertedSemesters.some(i => i.semester_number === numVal || (i.semester_display_name && i.semester_display_name.toLowerCase() === nameVal.toLowerCase()));
+
+      if (isDuplicateInDb || isDuplicateInBatch) {
+        skippedSemesters.push(nameVal);
+        continue;
+      }
+
+      const insertObj = {
+        semester_number: numVal,
+        semester_display_name: nameVal,
+        term_type: termVal
+      };
+
+      const { data: inserted, error: insertErr } = await supabase
+        .from('semesters')
+        .insert([insertObj])
+        .select()
+        .single();
+
+      if (insertErr) {
+        console.error('Error inserting semester row in bulk:', insertErr);
+      } else if (inserted) {
+        insertedSemesters.push(inserted);
+        existingSemesters.push(inserted);
+      }
+    }
+
+    notifyChange('SEMESTERS_CHANGED', { action: 'bulk_add', inserted: insertedSemesters });
+    return res.status(201).json({
+      message: `Successfully imported ${insertedSemesters.length} new semester(s)`,
+      inserted: insertedSemesters,
+      skippedCount: skippedSemesters.length
+    });
+  } catch (err) {
+    console.error('Server error bulk adding semesters:', err);
+    return res.status(500).json({ error: 'Server error bulk adding semesters to database' });
+  }
+});
+
 // POST /api/semesters/bulk-delete - Delete multiple semesters from Supabase DB
 router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
   const { ids } = req.body;
@@ -175,3 +273,4 @@ router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
 });
 
 module.exports = router;
+

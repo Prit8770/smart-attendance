@@ -268,7 +268,19 @@ export default function AdminDashboard({
   const defaultSemestersList = useMemo(() => [], []);
 
   const allSemestersList = useMemo(() => {
-    return [...defaultSemestersList, ...customSemesters];
+    const combined = [...defaultSemestersList, ...customSemesters];
+    return combined.sort((a, b) => {
+      const semNumA = String(a.semNumber || a.semester_number || a.id || '').trim();
+      const semNumB = String(b.semNumber || b.semester_number || b.id || '').trim();
+
+      const digitsA = parseInt(semNumA.replace(/\D/g, ''), 10);
+      const digitsB = parseInt(semNumB.replace(/\D/g, ''), 10);
+
+      if (!isNaN(digitsA) && !isNaN(digitsB) && digitsA !== digitsB) {
+        return digitsA - digitsB;
+      }
+      return semNumA.localeCompare(semNumB, undefined, { numeric: true, sensitivity: 'base' });
+    });
   }, [defaultSemestersList, customSemesters]);
 
   const handleOpenAddSemesterModal = () => {
@@ -418,7 +430,7 @@ export default function AdminDashboard({
   };
 
   const handleDownloadSemesterSampleTemplate = () => {
-    const headers = [['Semester Number', 'Semester Name', 'Academic Year', 'Term', 'Description']];
+    const headers = [['Semester Number', 'Semester Name', 'Term Type']];
     const worksheet = XLSX.utils.aoa_to_sheet(headers);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Semester Sample');
@@ -487,14 +499,16 @@ export default function AdminDashboard({
         }
 
         const headers = rows[0].map(h => (h ? h.toString().trim().toLowerCase() : ''));
-        let importedCount = 0;
-        let updatedCustom = [...customSemesters];
+        const semestersToInsert = [];
+        const duplicateSemesters = [];
+        const invalidTermErrors = [];
 
         for (let i = 1; i < rows.length; i++) {
           const values = rows[i];
           if (!values || values.length === 0) continue;
 
-          let semNumber = '', name = '', academicYear = '2025-2026', term = 'Odd', description = '';
+          let semNumber = '', name = '', rawTerm = '';
+          let hasTermHeader = false;
 
           headers.forEach((h, idx) => {
             const val = values[idx] !== undefined && values[idx] !== null ? values[idx].toString().trim() : '';
@@ -504,48 +518,165 @@ export default function AdminDashboard({
               semNumber = val.replace(/\D/g, '') || val;
             } else if (cleanH.includes('name') || cleanH.includes('title')) {
               name = val;
-            } else if (cleanH.includes('year') || cleanH.includes('academic')) {
-              academicYear = val || '2025-2026';
             } else if (cleanH.includes('term')) {
-              term = val || 'Odd';
-            } else if (cleanH.includes('desc')) {
-              description = val;
+              hasTermHeader = true;
+              rawTerm = val;
             }
           });
+
+          let normalizedTerm = 'Odd';
+          if (rawTerm) {
+            const cleanT = rawTerm.toLowerCase();
+            if (cleanT === 'odd' || cleanT === 'odd term') {
+              normalizedTerm = 'Odd';
+            } else if (cleanT === 'even' || cleanT === 'even term') {
+              normalizedTerm = 'Even';
+            } else {
+              invalidTermErrors.push(`Row ${i + 1}: Invalid Term Type "${rawTerm}". Allowed values are "Odd", "Even", "Odd Term", or "Even Term".`);
+              continue;
+            }
+          }
 
           if (!semNumber && name) {
             semNumber = name.replace(/\D/g, '');
           }
           if (semNumber) {
             const cleanName = name || `Semester ${semNumber}`;
-            const exists = updatedCustom.some(s => String(s.semNumber) === String(semNumber) || s.name.toLowerCase() === cleanName.toLowerCase());
-            if (!exists) {
-              const newSem = {
-                id: `custom_${Date.now()}_${i}`,
-                semNumber: String(semNumber),
-                name: cleanName,
-                academicYear: academicYear || '2025-2026',
-                term: term || 'Odd',
-                description: description || '',
-                isDefault: false,
-                createdAt: new Date().toISOString()
-              };
-              updatedCustom.push(newSem);
-              importedCount++;
+            const exists = allSemestersList.some(s =>
+              String(s.semNumber || s.id || '').trim() === String(semNumber).trim() ||
+              String(s.name || s.semester_display_name || '').toLowerCase().trim() === cleanName.toLowerCase().trim()
+            );
+            const alreadyInBatch = semestersToInsert.some(s =>
+              String(s.semester_number).trim() === String(semNumber).trim() ||
+              s.semester_display_name.toLowerCase().trim() === cleanName.toLowerCase().trim()
+            );
+
+            const semObj = {
+              semester_number: parseInt(semNumber, 10) || 1,
+              semester_display_name: cleanName,
+              term_type: normalizedTerm
+            };
+
+            if (exists || alreadyInBatch) {
+              duplicateSemesters.push(semObj);
+            } else {
+              semestersToInsert.push(semObj);
             }
           }
         }
 
-        if (importedCount > 0) {
+        if (invalidTermErrors.length > 0) {
+          showToast(invalidTermErrors.join(' | '), 'error');
+          return;
+        }
+
+        // Case 1: All uploaded semesters were duplicates
+        if (duplicateSemesters.length > 0 && semestersToInsert.length === 0) {
+          const dupListHtml = duplicateSemesters.map(d =>
+            `<li><strong>${d.semester_display_name}</strong> (Semester Code/No: ${d.semester_number}, Term: ${d.term_type})</li>`
+          ).join('');
+
+          Swal.fire({
+            icon: 'warning',
+            title: 'Duplicate Semesters Found!',
+            html: `
+              <div style="text-align: left; font-size: 0.92rem; color: #334155; line-height: 1.6;">
+                <p style="margin-bottom: 10px; font-weight: 600; color: #dc2626;">
+                  ⚠️ No new semesters were added because all ${duplicateSemesters.length} semester(s) in your file already exist in your semester list:
+                </p>
+                <div style="max-height: 200px; overflow-y: auto; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 10px 14px;">
+                  <ul style="margin: 0; padding-left: 18px; color: #9f1239;">
+                    ${dupListHtml}
+                  </ul>
+                </div>
+              </div>
+            `,
+            confirmButtonText: 'OK, Got It',
+            confirmButtonColor: '#e11d48'
+          });
+          return;
+        }
+
+        if (semestersToInsert.length === 0) {
+          showToast('No valid semesters found in the uploaded file.', 'warning');
+          return;
+        }
+
+        // Send semesters to backend DB via POST /api/semesters/bulk
+        const res = await fetch('/api/semesters/bulk', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ semesters: semestersToInsert })
+        });
+
+        const resData = await res.json();
+        if (!res.ok) {
+          throw new Error(resData.error || 'Failed to save semesters to database');
+        }
+
+        const insertedRows = resData.inserted || [];
+        if (insertedRows.length > 0) {
+          const newFormattedSems = insertedRows.map(s => ({
+            id: s.id,
+            semNumber: String(s.semester_number || s.id),
+            name: s.semester_display_name || `Semester ${s.semester_number || s.id}`,
+            program: "Bachelor's of Computer Applications",
+            academicYear: '2025-2026',
+            term: s.term_type || 'Odd',
+            description: ''
+          }));
+
+          const updatedCustom = [...customSemesters, ...newFormattedSems];
           setCustomSemesters(updatedCustom);
-          localStorage.setItem('admin_custom_semesters', JSON.stringify(updatedCustom));
-          showToast(`Successfully imported ${importedCount} new semester(s)!`, 'success');
+          try {
+            localStorage.setItem('admin_custom_semesters', JSON.stringify(updatedCustom));
+          } catch (e) {}
+
+          if (duplicateSemesters.length > 0) {
+            const dupListHtml = duplicateSemesters.map(d =>
+              `<li><strong>${d.semester_display_name}</strong> (Semester Code/No: ${d.semester_number}, Term: ${d.term_type})</li>`
+            ).join('');
+
+            Swal.fire({
+              icon: 'warning',
+              title: 'Bulk Import Completed (With Duplicates)',
+              html: `
+                <div style="text-align: left; font-size: 0.92rem; color: #334155; line-height: 1.6;">
+                  <p style="margin-bottom: 8px; color: #16a34a; font-weight: 600;">
+                    ✅ <strong>${insertedRows.length} new semester(s)</strong> added successfully!
+                  </p>
+                  <p style="margin-bottom: 8px; color: #d97706; font-weight: 600;">
+                    ⚠️ <strong>${duplicateSemesters.length} semester(s)</strong> already existed and were skipped:
+                  </p>
+                  <div style="max-height: 180px; overflow-y: auto; background: #fffbe6; border: 1px solid #ffe58f; border-radius: 8px; padding: 10px 14px;">
+                    <ul style="margin: 0; padding-left: 18px; color: #b45309;">
+                      ${dupListHtml}
+                    </ul>
+                  </div>
+                </div>
+              `,
+              confirmButtonText: 'Understood',
+              confirmButtonColor: '#f59e0b'
+            });
+          } else {
+            Swal.fire({
+              icon: 'success',
+              title: 'Bulk Import Successful!',
+              text: `Successfully imported all ${insertedRows.length} semester(s) into the database!`,
+              confirmButtonText: 'Great!',
+              confirmButtonColor: '#10b981',
+              timer: 3000
+            });
+          }
         } else {
-          showToast('No new semesters were imported (duplicates skipped or empty).', 'info');
+          showToast('No new semesters were imported (all duplicates skipped).', 'info');
         }
       } catch (err) {
         console.error('Error importing semester file:', err);
-        showToast('Failed to parse semester file.', 'error');
+        showToast(err.message || 'Failed to parse semester file.', 'error');
       }
     };
 
@@ -580,11 +711,9 @@ export default function AdminDashboard({
         'S.No': idx + 1,
         'Semester Number': s.semNumber || s.id,
         'Semester Name': s.name || `Semester ${s.semNumber}`,
-        'Academic Year': s.academicYear || '2025-2026',
-        'Term': s.term || 'Odd',
+        'Term Type': s.term || 'Odd',
         'Total Students': semStudentCount,
-        'Total Subjects': semSubjectCount,
-        'Description': s.description || '-'
+        'Total Subjects': semSubjectCount
       };
     });
 
@@ -1162,15 +1291,16 @@ export default function AdminDashboard({
     fetchRules();
   }, [token]);
 
-  // Fetch subjects from Supabase server DB on load
-  useEffect(() => {
-    const fetchDbSubjects = async () => {
-      try {
-        const res = await fetch('/api/subjects');
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data) && data.length > 0) {
-            const formattedDbSubs = data.map(dbSub => ({
+  // Fetch subjects from Supabase server DB
+  const fetchDbSubjects = async () => {
+    try {
+      const res = await fetch('/api/subjects');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) {
+          const formattedDbSubs = data.map(dbSub => {
+            const fIds = [dbSub.faculty_id_1, dbSub.faculty_id_2, dbSub.faculty_id_3].filter(Boolean).map(String);
+            return {
               subjectName: dbSub.subject_name || dbSub.subjectName || '',
               shortName: dbSub.short_name || dbSub.shortName || '-',
               code: dbSub.subject_code || dbSub.code || '',
@@ -1178,29 +1308,22 @@ export default function AdminDashboard({
               semester: String(dbSub.semester || '1'),
               type: dbSub.type || 'Theory',
               globalKey: `supabase_${dbSub.id || Date.now()}`,
-              dbId: dbSub.id
-            }));
+              dbId: dbSub.id,
+              facultyId: fIds[0] || null,
+              facultyIds: fIds
+            };
+          });
 
-            setGlobalSubjectsCatalog(prev => {
-              const mergedMap = new Map();
-              (prev || []).forEach(s => {
-                const k = `${(s.code || s.subjectCode || s.subjectName || '').toLowerCase()}_${String(s.semester || '1').replace(/\D/g,'')}_${(s.type || 'Theory').toLowerCase()}`;
-                mergedMap.set(k, s);
-              });
-              formattedDbSubs.forEach(s => {
-                const k = `${(s.code || s.subjectCode || s.subjectName || '').toLowerCase()}_${String(s.semester || '1').replace(/\D/g,'')}_${(s.type || 'Theory').toLowerCase()}`;
-                mergedMap.set(k, { ...mergedMap.get(k), ...s });
-              });
-              const result = Array.from(mergedMap.values());
-              localStorage.setItem('admin_global_subjects_catalog', JSON.stringify(result));
-              return result;
-            });
-          }
+          setGlobalSubjectsCatalog(formattedDbSubs);
+          localStorage.setItem('admin_global_subjects_catalog', JSON.stringify(formattedDbSubs));
         }
-      } catch (err) {
-        console.warn('Error fetching subjects from Supabase server:', err);
       }
-    };
+    } catch (err) {
+      console.warn('Error fetching subjects from Supabase server:', err);
+    }
+  };
+
+  useEffect(() => {
     fetchDbSubjects();
   }, [token]);
 
@@ -1424,61 +1547,7 @@ export default function AdminDashboard({
   const allFacultySubjects = (() => {
     const subjectMap = new Map();
 
-    // 1. Process all faculty-assigned subjects
-    (faculties || []).forEach(f => {
-      let fSubs = [];
-      if (typeof f.subjects === 'string') {
-        try { fSubs = JSON.parse(f.subjects); } catch (e) { fSubs = []; }
-      } else if (Array.isArray(f.subjects)) {
-        fSubs = f.subjects;
-      }
-
-      if (Array.isArray(fSubs)) {
-        fSubs.forEach((s, idx) => {
-          if (!s || (!s.subjectName && !s.name)) return;
-          const subName = String(s.subjectName || s.name || '').trim();
-          const semNum = String(s.semester || '1').replace(/\D/g, '') || '1';
-          const subCodeVal = (s.code || s.subjectCode || s.subject_code || s.subCode || s.sub_code || '').toString().trim();
-          const subType = (s.type || s.subjectType || 'Theory').toString().trim();
-          const shortCode = (s.shortName || s.shortCode || '').toString().trim();
-
-          const codeKey = subCodeVal ? subCodeVal.toLowerCase() : '';
-          const typeKey = subType ? subType.toLowerCase() : 'theory';
-          const groupKey = codeKey
-            ? `code_${codeKey}_sem_${semNum}_type_${typeKey}`
-            : `name_${subName.toLowerCase()}_sem_${semNum}_type_${typeKey}`;
-
-          const facIdStr = String(f.id);
-          const facName = f.name || 'Faculty';
-
-          if (subjectMap.has(groupKey)) {
-            const existing = subjectMap.get(groupKey);
-            if (!existing.facultyIds.includes(facIdStr)) {
-              existing.facultyIds.push(facIdStr);
-              existing.facultyNamesList.push(facName);
-              existing.facultyName = existing.facultyNamesList.join(', ');
-            }
-          } else {
-            subjectMap.set(groupKey, {
-              ...s,
-              subjectName: subName,
-              shortName: shortCode,
-              code: subCodeVal,
-              subjectCode: subCodeVal,
-              semester: semNum,
-              type: subType,
-              subKey: groupKey,
-              facultyId: f.id,
-              facultyIds: [facIdStr],
-              facultyNamesList: [facName],
-              facultyName: facName
-            });
-          }
-        });
-      }
-    });
-
-    // 2. Process global subjects from catalog (resolving assigned faculty names)
+    // 1. Process active subjects from globalSubjectsCatalog (the primary source of truth)
     (globalSubjectsCatalog || []).forEach((s, idx) => {
       if (!s || (!s.subjectName && !s.name)) return;
       const subName = String(s.subjectName || s.name || '').trim();
@@ -1493,74 +1562,82 @@ export default function AdminDashboard({
         ? `code_${codeKey}_sem_${semNum}_type_${typeKey}`
         : `name_${subName.toLowerCase()}_sem_${semNum}_type_${typeKey}`;
 
-      if (!subjectMap.has(groupKey)) {
-        const globalKey = s.globalKey || `global_${groupKey}_${idx}`;
+      const globalKey = s.globalKey || `global_${groupKey}_${idx}`;
 
-        // Resolve faculty IDs & faculty names if assigned in catalog or from faculties array
-        let fIds = Array.isArray(s.facultyIds) ? s.facultyIds.map(String) : [];
-        if (fIds.length === 0 && s.facultyId) {
-          fIds = [String(s.facultyId)];
-        }
+      // Resolve assigned faculty IDs & names
+      let fIds = Array.isArray(s.facultyIds) ? s.facultyIds.map(String) : [];
+      if (fIds.length === 0 && s.facultyId) {
+        fIds = [String(s.facultyId)];
+      }
 
-        let fNames = [];
-        if (fIds.length > 0) {
-          fNames = fIds.map(fid => {
-            const fac = (faculties || []).find(f => String(f.id) === String(fid));
-            return fac ? (fac.name || 'Faculty') : null;
-          }).filter(Boolean);
-        }
+      let fNames = [];
+      if (fIds.length > 0) {
+        fNames = fIds.map(fid => {
+          const fac = (faculties || []).find(f => String(f.id) === String(fid));
+          return fac ? (fac.name || 'Faculty') : null;
+        }).filter(Boolean);
+      }
 
-        const facNameDisplay = fNames.length > 0
-          ? fNames.join(', ')
-          : ((Array.isArray(s.facultyIds) && s.facultyIds.length === 0) ? 'Unassigned' : (s.facultyName && s.facultyName !== 'Unassigned' ? s.facultyName : 'Unassigned'));
+      const facNameDisplay = fNames.length > 0
+        ? fNames.join(', ')
+        : (s.facultyName && s.facultyName !== 'Unassigned' ? s.facultyName : 'Unassigned');
 
-        subjectMap.set(groupKey, {
-          ...s,
-          subjectName: subName,
-          shortName: shortCode,
-          code: subCodeVal,
-          subjectCode: subCodeVal,
-          semester: semNum,
-          type: subType,
-          subKey: globalKey,
-          globalKey: globalKey,
-          facultyId: fIds[0] || null,
-          facultyIds: fIds,
-          facultyNamesList: fNames,
-          facultyName: facNameDisplay
-        });
-      } else {
-        const existing = subjectMap.get(groupKey);
-        if (s.shortName && !existing.shortName) existing.shortName = s.shortName;
-        if (s.code && !existing.code) existing.code = s.code;
-        if (s.subjectCode && !existing.subjectCode) existing.subjectCode = s.subjectCode;
+      subjectMap.set(groupKey, {
+        ...s,
+        subjectName: subName,
+        shortName: shortCode,
+        code: subCodeVal,
+        subjectCode: subCodeVal,
+        semester: semNum,
+        type: subType,
+        subKey: globalKey,
+        globalKey: globalKey,
+        facultyId: fIds[0] || null,
+        facultyIds: fIds,
+        facultyNamesList: fNames,
+        facultyName: facNameDisplay
+      });
+    });
 
-        // If s.facultyIds is explicitly empty array [] (all faculties deassigned in catalog), override existing!
-        if (Array.isArray(s.facultyIds) && s.facultyIds.length === 0) {
-          existing.facultyIds = [];
-          existing.facultyNamesList = [];
-          existing.facultyName = 'Unassigned';
-          existing.facultyId = null;
-        } else {
-          // Merge any assigned faculty IDs from s in globalSubjectsCatalog
-          let fIds = Array.isArray(s.facultyIds) ? s.facultyIds.map(String) : [];
-          if (fIds.length === 0 && s.facultyId) {
-            fIds = [String(s.facultyId)];
-          }
-          fIds.forEach(fid => {
-            if (fid && !existing.facultyIds.includes(fid)) {
-              existing.facultyIds.push(fid);
-              const fac = (faculties || []).find(f => String(f.id) === String(fid));
-              const facName = fac ? (fac.name || 'Faculty') : null;
-              if (facName && !existing.facultyNamesList.includes(facName)) {
-                existing.facultyNamesList.push(facName);
-              }
+    // 2. Enrich active subjects with assigned faculty info from faculties array
+    (faculties || []).forEach(f => {
+      let fSubs = [];
+      if (typeof f.subjects === 'string') {
+        try { fSubs = JSON.parse(f.subjects); } catch (e) { fSubs = []; }
+      } else if (Array.isArray(f.subjects)) {
+        fSubs = f.subjects;
+      }
+
+      if (Array.isArray(fSubs)) {
+        fSubs.forEach((s) => {
+          if (!s || (!s.subjectName && !s.name)) return;
+          const subName = String(s.subjectName || s.name || '').trim();
+          const semNum = String(s.semester || '1').replace(/\D/g, '') || '1';
+          const subCodeVal = (s.code || s.subjectCode || s.subject_code || s.subCode || s.sub_code || '').toString().trim();
+          const subType = (s.type || s.subjectType || 'Theory').toString().trim();
+
+          const codeKey = subCodeVal ? subCodeVal.toLowerCase() : '';
+          const typeKey = subType ? subType.toLowerCase() : 'theory';
+          const groupKey = codeKey
+            ? `code_${codeKey}_sem_${semNum}_type_${typeKey}`
+            : `name_${subName.toLowerCase()}_sem_${semNum}_type_${typeKey}`;
+
+          const facIdStr = String(f.id);
+          const facName = f.name || 'Faculty';
+
+          if (subjectMap.has(groupKey)) {
+            const existing = subjectMap.get(groupKey);
+            if (!existing.facultyIds.includes(facIdStr)) {
+              existing.facultyIds.push(facIdStr);
             }
-          });
-          if (existing.facultyNamesList.length > 0) {
-            existing.facultyName = existing.facultyNamesList.join(', ');
+            if (facName && !existing.facultyNamesList.includes(facName)) {
+              existing.facultyNamesList.push(facName);
+            }
+            if (existing.facultyNamesList.length > 0) {
+              existing.facultyName = existing.facultyNamesList.join(', ');
+            }
           }
-        }
+        });
       }
     });
 
@@ -2892,35 +2969,68 @@ export default function AdminDashboard({
     setAssigningSubject(sub);
     setAssignFacultySearch('');
     const targetSubName = String(sub.subjectName || sub.name || '').toLowerCase().trim();
-    const targetSem = String(sub.semester || '1').replace(/\D/g, '');
+    const targetSem = String(sub.semester || '1').replace(/\D/g, '') || '1';
     const targetType = String(sub.type || sub.subjectType || 'Theory').toLowerCase().trim();
     const targetCode = String(sub.code || sub.subjectCode || '').toLowerCase().trim();
+    const targetDbId = sub.dbId || sub.id;
 
-    // Check which faculties currently teach this subject
-    const currentAssigned = (faculties || []).filter(f => {
+    const assignedIdsSet = new Set();
+
+    // 1. Collect faculty IDs directly from sub object properties (facultyIds / facultyId)
+    if (Array.isArray(sub.facultyIds) && sub.facultyIds.length > 0) {
+      sub.facultyIds.forEach(id => {
+        if (id) assignedIdsSet.add(String(id).trim());
+      });
+    }
+    if (sub.facultyId) {
+      assignedIdsSet.add(String(sub.facultyId).trim());
+    }
+
+    // 2. Also match by facultyNames / facultyNamesList if IDs were name strings
+    if (Array.isArray(sub.facultyNamesList) && sub.facultyNamesList.length > 0) {
+      sub.facultyNamesList.forEach(fn => {
+        if (!fn) return;
+        const matchedFac = (faculties || []).find(f => f.name && f.name.toLowerCase().trim() === String(fn).toLowerCase().trim());
+        if (matchedFac) {
+          assignedIdsSet.add(String(matchedFac.id));
+        }
+      });
+    }
+
+    // 3. Check faculties list to see which faculties have this subject in their f.subjects array
+    (faculties || []).forEach(f => {
       let fSubs = [];
       if (typeof f.subjects === 'string') {
         try { fSubs = JSON.parse(f.subjects); } catch (e) { fSubs = []; }
       } else if (Array.isArray(f.subjects)) {
         fSubs = f.subjects;
       }
-      return (fSubs || []).some(s => {
+      const teachesThisSub = (fSubs || []).some(s => {
+        if (!s) return false;
+        const sDbId = s.dbId || s.id;
+        if (targetDbId && sDbId && String(targetDbId) === String(sDbId)) return true;
+
         const sCode = String(s.code || s.subjectCode || '').toLowerCase().trim();
-        const sSem = String(s.semester || '1').replace(/\D/g, '');
+        const sSem = String(s.semester || '1').replace(/\D/g, '') || '1';
         const sType = String(s.type || s.subjectType || 'Theory').toLowerCase().trim();
-        if (targetCode && sCode && targetCode === sCode && targetSem === sSem && sType === targetType) return true;
-        return String(s.subjectName || s.name || '').toLowerCase().trim() === targetSubName &&
-               sSem === targetSem &&
-               sType === targetType;
+        const sName = String(s.subjectName || s.name || '').toLowerCase().trim();
+
+        if (targetCode && sCode) {
+          return targetCode === sCode && targetSem === sSem && sType === targetType;
+        }
+        if (targetSubName && sName) {
+          return targetSubName === sName && targetSem === sSem && sType === targetType;
+        }
+        return false;
       });
-    }).map(f => String(f.id));
 
-    // Also include sub.facultyId if present and not yet added
-    if (sub.facultyId && !currentAssigned.includes(String(sub.facultyId))) {
-      currentAssigned.push(String(sub.facultyId));
-    }
+      if (teachesThisSub) {
+        assignedIdsSet.add(String(f.id));
+      }
+    });
 
-    setSelectedAssignFacultyIds(currentAssigned);
+    const initialSelectedIds = Array.from(assignedIdsSet);
+    setSelectedAssignFacultyIds(initialSelectedIds);
     setShowAssignFacultyModal(true);
   };
 
@@ -2929,10 +3039,6 @@ export default function AdminDashboard({
     if (selectedAssignFacultyIds.includes(idStr)) {
       setSelectedAssignFacultyIds(prev => prev.filter(id => id !== idStr));
     } else {
-      if (selectedAssignFacultyIds.length >= 3) {
-        showToast('Maximum 3 faculties can be assigned to a subject.', 'error', 3500);
-        return;
-      }
       setSelectedAssignFacultyIds(prev => [...prev, idStr]);
     }
   };
@@ -2940,17 +3046,13 @@ export default function AdminDashboard({
   const handleSaveFacultyAssignment = async () => {
     if (!assigningSubject) return;
 
-    if (selectedAssignFacultyIds.length > 3) {
-      showToast('Maximum 3 faculties can be assigned to a subject.', 'error', 3500);
-      return;
-    }
-
     setSavingFacultyAssignment(true);
     try {
       const targetSubName = String(assigningSubject.subjectName || assigningSubject.name || '').toLowerCase().trim();
-      const targetSem = String(assigningSubject.semester || '1').replace(/\D/g, '');
+      const targetSem = String(assigningSubject.semester || '1').replace(/\D/g, '') || '1';
       const targetType = String(assigningSubject.type || assigningSubject.subjectType || 'Theory').toLowerCase().trim();
       const targetCode = String(assigningSubject.code || assigningSubject.subjectCode || '').toLowerCase().trim();
+      const targetDbId = assigningSubject.dbId || assigningSubject.id;
 
       const subObjToAssign = {
         subjectName: assigningSubject.subjectName || assigningSubject.name || '',
@@ -2958,18 +3060,27 @@ export default function AdminDashboard({
         code: (assigningSubject.code || assigningSubject.subjectCode || '').toString().trim(),
         subjectCode: (assigningSubject.code || assigningSubject.subjectCode || '').toString().trim(),
         semester: String(assigningSubject.semester || '1'),
-        type: assigningSubject.type || assigningSubject.subjectType || 'Theory'
+        type: assigningSubject.type || assigningSubject.subjectType || 'Theory',
+        dbId: targetDbId || null
       };
 
       const isSameSub = (sObj) => {
         if (!sObj) return false;
+        const sDbId = sObj.dbId || sObj.id;
+        if (targetDbId && sDbId && String(targetDbId) === String(sDbId)) return true;
+
         const sCode = String(sObj.code || sObj.subjectCode || sObj.subject_code || sObj.subCode || sObj.sub_code || '').toLowerCase().trim();
-        const sSem = String(sObj.semester || '1').replace(/\D/g, '');
+        const sSem = String(sObj.semester || '1').replace(/\D/g, '') || '1';
         const sType = String(sObj.type || sObj.subjectType || 'Theory').toLowerCase().trim();
         const sName = String(sObj.subjectName || sObj.name || '').toLowerCase().trim();
 
-        if (targetCode && sCode && targetCode === sCode && targetSem === sSem && sType === targetType) return true;
-        return sName === targetSubName && sSem === targetSem && sType === targetType;
+        if (targetCode && sCode) {
+          return targetCode === sCode && targetSem === sSem && sType === targetType;
+        }
+        if (targetSubName && sName) {
+          return targetSubName === sName && targetSem === sSem && sType === targetType;
+        }
+        return false;
       };
 
       // 1. Optimistically compute updated faculties list
@@ -4410,6 +4521,29 @@ export default function AdminDashboard({
       return;
     }
 
+    const prevStudents = [...students];
+    const optimisticRows = studentsList.map((stu, idx) => ({
+      id: `opt_${Date.now()}_${idx}`,
+      enrollment_no: String(stu.enrollment_no || '').trim(),
+      name: String(stu.name || '').trim(),
+      course: String(stu.course || '').trim(),
+      semester: String(stu.semester || '').trim(),
+      division: stu.division ? String(stu.division).trim().toUpperCase() : '',
+      roll_no: stu.roll_no ? String(stu.roll_no).trim() : '',
+      mobile: String(stu.mobile || '').trim(),
+      email: stu.email ? String(stu.email).trim().toLowerCase() : '',
+      username: String(stu.enrollment_no || '').trim().toLowerCase(),
+      plain_password: String(stu.mobile || '').trim()
+    }));
+
+    const optimisticList = [...optimisticRows, ...students];
+    setStudents(optimisticList);
+    setStats(prev => ({ ...prev, totalStudents: (prev.totalStudents || 0) + optimisticRows.length }));
+    try {
+      sessionStorage.setItem('cached_admin_students', JSON.stringify(optimisticList));
+      localStorage.setItem('cached_admin_students', JSON.stringify(optimisticList));
+    } catch (e) {}
+
     try {
       const payloadAllowedSems = allowedSemesters.length > 0
         ? allowedSemesters
@@ -4426,6 +4560,7 @@ export default function AdminDashboard({
       const data = await response.json();
 
       if (response.status === 401 || response.status === 403) {
+        setStudents(prevStudents);
         showToast(data.error || 'Your session has expired. Please log in again.', 'error');
         if (onLogout) onLogout();
         return;
@@ -4436,6 +4571,11 @@ export default function AdminDashboard({
         fetchStudents(false);
         fetchStats();
       } else {
+        setStudents(prevStudents);
+        try {
+          sessionStorage.setItem('cached_admin_students', JSON.stringify(prevStudents));
+          localStorage.setItem('cached_admin_students', JSON.stringify(prevStudents));
+        } catch (e) {}
         fetchStudents(false);
         if (data.errors && Array.isArray(data.errors) && data.errors.length > 0) {
           Swal.fire({
@@ -4462,6 +4602,7 @@ export default function AdminDashboard({
       }
     } catch (err) {
       console.error('Import error:', err);
+      setStudents(prevStudents);
       fetchStudents(false);
       showToast(err.message || 'Failed to upload students.', 'error');
     }
@@ -5079,7 +5220,17 @@ export default function AdminDashboard({
     }
 
     if (entityType === 'faculty') {
-      const targetIdsList = targetIds && targetIds.length > 0 ? targetIds : (studentId ? [studentId] : []);
+      const rawTargetIdsList = targetIds && targetIds.length > 0 ? targetIds : (studentId ? [studentId] : []);
+      const targetIdsList = rawTargetIdsList.filter(id => {
+        const fac = (faculties || []).find(f => String(f.id) === String(id));
+        return !isPrimaryAdminFaculty(fac) && id !== 'admin_primary' && String(id) !== '78';
+      });
+
+      if (targetIdsList.length === 0) {
+        showToast('Primary Admin account is protected and cannot be deleted.', 'warning');
+        return;
+      }
+
       const prevFacs = [...faculties];
       const targetSet = new Set(targetIdsList.map(id => String(id)));
 
@@ -5133,19 +5284,20 @@ export default function AdminDashboard({
 
     if (entityType === 'subject') {
       const keysToDelete = new Set(targetIds);
+      const isDeletingAll = keysToDelete.size >= allFacultySubjects.length;
 
       // Collect target subject objects for Supabase deletion
       const subjectsObjectsToDelete = allFacultySubjects.filter(s => keysToDelete.has(s.subKey) || keysToDelete.has(s.id) || keysToDelete.has(s.globalKey));
 
       // Delete from Supabase subjects table via backend API
-      if (token && subjectsObjectsToDelete.length > 0) {
+      if (token && (subjectsObjectsToDelete.length > 0 || isDeletingAll)) {
         fetch('/api/subjects/delete-match', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`
           },
-          body: JSON.stringify({ subjects: subjectsObjectsToDelete })
+          body: JSON.stringify({ subjects: subjectsObjectsToDelete, deleteAll: isDeletingAll })
         })
         .then(res => res.json())
         .then(resData => {
@@ -5154,18 +5306,36 @@ export default function AdminDashboard({
         .catch(err => console.error('Error deleting subjects from Supabase DB:', err));
       }
 
-      // Delete unassigned subjects from globalSubjectsCatalog
-      const globalSubsToDelete = (globalSubjectsCatalog || []).filter(s =>
-        keysToDelete.has(s.globalKey) || keysToDelete.has(s.subKey) ||
-        allFacultySubjects.some(fs => keysToDelete.has(fs.subKey) && !fs.facultyId &&
-          (fs.subjectName || fs.name || '').toLowerCase().trim() === (s.subjectName || s.name || '').toLowerCase().trim() &&
-          String(fs.semester || '1').replace(/\D/g, '') === String(s.semester || '1').replace(/\D/g, '') &&
-          String(fs.type || 'Theory').toLowerCase().trim() === String(s.type || 'Theory').toLowerCase().trim())
-      );
-      if (globalSubsToDelete.length > 0) {
-        const updatedGlobal = (globalSubjectsCatalog || []).filter(s =>
-          !globalSubsToDelete.some(d => d.globalKey === s.globalKey)
-        );
+      // Delete subjects from globalSubjectsCatalog
+      if (isDeletingAll) {
+        setGlobalSubjectsCatalog([]);
+        localStorage.removeItem('admin_global_subjects_catalog');
+      } else {
+        const isSubjectToDelete = (s) => {
+          const gKey = s.globalKey || s.subKey;
+          if (gKey && keysToDelete.has(gKey)) return true;
+          const sName = String(s.subjectName || s.name || '').trim().toLowerCase();
+          const sSem = String(s.semester || '1').replace(/\D/g, '');
+          const sCode = String(s.code || s.subjectCode || '').trim().toLowerCase();
+          const sType = String(s.type || 'Theory').trim().toLowerCase();
+
+          return subjectsObjectsToDelete.some(target => {
+            const tKey = target.globalKey || target.subKey;
+            if (gKey && tKey && gKey === tKey) return true;
+            if (target.dbId && s.dbId && String(target.dbId) === String(s.dbId)) return true;
+
+            const tCode = String(target.code || target.subjectCode || '').trim().toLowerCase();
+            const tName = String(target.subjectName || target.name || '').trim().toLowerCase();
+            const tSem = String(target.semester || '1').replace(/\D/g, '');
+            const tType = String(target.type || 'Theory').trim().toLowerCase();
+
+            if (sCode && tCode) return sCode === tCode && sSem === tSem && sType === tType;
+            if (sName && tName) return sName === tName && sSem === tSem && sType === tType;
+            return false;
+          });
+        };
+
+        const updatedGlobal = (globalSubjectsCatalog || []).filter(s => !isSubjectToDelete(s));
         setGlobalSubjectsCatalog(updatedGlobal);
         localStorage.setItem('admin_global_subjects_catalog', JSON.stringify(updatedGlobal));
       }
@@ -5296,7 +5466,7 @@ export default function AdminDashboard({
       } else {
         showToast(`Successfully deleted ${targetIds.length} student(s).`, 'success');
         fetchStats();
-        fetchStudents(true); // Refreshes actual remaining student list instantly from server
+        fetchStudents(false);
       }
     } catch (err) {
       console.error('Delete execution error:', err);
@@ -5326,7 +5496,16 @@ export default function AdminDashboard({
     }
   };
 
+  const isPrimaryAdminFaculty = (fac) => {
+    if (!fac) return false;
+    if (fac.isPrimaryAdmin || fac.id === 'admin_primary' || String(fac.id) === '78') return true;
+    const email = String(fac.email || fac.username || '').toLowerCase().trim();
+    return email === 'admin@ljcca.edu';
+  };
+
   const toggleSelectFaculty = (id) => {
+    const fac = (faculties || []).find(f => String(f.id) === String(id));
+    if (isPrimaryAdminFaculty(fac)) return; // Primary Admin cannot be selected
     setSelectedFacultyIds(prev => {
       if (prev.includes(id)) {
         return prev.filter(item => item !== id);
@@ -5337,10 +5516,16 @@ export default function AdminDashboard({
   };
 
   const toggleSelectAllFaculty = () => {
-    const filteredFacs = faculties.filter(f =>
-      (f.name && f.name.toLowerCase().includes(facultySearchQuery.toLowerCase())) ||
-      (f.email && f.email.toLowerCase().includes(facultySearchQuery.toLowerCase()))
-    );
+    const filteredFacs = (faculties || []).filter(f => {
+      if (isPrimaryAdminFaculty(f)) return false; // Primary Admin is non-selectable
+      if (!facultySearchQuery || !facultySearchQuery.trim()) return true;
+      const q = facultySearchQuery.toLowerCase().trim();
+      const fName = (f.name || '').toLowerCase();
+      const fEmail = (f.email || f.username || '').toLowerCase();
+      const fDept = (f.department || '').toLowerCase();
+      const fMob = (f.mobile || '').toLowerCase();
+      return fName.includes(q) || fEmail.includes(q) || fDept.includes(q) || fMob.includes(q);
+    });
     const filteredIds = filteredFacs.map(f => f.id);
     const allSelected = filteredIds.length > 0 && filteredIds.every(id => selectedFacultyIds.includes(id));
 
@@ -5352,7 +5537,10 @@ export default function AdminDashboard({
   };
 
   const handleBulkDeleteFaculty = (idsToDelete) => {
-    const ids = idsToDelete || selectedFacultyIds;
+    const ids = (idsToDelete || selectedFacultyIds).filter(id => {
+      const fac = (faculties || []).find(f => String(f.id) === String(id));
+      return !isPrimaryAdminFaculty(fac);
+    });
     if (!ids || ids.length === 0) {
       showToast('Please select at least one faculty member to delete.', 'warning');
       return;
@@ -5758,6 +5946,67 @@ export default function AdminDashboard({
       : '/api/faculty';
     const method = isEdit ? 'PUT' : 'POST';
 
+    // Optimistic instant UI update for Edit Faculty (0.1s response time)
+    if (isEdit) {
+      const prevFacs = [...faculties];
+      const updatedDept = String(facultyForm.department || '').split('||SUB:')[0].trim();
+      const updatedSubjects = Array.isArray(facultyForm.subjects) ? facultyForm.subjects : [];
+      const updatedRoles = Array.isArray(facultyForm.roles) && facultyForm.roles.length > 0 ? facultyForm.roles : ['faculty'];
+
+      // Instant local state update (0ms delay)
+      setFaculties(prev => prev.map(f => {
+        if (String(f.id) === String(facultyForm.id)) {
+          return {
+            ...f,
+            name: facultyForm.name,
+            email: facultyForm.email || f.email,
+            department: updatedDept,
+            mobile: facultyForm.mobile,
+            subjects: updatedSubjects,
+            roles: updatedRoles
+          };
+        }
+        return f;
+      }));
+
+      setShowFacultyModal(false);
+      showToast('Faculty member details updated successfully!', 'success');
+
+      // Send update request to backend asynchronously in background
+      fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(facultyForm)
+      })
+      .then(async (res) => {
+        const data = await res.json();
+        if (res.ok) {
+          if (facultyForm.isPrimaryAdmin && onUpdateUser) {
+            onUpdateUser({
+              ...user,
+              roles: facultyForm.roles,
+              hasFacultyAccess: (facultyForm.roles || []).includes('faculty')
+            });
+          }
+          fetchFaculties(false);
+          fetchStats();
+          notifyDataChanged();
+        } else {
+          setFaculties(prevFacs);
+          showToast(data.error || 'Failed to save faculty', 'error');
+        }
+      })
+      .catch((err) => {
+        console.error('Error saving faculty:', err);
+        setFaculties(prevFacs);
+        showToast('Error connecting to backend', 'error');
+      });
+      return;
+    }
+
     try {
       const res = await fetch(url, {
         method,
@@ -5769,22 +6018,11 @@ export default function AdminDashboard({
       });
       const data = await res.json();
       if (res.ok) {
-        if (facultyForm.isPrimaryAdmin && onUpdateUser) {
-          onUpdateUser({
-            ...user,
-            roles: facultyForm.roles,
-            hasFacultyAccess: (facultyForm.roles || []).includes('faculty')
-          });
-        }
-        if (!isEdit) {
-          setCreatedFacultyCredentials({
-            username: data.faculty.username,
-            password: data.faculty.plain_password
-          });
-        } else {
-          setShowFacultyModal(false);
-        }
-        fetchFaculties();
+        setCreatedFacultyCredentials({
+          username: data.faculty.username,
+          password: data.faculty.plain_password
+        });
+        fetchFaculties(false);
         fetchStats();
         notifyDataChanged();
       } else {
@@ -6495,10 +6733,64 @@ export default function AdminDashboard({
     }
   };
 
-  // Send imported faculty batch to backend (Optimistic + Fast Batch)
+  // Send imported faculty batch to backend (Optimistic + Fast Batch + Duplicate Protection)
   const sendBulkFacultyImport = async (facultyList) => {
     const prevFacs = [...faculties];
-    const optimisticNewFacs = facultyList.map((fac, idx) => ({
+
+    const existingEmails = new Set((faculties || []).map(f => (f.email || f.username || '').toLowerCase().trim()));
+    const existingMobiles = new Set((faculties || []).map(f => (f.mobile || '').trim()).filter(m => m && m !== '0000000000'));
+
+    const processedEmails = new Set();
+    const processedMobiles = new Set();
+
+    const newOnlyList = [];
+    const duplicateList = [];
+
+    (facultyList || []).forEach(fac => {
+      const email = (fac.email || '').toLowerCase().trim();
+      const mobile = (fac.mobile || '').trim();
+
+      const isPrimaryAdmin = email === 'admin@ljcca.edu' || email === 'admin_primary';
+      const isEmailDup = email && (existingEmails.has(email) || processedEmails.has(email));
+      const isMobileDup = mobile && mobile !== '0000000000' && (existingMobiles.has(mobile) || processedMobiles.has(mobile));
+
+      if (isPrimaryAdmin || isEmailDup || isMobileDup) {
+        duplicateList.push(fac);
+      } else {
+        newOnlyList.push(fac);
+        if (email) processedEmails.add(email);
+        if (mobile && mobile !== '0000000000') processedMobiles.add(mobile);
+      }
+    });
+
+    // Case 1: All uploaded faculties are duplicates
+    if (duplicateList.length > 0 && newOnlyList.length === 0) {
+      const dupListHtml = duplicateList.map(d =>
+        `<li><strong>${d.name || 'Faculty'}</strong> (${d.email ? `Email: ${d.email}` : ''}${d.mobile && d.mobile !== '0000000000' ? `, Mobile: ${d.mobile}` : ''})</li>`
+      ).join('');
+
+      Swal.fire({
+        icon: 'warning',
+        title: 'Duplicate Faculty Found!',
+        html: `
+          <div style="text-align: left; font-size: 0.92rem; color: #334155; line-height: 1.6;">
+            <p style="margin-bottom: 10px; font-weight: 600; color: #dc2626;">
+              ⚠️ No new faculty members were added because all ${duplicateList.length} record(s) in your file already exist in your faculty list:
+            </p>
+            <div style="max-height: 200px; overflow-y: auto; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 10px 14px;">
+              <ul style="margin: 0; padding-left: 18px; color: #9f1239;">
+                ${dupListHtml}
+              </ul>
+            </div>
+          </div>
+        `,
+        confirmButtonText: 'OK, Got It',
+        confirmButtonColor: '#e11d48'
+      });
+      return;
+    }
+
+    const optimisticNewFacs = newOnlyList.map((fac, idx) => ({
       id: `temp_${Date.now()}_${idx}`,
       name: fac.name || 'Faculty',
       email: fac.email || `faculty_${Date.now()}@college.edu`,
@@ -6508,9 +6800,11 @@ export default function AdminDashboard({
       subjects: fac.subjects || []
     }));
 
-    // Optimistic local state update (0ms UI latency)
-    setFaculties(prev => [...optimisticNewFacs, ...prev]);
-    setStats(prev => ({ ...prev, totalFaculty: (prev.totalFaculty || 0) + facultyList.length }));
+    // Optimistic local state update (append only brand-new non-duplicate items)
+    if (optimisticNewFacs.length > 0) {
+      setFaculties(prev => [...optimisticNewFacs, ...prev]);
+      setStats(prev => ({ ...prev, totalFaculty: (prev.totalFaculty || 0) + optimisticNewFacs.length }));
+    }
 
     try {
       const response = await fetch('/api/faculty/import', {
@@ -6519,18 +6813,50 @@ export default function AdminDashboard({
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({ faculty: facultyList })
+        body: JSON.stringify({ faculty: newOnlyList })
       });
       const data = await response.json();
       if (response.ok) {
-        let msg = `Successfully imported ${data.successCount} faculty members!`;
-        if (data.errors && data.errors.length > 0) {
-          msg += ` Errors: ` + data.errors.slice(0, 5).join('; ');
-        }
-        showToast(msg, 'success');
-        fetchFaculties();
-        fetchStats();
+        await fetchFaculties();
+        await fetchStats();
         notifyDataChanged();
+
+        if (duplicateList.length > 0) {
+          const dupListHtml = duplicateList.map(d =>
+            `<li><strong>${d.name || 'Faculty'}</strong> (${d.email ? `Email: ${d.email}` : ''}${d.mobile && d.mobile !== '0000000000' ? `, Mobile: ${d.mobile}` : ''})</li>`
+          ).join('');
+
+          Swal.fire({
+            icon: 'warning',
+            title: 'Bulk Import Completed (With Duplicates)',
+            html: `
+              <div style="text-align: left; font-size: 0.92rem; color: #334155; line-height: 1.6;">
+                <p style="margin-bottom: 8px; color: #16a34a; font-weight: 600;">
+                  ✅ <strong>${newOnlyList.length} new faculty member(s)</strong> added successfully!
+                </p>
+                <p style="margin-bottom: 8px; color: #d97706; font-weight: 600;">
+                  ⚠️ <strong>${duplicateList.length} faculty member(s)</strong> already existed and were skipped:
+                </p>
+                <div style="max-height: 180px; overflow-y: auto; background: #fffbe6; border: 1px solid #ffe58f; border-radius: 8px; padding: 10px 14px;">
+                  <ul style="margin: 0; padding-left: 18px; color: #b45309;">
+                    ${dupListHtml}
+                  </ul>
+                </div>
+              </div>
+            `,
+            confirmButtonText: 'Understood',
+            confirmButtonColor: '#f59e0b'
+          });
+        } else {
+          Swal.fire({
+            icon: 'success',
+            title: 'Bulk Import Successful!',
+            text: `Successfully imported all ${newOnlyList.length} faculty member(s) into the system!`,
+            confirmButtonText: 'Great!',
+            confirmButtonColor: '#10b981',
+            timer: 3000
+          });
+        }
       } else {
         setFaculties(prevFacs);
         showToast(data.error || 'Failed to import faculty data.', 'error');
@@ -6631,7 +6957,10 @@ export default function AdminDashboard({
         }
 
         const headers = rows[0].map(h => (h ? h.toString().trim().toLowerCase() : ''));
-        let importedCount = 0;
+        const subjectsToSync = [];
+        const duplicateSubjects = [];
+        const facultySubjectUpdates = new Map();
+        const updatedGlobalCatalog = [...(globalSubjectsCatalog || [])];
 
         for (let i = 1; i < rows.length; i++) {
           const values = rows[i];
@@ -6659,29 +6988,178 @@ export default function AdminDashboard({
           });
 
           if (subName) {
-            let targetFaculty = faculties.find(f => f.email && f.email.toLowerCase() === facEmail.toLowerCase());
-            if (!targetFaculty && faculties.length > 0) targetFaculty = faculties[0];
+            const cleanSubName = subName.trim();
+            const cleanSem = semester.replace(/\D/g, '') || '1';
+            const cleanCode = code ? code.trim() : '';
+            const cleanType = type || 'Theory';
+            const cleanShort = shortName || cleanSubName.substring(0, 4).toUpperCase();
 
-            if (targetFaculty) {
-              const currentSubs = Array.isArray(targetFaculty.subjects) ? [...targetFaculty.subjects] : [];
-              const exists = currentSubs.some(s => (s.subjectName || s.name) === subName && String(s.semester) === String(semester));
-              if (!exists) {
-                currentSubs.push({
-                  subjectName: subName,
-                  shortName: shortName || subName.substring(0, 4).toUpperCase(),
-                  code: code || `SUB${Math.floor(100 + Math.random() * 900)}`,
-                  semester: semester || '1',
-                  type: type || 'Theory'
-                });
-                await handleSaveSubjectsToBackend(targetFaculty.id, currentSubs, false);
-                importedCount++;
+            // Check if this subject already exists in current catalog or processed list
+            const isDuplicate = (globalSubjectsCatalog || []).some(existing => {
+              const exCode = String(existing.code || existing.subjectCode || '').trim().toLowerCase();
+              const exName = String(existing.subjectName || existing.name || '').trim().toLowerCase();
+              const exSem = String(existing.semester || '1').replace(/\D/g, '');
+              const exType = String(existing.type || 'Theory').trim().toLowerCase();
+
+              if (cleanCode && exCode && cleanCode.toLowerCase() === exCode) {
+                return true;
+              }
+              if (cleanSubName.toLowerCase() === exName && cleanSem === exSem && cleanType.toLowerCase() === exType) {
+                return true;
+              }
+              return false;
+            }) || subjectsToSync.some(alreadySyncing => {
+              const apCode = String(alreadySyncing.code || '').trim().toLowerCase();
+              const apName = String(alreadySyncing.subjectName || '').trim().toLowerCase();
+              const apSem = String(alreadySyncing.semester || '1');
+              const apType = String(alreadySyncing.type || 'Theory').trim().toLowerCase();
+
+              if (cleanCode && apCode && cleanCode.toLowerCase() === apCode) return true;
+              return cleanSubName.toLowerCase() === apName && cleanSem === apSem && cleanType.toLowerCase() === apType;
+            });
+
+            const newSubObj = {
+              subjectName: cleanSubName,
+              shortName: cleanShort,
+              code: cleanCode || `SUB${Math.floor(1000 + Math.random() * 9000)}`,
+              subjectCode: cleanCode || `SUB${Math.floor(1000 + Math.random() * 9000)}`,
+              semester: cleanSem,
+              type: cleanType,
+              globalKey: `global_${Date.now()}_${i}_${Math.random().toString(36).substr(2, 4)}`
+            };
+
+            if (isDuplicate) {
+              duplicateSubjects.push(newSubObj);
+            } else {
+              subjectsToSync.push(newSubObj);
+              updatedGlobalCatalog.push(newSubObj);
+
+              // Also assign to faculty if facEmail matches
+              if (facEmail) {
+                const targetFaculty = faculties.find(f => f.email && f.email.toLowerCase() === facEmail.toLowerCase());
+                if (targetFaculty) {
+                  if (!facultySubjectUpdates.has(targetFaculty.id)) {
+                    let fSubs = [];
+                    if (typeof targetFaculty.subjects === 'string') {
+                      try { fSubs = JSON.parse(targetFaculty.subjects); } catch (e) { fSubs = []; }
+                    } else if (Array.isArray(targetFaculty.subjects)) {
+                      fSubs = [...targetFaculty.subjects];
+                    }
+                    facultySubjectUpdates.set(targetFaculty.id, fSubs);
+                  }
+                  const curSubs = facultySubjectUpdates.get(targetFaculty.id);
+                  const existsInFac = curSubs.some(s => (s.subjectName || s.name) === cleanSubName && String(s.semester) === String(cleanSem));
+                  if (!existsInFac) {
+                    curSubs.push(newSubObj);
+                  }
+                }
               }
             }
           }
         }
 
-        fetchFaculties();
-        showToast(`Successfully imported ${importedCount} subjects!`, 'success');
+        // Case 1: All uploaded subjects were duplicates
+        if (duplicateSubjects.length > 0 && subjectsToSync.length === 0) {
+          const dupListHtml = duplicateSubjects.map(d =>
+            `<li><strong>${d.subjectName}</strong> (${d.code ? `Code: ${d.code}, ` : ''}Sem ${d.semester}, ${d.type})</li>`
+          ).join('');
+
+          Swal.fire({
+            icon: 'warning',
+            title: 'Duplicate Subjects Found!',
+            html: `
+              <div style="text-align: left; font-size: 0.92rem; color: #334155; line-height: 1.6;">
+                <p style="margin-bottom: 10px; font-weight: 600; color: #dc2626;">
+                  ⚠️ No new subjects were added because all ${duplicateSubjects.length} subject(s) in your file already exist in your subject list:
+                </p>
+                <div style="max-height: 200px; overflow-y: auto; background: #fff1f2; border: 1px solid #fecdd3; border-radius: 8px; padding: 10px 14px;">
+                  <ul style="margin: 0; padding-left: 18px; color: #9f1239;">
+                    ${dupListHtml}
+                  </ul>
+                </div>
+              </div>
+            `,
+            confirmButtonText: 'OK, Got It',
+            confirmButtonColor: '#e11d48'
+          });
+          return;
+        }
+
+        if (subjectsToSync.length === 0) {
+          showToast('No valid subjects found in the uploaded file.', 'warning');
+          return;
+        }
+
+        // 1. Update local globalSubjectsCatalog state and localStorage immediately
+        setGlobalSubjectsCatalog(updatedGlobalCatalog);
+        try {
+          localStorage.setItem('admin_global_subjects_catalog', JSON.stringify(updatedGlobalCatalog));
+        } catch (e) {}
+
+        // 2. Sync to backend DB subjects table via POST /api/subjects/sync-all
+        if (token) {
+          try {
+            await fetch('/api/subjects/sync-all', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`
+              },
+              body: JSON.stringify({ subjects: subjectsToSync })
+            });
+          } catch (syncErr) {
+            console.error('Error syncing subjects to backend:', syncErr);
+          }
+        }
+
+        // 3. Save faculty assignments if any faculty emails matched
+        if (facultySubjectUpdates.size > 0) {
+          for (const [facId, updatedSubs] of facultySubjectUpdates.entries()) {
+            await handleSaveSubjectsToBackend(facId, updatedSubs, false);
+          }
+        }
+
+        // 4. Reload fresh data from backend
+        await fetchDbSubjects();
+        await fetchFaculties();
+
+        // 5. Show SweetAlert alert
+        if (duplicateSubjects.length > 0) {
+          const dupListHtml = duplicateSubjects.map(d =>
+            `<li><strong>${d.subjectName}</strong> (${d.code ? `Code: ${d.code}, ` : ''}Sem ${d.semester}, ${d.type})</li>`
+          ).join('');
+
+          Swal.fire({
+            icon: 'warning',
+            title: 'Bulk Import Completed (With Duplicates)',
+            html: `
+              <div style="text-align: left; font-size: 0.92rem; color: #334155; line-height: 1.6;">
+                <p style="margin-bottom: 8px; color: #16a34a; font-weight: 600;">
+                  ✅ <strong>${subjectsToSync.length} new subject(s)</strong> added successfully!
+                </p>
+                <p style="margin-bottom: 8px; color: #d97706; font-weight: 600;">
+                  ⚠️ <strong>${duplicateSubjects.length} subject(s)</strong> already existed and were skipped:
+                </p>
+                <div style="max-height: 180px; overflow-y: auto; background: #fffbe6; border: 1px solid #ffe58f; border-radius: 8px; padding: 10px 14px;">
+                  <ul style="margin: 0; padding-left: 18px; color: #b45309;">
+                    ${dupListHtml}
+                  </ul>
+                </div>
+              </div>
+            `,
+            confirmButtonText: 'Understood',
+            confirmButtonColor: '#f59e0b'
+          });
+        } else {
+          Swal.fire({
+            icon: 'success',
+            title: 'Bulk Import Successful!',
+            text: `Successfully imported all ${subjectsToSync.length} subject(s) into the list!`,
+            confirmButtonText: 'Great!',
+            confirmButtonColor: '#10b981',
+            timer: 3000
+          });
+        }
       } catch (err) {
         console.error('Error importing subjects file:', err);
         showToast('Failed to parse subject file.', 'error');
@@ -6844,7 +7322,13 @@ export default function AdminDashboard({
     const filteredFaculties = faculties.filter(f =>
       (f.name && f.name.toLowerCase().includes(facultySearchQuery.toLowerCase())) ||
       (f.email && f.email.toLowerCase().includes(facultySearchQuery.toLowerCase()))
-    );
+    ).sort((a, b) => {
+      const aIsAdmin = isPrimaryAdminFaculty(a);
+      const bIsAdmin = isPrimaryAdminFaculty(b);
+      if (aIsAdmin && !bIsAdmin) return -1;
+      if (!aIsAdmin && bIsAdmin) return 1;
+      return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+    });
 
     const listToExport = filteredFaculties.length > 0 ? filteredFaculties : faculties;
     if (!listToExport || listToExport.length === 0) {
@@ -10067,7 +10551,15 @@ export default function AdminDashboard({
                           gap: '6px',
                           flexWrap: 'wrap'
                         }}>
-                          <span>Subject: <strong style={{ color: '#0f172a' }}>{assigningSubject.shortName || assigningSubject.short_name || assigningSubject.shortCode || assigningSubject.short || assigningSubject.code || assigningSubject.subjectCode || assigningSubject.subjectName || assigningSubject.name}</strong></span>
+                          <span>Subject: <strong style={{ color: '#0f172a' }}>{(() => {
+                            const shortVal = (assigningSubject.shortName || assigningSubject.short_name || assigningSubject.shortCode || assigningSubject.short || '').toString().trim();
+                            const nameVal = (assigningSubject.subjectName || assigningSubject.name || assigningSubject.title || '').toString().trim();
+                            const codeVal = (assigningSubject.code || assigningSubject.subjectCode || assigningSubject.subject_code || '').toString().trim();
+                            if (shortVal && shortVal !== '-') return shortVal;
+                            if (nameVal && nameVal !== '-') return nameVal;
+                            if (codeVal && codeVal !== '-') return codeVal;
+                            return 'Subject';
+                          })()}</strong></span>
                           <span style={{ color: '#cbd5e1' }}>•</span>
                           <span>Semester <strong style={{ color: '#0f172a' }}>{assigningSubject.semester || '1'}</strong></span>
                           <span style={{ color: '#cbd5e1' }}>•</span>
@@ -10076,11 +10568,11 @@ export default function AdminDashboard({
                             fontWeight: '700',
                             padding: '2px 8px',
                             borderRadius: '6px',
-                            background: selectedAssignFacultyIds.length >= 3 ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
-                            color: selectedAssignFacultyIds.length >= 3 ? '#dc2626' : '#059669',
-                            border: selectedAssignFacultyIds.length >= 3 ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(16, 185, 129, 0.3)'
+                            background: selectedAssignFacultyIds.length > 0 ? 'rgba(16, 185, 129, 0.1)' : 'rgba(100, 116, 139, 0.1)',
+                            color: selectedAssignFacultyIds.length > 0 ? '#059669' : '#64748b',
+                            border: selectedAssignFacultyIds.length > 0 ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(100, 116, 139, 0.3)'
                           }}>
-                            {selectedAssignFacultyIds.length}/3 Selected (Max 3)
+                            {selectedAssignFacultyIds.length} Selected
                           </span>
                         </div>
                       </div>
@@ -11950,7 +12442,15 @@ export default function AdminDashboard({
                           const fDept = (f.department || '').toLowerCase();
                           const fMob = (f.mobile || '').toLowerCase();
                           return fName.includes(q) || fEmail.includes(q) || fDept.includes(q) || fMob.includes(q);
+                        }).sort((a, b) => {
+                          const aIsAdmin = isPrimaryAdminFaculty(a);
+                          const bIsAdmin = isPrimaryAdminFaculty(b);
+                          if (aIsAdmin && !bIsAdmin) return -1;
+                          if (!aIsAdmin && bIsAdmin) return 1;
+                          return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
                         });
+
+                        const selectableFilteredFaculties = filteredFaculties.filter(f => !isPrimaryAdminFaculty(f));
 
                         return (
                           <table className="custom-table">
@@ -11959,7 +12459,7 @@ export default function AdminDashboard({
                                 <th style={{ width: '40px', textAlign: 'center' }}>
                                   <input
                                     type="checkbox"
-                                    checked={filteredFaculties.length > 0 && filteredFaculties.every(f => selectedFacultyIds.includes(f.id))}
+                                    checked={selectableFilteredFaculties.length > 0 && selectableFilteredFaculties.every(f => selectedFacultyIds.includes(f.id))}
                                     onChange={toggleSelectAllFaculty}
                                     title="Select / Unselect All"
                                     style={{ cursor: 'pointer', width: '16px', height: '16px' }}
@@ -11977,7 +12477,7 @@ export default function AdminDashboard({
                             <tbody>
                               {filteredFaculties.map((fac) => {
                                 const isChecked = selectedFacultyIds.includes(fac.id);
-                                const isPrimary = fac.isPrimaryAdmin || fac.id === 'admin_primary' || String(fac.id) === '78' || (fac.email && fac.email.toLowerCase() === 'admin@ljcca.edu');
+                                const isPrimary = isPrimaryAdminFaculty(fac);
                                 const rolesArr = Array.isArray(fac.roles) && fac.roles.length > 0
                                   ? (isPrimary ? Array.from(new Set([...fac.roles, 'admin'])) : fac.roles)
                                   : (isPrimary ? ['admin', 'faculty'] : (fac.role === 'admin' ? ['admin', 'faculty'] : ['faculty']));
@@ -11987,7 +12487,7 @@ export default function AdminDashboard({
                                 return (
                                   <tr key={fac.id} style={{ background: isChecked ? 'rgba(147, 51, 234, 0.08)' : 'transparent' }}>
                                     <td style={{ textAlign: 'center' }}>
-                                      {fac.isPrimaryAdmin || fac.id === 'admin_primary' ? (
+                                      {isPrimary ? (
                                         <span title="Primary Admin Account (Protected)" style={{ color: 'var(--text-muted)', fontSize: '0.9rem', fontWeight: 'bold' }}>—</span>
                                       ) : (
                                         <input
@@ -12039,7 +12539,7 @@ export default function AdminDashboard({
                                       </div>
                                     </td>
                                     <td>
-                                      {(fac.isPrimaryAdmin || fac.id === 'admin_primary') ? (
+                                      {isPrimary ? (
                                         <span style={{
                                           fontSize: '0.76rem',
                                           fontWeight: '600',
@@ -12069,17 +12569,17 @@ export default function AdminDashboard({
                                         <button
                                           className="admin-action-btn delete"
                                           onClick={() => {
-                                            if (fac.isPrimaryAdmin || fac.id === 'admin_primary') {
+                                            if (isPrimary) {
                                               showToast('Primary Admin account cannot be deleted', 'warning');
                                               return;
                                             }
                                             handleDeleteFaculty(fac.id);
                                           }}
                                           style={{
-                                            opacity: (fac.isPrimaryAdmin || fac.id === 'admin_primary') ? 0.35 : 1,
-                                            cursor: (fac.isPrimaryAdmin || fac.id === 'admin_primary') ? 'not-allowed' : 'pointer'
+                                            opacity: isPrimary ? 0.35 : 1,
+                                            cursor: isPrimary ? 'not-allowed' : 'pointer'
                                           }}
-                                          title={(fac.isPrimaryAdmin || fac.id === 'admin_primary') ? "Primary Admin cannot be deleted" : "Delete Faculty"}
+                                          title={isPrimary ? "Primary Admin cannot be deleted" : "Delete Faculty"}
                                         >
                                           <Trash2 size={14} />
                                         </button>

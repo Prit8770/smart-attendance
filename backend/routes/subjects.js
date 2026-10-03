@@ -146,17 +146,8 @@ router.put('/update-match', authenticateJWT, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: error.message });
     }
 
-    if (!data || data.length === 0) {
-      // If no existing row matched in Supabase DB, insert as new row so Supabase is always synced!
-      const { data: insertData, error: insertErr } = await supabase.from('subjects').insert([updateFields]).select();
-      if (insertErr) {
-        console.error('Supabase insert fallback on update error:', insertErr);
-      }
-      return res.json({ message: 'Subject synced to Supabase DB', subject: insertData });
-    }
-
-    notifyChange('SUBJECTS_CHANGED', { action: 'update', subjects: data });
-    res.json({ message: 'Subject updated in Supabase DB successfully', subjects: data });
+    notifyChange('SUBJECTS_CHANGED', { action: 'update', subjects: data || [] });
+    res.json({ message: 'Subject updated in Supabase DB successfully', subjects: data || [] });
   } catch (err) {
     console.error('Server error updating subject match:', err);
     res.status(500).json({ error: 'Server error updating subject in database' });
@@ -180,18 +171,27 @@ router.put('/assign-faculty', authenticateJWT, requireAdmin, async (req, res) =>
     code: subCode,
     subjectCode: subCode,
     semester: subSem,
-    type: subType
+    type: subType,
+    dbId: subId || null
   };
 
   const isSameSub = (sObj) => {
     if (!sObj) return false;
+    const sDbId = sObj.dbId || sObj.id;
+    if (subId && sDbId && String(subId) === String(sDbId)) return true;
+
     const sCode = String(sObj.code || sObj.subjectCode || sObj.subject_code || sObj.subCode || sObj.sub_code || '').toLowerCase().trim();
-    const sSem = String(sObj.semester || '1').replace(/\D/g, '');
+    const sSem = String(sObj.semester || '1').replace(/\D/g, '') || '1';
     const sType = String(sObj.type || sObj.subjectType || 'Theory').toLowerCase().trim();
     const sName = String(sObj.subjectName || sObj.name || '').toLowerCase().trim();
 
-    if (subCode && sCode && subCode.toLowerCase() === sCode && subSem === sSem && sType === subType.toLowerCase()) return true;
-    return sName === subName.toLowerCase() && sSem === subSem && sType === subType.toLowerCase();
+    if (subCode && sCode) {
+      return subCode.toLowerCase() === sCode && subSem === sSem && sType === subType.toLowerCase();
+    }
+    if (subName && sName) {
+      return subName.toLowerCase() === sName && subSem === sSem && sType === subType.toLowerCase();
+    }
+    return false;
   };
 
   try {
@@ -314,11 +314,25 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
 
 // POST /api/subjects/delete-match - Delete subject(s) by matching properties or IDs in Supabase DB
 router.post('/delete-match', authenticateJWT, requireAdmin, async (req, res) => {
-  const { subjects } = req.body;
+  const { subjects, deleteAll } = req.body;
   
   try {
     let deletedCount = 0;
-    if (Array.isArray(subjects) && subjects.length > 0) {
+    if (deleteAll) {
+      const { data, error } = await supabase.from('subjects').delete().neq('id', 0).select();
+      if (!error && data) {
+        deletedCount = data.length;
+      }
+      // ALSO CLEAR ALL SUBJECTS FROM ALL FACULTIES IN DB
+      const { data: dbFaculties } = await supabase.from('faculty').select('id');
+      if (dbFaculties && dbFaculties.length > 0) {
+        const clearPromises = dbFaculties.map(f =>
+          supabase.from('faculty').update({ subjects: [] }).eq('id', f.id)
+        );
+        await Promise.all(clearPromises);
+      }
+    } else if (Array.isArray(subjects) && subjects.length > 0) {
+      const deletedSubjectsList = [];
       for (const sub of subjects) {
         if (!sub) continue;
         const dbId = sub.dbId || sub.id;
@@ -339,13 +353,55 @@ router.post('/delete-match', authenticateJWT, requireAdmin, async (req, res) => 
         }
 
         const { data, error } = await query.select();
-        if (!error && data) {
+        if (!error && data && data.length > 0) {
           deletedCount += data.length;
+          deletedSubjectsList.push(...data);
+        } else {
+          deletedSubjectsList.push(sub);
         }
+      }
+
+      // ALSO REMOVE DELETED SUBJECTS FROM FACULTY.SUBJECTS JSON COLUMN FOR ALL FACULTIES
+      const { data: dbFaculties } = await supabase.from('faculty').select('*');
+      if (dbFaculties && dbFaculties.length > 0) {
+        const facultyUpdates = dbFaculties.map(async (f) => {
+          let currentSubs = [];
+          if (typeof f.subjects === 'string') {
+            try { currentSubs = JSON.parse(f.subjects); } catch (e) { currentSubs = []; }
+          } else if (Array.isArray(f.subjects)) {
+            currentSubs = [...f.subjects];
+          }
+
+          if (currentSubs.length === 0) return;
+
+          const updatedSubs = currentSubs.filter(subInFac => {
+            const facSubCode = String(subInFac.code || subInFac.subjectCode || subInFac.subject_code || '').trim().toLowerCase();
+            const facSubName = String(subInFac.subjectName || subInFac.name || '').trim().toLowerCase();
+            const facSubSem = String(subInFac.semester || '1').replace(/\D/g, '');
+            const facSubType = String(subInFac.type || 'Theory').trim().toLowerCase();
+
+            return !deletedSubjectsList.some(dSub => {
+              const dCode = String(dSub.subject_code || dSub.code || dSub.subjectCode || '').trim().toLowerCase();
+              const dName = String(dSub.subject_name || dSub.subjectName || dSub.name || '').trim().toLowerCase();
+              const dSem = String(dSub.semester || '1').replace(/\D/g, '');
+              const dType = String(dSub.type || 'Theory').trim().toLowerCase();
+
+              if (facSubCode && dCode) return facSubCode === dCode && facSubSem === dSem && facSubType === dType;
+              if (facSubName && dName) return facSubName === dName && facSubSem === dSem && facSubType === dType;
+              return false;
+            });
+          });
+
+          if (updatedSubs.length !== currentSubs.length) {
+            await supabase.from('faculty').update({ subjects: updatedSubs }).eq('id', f.id);
+          }
+        });
+        await Promise.all(facultyUpdates);
       }
     }
 
     notifyChange('SUBJECTS_CHANGED', { action: 'delete_bulk' });
+    notifyChange('FACULTY_CHANGED', { action: 'delete_subject' });
     res.json({ message: 'Subjects deleted from Supabase DB successfully', deletedCount });
   } catch (err) {
     console.error('Server error deleting subject match:', err);
@@ -357,12 +413,52 @@ router.post('/delete-match', authenticateJWT, requireAdmin, async (req, res) => 
 router.delete('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
   try {
+    const { data: targetSub } = await supabase.from('subjects').select('*').eq('id', id).single();
     const { error } = await supabase.from('subjects').delete().eq('id', id);
     if (error) {
       console.error('Supabase delete subject error:', error);
       return res.status(400).json({ error: error.message });
     }
+
+    // Also remove from faculty.subjects JSON
+    if (targetSub) {
+      const { data: dbFaculties } = await supabase.from('faculty').select('*');
+      if (dbFaculties && dbFaculties.length > 0) {
+        const dCode = String(targetSub.subject_code || targetSub.code || '').trim().toLowerCase();
+        const dName = String(targetSub.subject_name || targetSub.subjectName || targetSub.name || '').trim().toLowerCase();
+        const dSem = String(targetSub.semester || '1').replace(/\D/g, '');
+        const dType = String(targetSub.type || 'Theory').trim().toLowerCase();
+
+        const facultyUpdates = dbFaculties.map(async (f) => {
+          let currentSubs = [];
+          if (typeof f.subjects === 'string') {
+            try { currentSubs = JSON.parse(f.subjects); } catch (e) { currentSubs = []; }
+          } else if (Array.isArray(f.subjects)) {
+            currentSubs = [...f.subjects];
+          }
+          if (currentSubs.length === 0) return;
+
+          const updatedSubs = currentSubs.filter(subInFac => {
+            const facSubCode = String(subInFac.code || subInFac.subjectCode || subInFac.subject_code || '').trim().toLowerCase();
+            const facSubName = String(subInFac.subjectName || subInFac.name || '').trim().toLowerCase();
+            const facSubSem = String(subInFac.semester || '1').replace(/\D/g, '');
+            const facSubType = String(subInFac.type || 'Theory').trim().toLowerCase();
+
+            if (facSubCode && dCode) return !(facSubCode === dCode && facSubSem === dSem && facSubType === dType);
+            if (facSubName && dName) return !(facSubName === dName && facSubSem === dSem && facSubType === dType);
+            return true;
+          });
+
+          if (updatedSubs.length !== currentSubs.length) {
+            await supabase.from('faculty').update({ subjects: updatedSubs }).eq('id', f.id);
+          }
+        });
+        await Promise.all(facultyUpdates);
+      }
+    }
+
     notifyChange('SUBJECTS_CHANGED', { action: 'delete', id });
+    notifyChange('FACULTY_CHANGED', { action: 'delete_subject' });
     res.json({ message: 'Subject deleted from Supabase DB' });
   } catch (err) {
     console.error('Server error deleting subject:', err);

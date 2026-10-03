@@ -110,17 +110,17 @@ const setAdminOverride = (data) => {
 };
 
 // Helper function to ensure Admin user is physically created/synced in Supabase faculty table
-async function ensureAdminInSupabaseFaculty(adminEmail, adminName, adminMobile) {
+let adminSynced = false;
+async function ensureAdminInSupabaseFaculty(adminEmail, adminName, adminMobile, force = false) {
+  if (adminSynced && !force) return null;
   try {
     const cleanEmail = String(adminEmail || 'admin@ljcca.edu').trim().toLowerCase();
-    const { data: existing } = await supabase
+    const { data: existingRows } = await supabase
       .from('faculty')
       .select('*')
-      .or(`email.eq.${cleanEmail},username.eq.${cleanEmail}`)
-      .maybeSingle();
+      .or(`email.eq.${cleanEmail},username.eq.${cleanEmail}`);
 
-    if (!existing) {
-      // Fetch admin password from admin table to keep hash consistent
+    if (!existingRows || existingRows.length === 0) {
       let adminPasswordHash = '$2a$10$0pxQ8vu0Bi/hnUQ7hW/HhOxCR.pFyVpaogs8rgL9S2W8EFITQTqTW';
       try {
         const { data: adminRow } = await supabase.from('admin').select('password').eq('email', cleanEmail).maybeSingle();
@@ -143,25 +143,19 @@ async function ensureAdminInSupabaseFaculty(adminEmail, adminName, adminMobile) 
         .select()
         .single();
 
-      if (error) {
-        console.warn('Could not insert admin into faculty table:', error.message);
-      } else {
-        console.log('Successfully inserted Admin into Supabase faculty table with ID:', inserted.id);
-        return inserted;
-      }
+      if (!error) adminSynced = true;
+      return inserted;
     } else {
-      // Sync existing admin record in faculty table if name or mobile changed
-      const { data: updated } = await supabase
-        .from('faculty')
-        .update({
-          name: adminName || existing.name,
-          mobile: adminMobile || existing.mobile,
-          email: cleanEmail
-        })
-        .eq('id', existing.id)
-        .select()
-        .single();
-      return updated || existing;
+      // Purge any extra duplicate admin rows from Supabase DB to guarantee exactly 1 Primary Admin row
+      if (existingRows.length > 1) {
+        const primaryAdmin = existingRows.find(r => String(r.id) === '78' || r.isPrimaryAdmin) || existingRows[0];
+        const extraIds = existingRows.filter(r => r.id !== primaryAdmin.id).map(r => r.id);
+        if (extraIds.length > 0) {
+          await supabase.from('faculty').delete().in('id', extraIds);
+        }
+      }
+      adminSynced = true;
+      return existingRows[0];
     }
   } catch (err) {
     console.warn('Error in ensureAdminInSupabaseFaculty:', err.message);
@@ -180,8 +174,8 @@ router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
     const adminName = override?.name || 'Administrative';
     const adminMobile = override?.mobile || '9510479002';
 
-    // Ensure Admin is physically synced in Supabase faculty table
-    await ensureAdminInSupabaseFaculty(adminEmail, adminName, adminMobile);
+    // Non-blocking sync for admin in faculty table
+    ensureAdminInSupabaseFaculty(adminEmail, adminName, adminMobile).catch(() => {});
 
     const { data: faculty, error } = await supabase.from('faculty').select('*');
     if (error) throw error;
@@ -257,10 +251,29 @@ router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
       };
     });
 
-    // Sort primary admin to the very top
-    formatted.sort((a, b) => (b.isPrimaryAdmin ? 1 : 0) - (a.isPrimaryAdmin ? 1 : 0));
+    // Deduplicate response to guarantee only 1 Primary Admin row and no duplicate IDs
+    const uniqueFormatted = [];
+    const seenAdminEmails = new Set();
+    const seenIds = new Set();
 
-    res.json(formatted);
+    for (const item of formatted) {
+      if (seenIds.has(item.id)) continue;
+      if (item.isPrimaryAdmin) {
+        if (seenAdminEmails.has(adminEmail)) continue; // Skip extra primary admin duplicates
+        seenAdminEmails.add(adminEmail);
+      }
+      seenIds.add(item.id);
+      uniqueFormatted.push(item);
+    }
+
+    // Sort primary admin to the very top, and sort remaining faculty A to Z alphabetically by name
+    uniqueFormatted.sort((a, b) => {
+      if (a.isPrimaryAdmin && !b.isPrimaryAdmin) return -1;
+      if (!a.isPrimaryAdmin && b.isPrimaryAdmin) return 1;
+      return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+    });
+
+    res.json(uniqueFormatted);
   } catch (err) {
     console.error('Error fetching faculty:', err);
     res.status(500).json({ error: 'Failed to fetch faculty members' });
@@ -806,7 +819,30 @@ router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
   }
 
   try {
-    const rawTargetIds = (facultyIds || []).filter(id => id !== 'admin_primary' && !String(id).startsWith('admin') && String(id) !== '78');
+    const override = getAdminOverride();
+    const adminEmail = (override?.email || 'admin@ljcca.edu').toLowerCase();
+
+    // Query primary admin DB row IDs to guarantee protection
+    const { data: adminFacs } = await supabase
+      .from('faculty')
+      .select('id, email, username')
+      .or(`email.eq.${adminEmail},username.eq.${adminEmail}`);
+
+    const protectedAdminIds = new Set(['admin_primary', '78']);
+    (adminFacs || []).forEach(af => {
+      if (af.id) {
+        protectedAdminIds.add(af.id);
+        protectedAdminIds.add(String(af.id));
+      }
+    });
+
+    const rawTargetIds = (facultyIds || []).filter(id =>
+      !protectedAdminIds.has(id) &&
+      !protectedAdminIds.has(String(id)) &&
+      id !== 'admin_primary' &&
+      !String(id).startsWith('admin') &&
+      String(id) !== '78'
+    );
     
     // Normalize target IDs to handle both strings and numbers for Supabase postgrest type matching
     const expandedIds = Array.from(new Set(
@@ -872,7 +908,7 @@ router.post('/bulk-delete', authenticateJWT, requireAdmin, async (req, res) => {
     // Emit real-time synchronization event
     notifyChange('FACULTY_CHANGED', { action: 'bulk_delete' });
 
-    res.json({ success: true, message: `Successfully deleted ${facultyIds.length} faculty member(s).` });
+    res.json({ success: true, message: `Successfully deleted ${rawTargetIds.length} faculty member(s).` });
   } catch (err) {
     console.error('Bulk delete faculty error:', err);
     res.status(500).json({ error: 'Failed to delete faculty members.' });
@@ -887,7 +923,15 @@ router.delete('/:id', authenticateJWT, requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Faculty ID is required.' });
   }
 
-  if (id === 'admin_primary' || String(id).startsWith('admin') || String(id) === '78') {
+  const override = getAdminOverride();
+  const adminEmail = (override?.email || 'admin@ljcca.edu').toLowerCase();
+  const { data: adminFac } = await supabase
+    .from('faculty')
+    .select('id')
+    .or(`email.eq.${adminEmail},username.eq.${adminEmail}`)
+    .maybeSingle();
+
+  if (id === 'admin_primary' || String(id).startsWith('admin') || String(id) === '78' || (adminFac && String(adminFac.id) === String(id))) {
     return res.status(400).json({ error: 'Primary Admin account cannot be deleted.' });
   }
 
@@ -991,17 +1035,24 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
     const validRows = hashedRows.filter(Boolean);
 
     // 2. Fetch existing faculty in ONE batch query for fast in-memory matching
-    const { data: existingFaculties } = await supabase.from('faculty').select('id, email, department, username');
-    const existingMap = new Map();
+    const override = getAdminOverride();
+    const adminEmail = (override?.email || 'admin@ljcca.edu').toLowerCase();
+
+    const { data: existingFaculties } = await supabase.from('faculty').select('id, email, mobile, department, username');
+    const emailMap = new Map();
+    const mobileMap = new Map();
     const usernameSet = new Set();
 
     (existingFaculties || []).forEach(f => {
-      if (f.email && f.department) {
-        const key = `${String(f.email).trim().toLowerCase()}_${String(f.department).split('||SUB:')[0].trim().toLowerCase()}`;
-        existingMap.set(key, f);
+      if (f.email) {
+        emailMap.set(String(f.email).trim().toLowerCase(), f);
       }
       if (f.username) {
+        emailMap.set(String(f.username).trim().toLowerCase(), f);
         usernameSet.add(String(f.username).trim().toLowerCase());
+      }
+      if (f.mobile && String(f.mobile).trim() !== '0000000000') {
+        mobileMap.set(String(f.mobile).trim(), f);
       }
     });
 
@@ -1010,11 +1061,19 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
 
     // 3. Build payloads in memory
     for (const item of validRows) {
-      const matchKey = `${item.email.toLowerCase()}_${item.department.toLowerCase()}`;
-      const existingInSameDept = existingMap.get(matchKey);
+      const cleanEmail = item.email.trim().toLowerCase();
+      const cleanMob = item.mobile.trim();
+
+      // NEVER import or overwrite primary admin account from CSV/XLSX file
+      if (cleanEmail === adminEmail || cleanEmail === 'admin@ljcca.edu' || cleanEmail === 'admin_primary') {
+        continue;
+      }
+
+      // Check if account already exists by Email or Mobile
+      const existingFac = emailMap.get(cleanEmail) || (cleanMob && cleanMob !== '0000000000' ? mobileMap.get(cleanMob) : null);
 
       let finalUsername = item.email;
-      if (usernameSet.has(finalUsername.toLowerCase()) && (!existingInSameDept || existingInSameDept.username?.toLowerCase() !== finalUsername.toLowerCase())) {
+      if (usernameSet.has(finalUsername.toLowerCase()) && (!existingFac || existingFac.username?.toLowerCase() !== finalUsername.toLowerCase())) {
         const deptSlug = item.department.toLowerCase().replace(/[^a-z0-9]/g, '');
         finalUsername = `${item.email.toLowerCase()}_${deptSlug}_${Math.floor(100 + Math.random() * 900)}`;
       }
@@ -1030,9 +1089,11 @@ router.post('/import', authenticateJWT, requireAdmin, async (req, res) => {
         plain_password: item.plain_password
       };
 
-      if (existingInSameDept) {
-        toUpdate.push({ id: existingInSameDept.id, payload, subjectsToSave: item.subjectsToSave });
+      if (existingFac) {
+        // Update existing record instead of creating duplicate account
+        toUpdate.push({ id: existingFac.id, payload, subjectsToSave: item.subjectsToSave });
       } else {
+        // Insert new record
         toInsert.push({ payload, subjectsToSave: item.subjectsToSave, email: item.email, dept: item.department });
       }
     }
