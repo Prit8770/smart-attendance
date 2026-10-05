@@ -1,0 +1,10 @@
+{
+  "buildCommand": "npm run build --prefix frontend",
+  "outputDirectory": "frontend/dist",
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://smart-attendance-hs1q.onrender.com/api/:path*"
+    }
+  ]
+}

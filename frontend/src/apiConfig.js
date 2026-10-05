@@ -19,14 +19,32 @@ export const getApiUrl = (endpoint = '') => {
 // Global interceptor for window.fetch and EventSource when API_BASE_URL is set
 if (typeof window !== 'undefined' && API_BASE_URL) {
   const originalFetch = window.fetch;
-  window.fetch = function (resource, config) {
+  window.fetch = async function (resource, config) {
+    let targetUrl = resource;
     if (typeof resource === 'string' && resource.startsWith('/api')) {
-      resource = `${API_BASE_URL}${resource}`;
+      targetUrl = `${API_BASE_URL}${resource}`;
     } else if (resource && typeof resource === 'object' && typeof resource.url === 'string' && resource.url.startsWith('/api')) {
       const url = `${API_BASE_URL}${resource.url}`;
-      resource = new Request(url, resource);
+      targetUrl = new Request(url, resource);
     }
-    return originalFetch.call(this, resource, config);
+
+    const response = await originalFetch.call(this, targetUrl, config);
+
+    // Safeguard response.json() against HTML error pages (404, 502, Render cold starts)
+    const originalJson = response.json.bind(response);
+    response.json = async function () {
+      try {
+        return await originalJson();
+      } catch (err) {
+        if (!response.ok) {
+          console.warn(`[API] Server returned non-JSON response (${response.status}) for ${typeof targetUrl === 'string' ? targetUrl : targetUrl.url}`);
+          return { error: `Server error (${response.status}). Please try again.` };
+        }
+        throw err;
+      }
+    };
+
+    return response;
   };
 
   const OriginalEventSource = window.EventSource;
