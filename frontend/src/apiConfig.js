@@ -1,8 +1,13 @@
-export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+const DEFAULT_PROD_BACKEND_URL = 'https://smart-attendance-hs1q.onrender.com';
+
+export const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.PROD ? DEFAULT_PROD_BACKEND_URL : '')
+).replace(/\/+$/, '');
 
 /**
  * Returns the full API URL for a given relative endpoint.
- * E.g., getApiUrl('/api/auth/login') -> 'https://my-backend.onrender.com/api/auth/login' (if VITE_API_BASE_URL is set)
+ * E.g., getApiUrl('/api/auth/login') -> 'https://smart-attendance-hs1q.onrender.com/api/auth/login'
  */
 export const getApiUrl = (endpoint = '') => {
   if (!endpoint || typeof endpoint !== 'string') return endpoint;
@@ -11,7 +16,7 @@ export const getApiUrl = (endpoint = '') => {
   return API_BASE_URL ? `${API_BASE_URL}${path}` : path;
 };
 
-// Global interceptor for window.fetch and EventSource when VITE_API_BASE_URL is set
+// Global interceptor for window.fetch and EventSource when API_BASE_URL is set
 if (typeof window !== 'undefined' && API_BASE_URL) {
   const originalFetch = window.fetch;
   window.fetch = function (resource, config) {

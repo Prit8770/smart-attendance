@@ -23,6 +23,7 @@ const PORT = process.env.PORT || 5000;
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   process.env.APP_URL,
+  'https://attendance.edumark.app',
   'http://localhost:3050',
   'http://localhost:5000'
 ].filter(Boolean);
