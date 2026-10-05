@@ -331,12 +331,14 @@ router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) =>
       .select('*')
       .eq('date', today)
       .order('id', { ascending: false });
-    if (req.user.role === 'faculty') {
+    if (req.query.all !== 'true') {
       const activeFacId = req.user.faculty_id || req.user.id;
       const resolvedFacId = await resolveValidFacultyId(req.user);
       const facIdSet = new Set([String(req.user.id), String(activeFacId), String(resolvedFacId)].filter(Boolean));
       const orClause = Array.from(facIdSet).map(id => `created_by_faculty_id.eq.${id}`).join(',');
-      sessionsQuery = sessionsQuery.or(orClause);
+      if (orClause) {
+        sessionsQuery = sessionsQuery.or(orClause);
+      }
     }
     const { data: sessions, error } = await sessionsQuery;
 

@@ -5,6 +5,7 @@ import StudentDashboard from './components/StudentDashboard';
 import FacultyDashboard from './components/FacultyDashboard';
 import LandingPage from './components/LandingPage';
 import PwaInstallPrompt from './components/PwaInstallPrompt';
+import { getApiUrl } from './apiConfig';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -47,7 +48,7 @@ export default function App() {
       // Unblock UI immediately for 1-second instant loading
       setInitializing(false);
 
-      fetch('/api/auth/me', {
+      fetch(getApiUrl('/api/auth/me'), {
         headers: { Authorization: `Bearer ${savedToken}` }
       })
       .then(res => {
@@ -114,7 +115,7 @@ export default function App() {
 
     const refreshUserRole = async () => {
       try {
-        const res = await fetch('/api/auth/me', {
+        const res = await fetch(getApiUrl('/api/auth/me'), {
           headers: { Authorization: `Bearer ${token}` }
         });
         if (res.ok) {
@@ -153,7 +154,7 @@ export default function App() {
     let eventSource = null;
     if (typeof window !== 'undefined' && 'EventSource' in window) {
       try {
-        eventSource = new EventSource('/api/sync/events');
+        eventSource = new EventSource(getApiUrl('/api/sync/events'));
         eventSource.onmessage = (e) => {
           try {
             const data = JSON.parse(e.data);

@@ -779,7 +779,7 @@ export default function AdminDashboard({
       setMatrixLoading(true);
     }
     try {
-      let query = `?semester=${targetSem}`;
+      let query = `?semester=${targetSem}&mode=admin&all=true`;
       if (matrixDateMode === 'month' && matrixMonth) {
         query += `&month=${matrixMonth}`;
       } else if (matrixDateMode === 'custom') {

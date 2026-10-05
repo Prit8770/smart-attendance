@@ -166,8 +166,8 @@ router.put('/assign-faculty', authenticateJWT, requireAdmin, async (req, res) =>
   const subName = (assigningSubject.subjectName || assigningSubject.name || '').toString().trim();
 
   const subObjToAssign = {
-    subjectName: assigningSubject.subjectName || assigningSubject.name || '',
-    shortName: assigningSubject.shortName || assigningSubject.shortCode || '',
+    subjectName: assigningSubject.subjectName || assigningSubject.name || assigningSubject.subject_name || '',
+    shortName: assigningSubject.shortName || assigningSubject.short_name || assigningSubject.shortCode || assigningSubject.short_code || assigningSubject.short || '',
     code: subCode,
     subjectCode: subCode,
     semester: subSem,

@@ -1719,7 +1719,7 @@ function invalidateMatrixCache() {
 
 // GET Semester Master Attendance Matrix (Date-Wise Subject Grid)
 router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) => {
-  const { semester, division, startDate, endDate, date, subject } = req.query;
+  const { semester, division, startDate, endDate, date, subject, mode, all } = req.query;
 
   const semParam = semester ? String(semester).trim() : 'ALL';
   const isAllSem = semParam === 'ALL' || semParam === '' || semParam.toLowerCase() === 'all';
@@ -1796,6 +1796,28 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
     let otpQuery = supabase.from('otp').select('id, generated_time, generated_by, semester, division, subject, date');
     let attQuery = supabase.from('attendance').select('id, student_id, qr_session_id, otp_id, date, time, status, subject, device_id, distance').in('status', ['Success', 'Present']);
 
+    const isFacultyMode = mode === 'faculty' || (req.user.role === 'faculty' && mode !== 'admin' && all !== 'true');
+    const isAdminView = mode === 'admin' || all === 'true' || (req.user.role === 'admin' && !req.user.isFacultyUser && mode !== 'faculty');
+
+    if (isFacultyMode && !isAdminView) {
+      const activeFacId = req.user.faculty_id || req.user.id;
+      let resolvedFacId = activeFacId;
+      try {
+        const { data: facRow } = await supabase.from('faculty')
+          .select('id')
+          .or(`id.eq.${activeFacId},email.eq.${req.user.email || ''},username.eq.${req.user.email || ''}`)
+          .maybeSingle();
+        if (facRow && facRow.id) resolvedFacId = facRow.id;
+      } catch(e) {}
+
+      const facIdSet = new Set([String(req.user.id), String(activeFacId), String(resolvedFacId)].filter(Boolean));
+      const qrClause = Array.from(facIdSet).map(id => `created_by_faculty_id.eq.${id}`).join(',');
+      const otpClause = Array.from(facIdSet).map(id => `generated_by.eq.${id}`).join(',');
+
+      if (qrClause) qrQuery = qrQuery.or(qrClause);
+      if (otpClause) otpQuery = otpQuery.or(otpClause);
+    }
+
     if (date) {
       qrQuery = qrQuery.eq('date', date);
       otpQuery = otpQuery.eq('date', date);
@@ -1831,8 +1853,8 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
 
     // Collect matching QR sessions
     (qrSessions || []).forEach(q => {
-      const qSem = String(q.semester || '').replace(/\D/g, '').trim();
-      if (isAllSem || qSem === semNum) {
+      const qSem = q.semester ? String(q.semester).replace(/\D/g, '').trim() : '';
+      if (isAllSem || !qSem || qSem === semNum) {
         if (division && division !== 'ALL' && q.division && String(q.division).toUpperCase() !== 'ALL') {
           if (String(q.division).toUpperCase() !== String(division).toUpperCase()) return;
         }
@@ -1882,8 +1904,8 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
 
     // Collect matching OTP sessions
     (otpSessions || []).forEach(o => {
-      const oSem = String(o.semester || '').replace(/\D/g, '').trim();
-      if (isAllSem || oSem === semNum) {
+      const oSem = o.semester ? String(o.semester).replace(/\D/g, '').trim() : '';
+      if (isAllSem || !oSem || oSem === semNum) {
         if (division && division !== 'ALL' && o.division && String(o.division).toUpperCase() !== 'ALL') {
           if (String(o.division).toUpperCase() !== String(division).toUpperCase()) return;
         }

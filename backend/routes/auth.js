@@ -964,19 +964,58 @@ router.get('/me', authenticateJWT, async (req, res) => {
           }
         } catch(e) {}
 
+        let dbColSubjects = [];
+        if (faculty.subjects) {
+          if (typeof faculty.subjects === 'string') {
+            try { dbColSubjects = JSON.parse(faculty.subjects); } catch(e) {}
+          } else if (Array.isArray(faculty.subjects)) {
+            dbColSubjects = faculty.subjects;
+          }
+        }
+
+        let assignedTableSubjects = [];
+        try {
+          const { data: matchedTableSubs } = await supabase.from('subjects')
+            .select('*')
+            .or(`faculty_id_1.eq.${faculty.id},faculty_id_2.eq.${faculty.id},faculty_id_3.eq.${faculty.id}`);
+          if (matchedTableSubs && Array.isArray(matchedTableSubs)) {
+            assignedTableSubjects = matchedTableSubs;
+          }
+        } catch(e) {}
+
         const subMap = new Map();
         const mergeSub = (s) => {
-          if (!s || (!s.subjectName && !s.name)) return;
-          const name = String(s.subjectName || s.name).trim();
+          if (!s) return;
+          const name = String(s.subjectName || s.name || s.subject_name || '').trim();
+          if (!name) return;
+          const shortName = String(s.shortName || s.short_name || s.shortCode || s.short_code || s.short || '').trim();
           const sem = String(s.semester || '1').replace(/\D/g, '') || '1';
           const code = (s.code || s.subjectCode || s.subject_code || s.subCode || '').toString().trim();
-          const type = (s.type || s.subjectType || 'Theory').toString().trim();
+          const type = (s.type || s.subjectType || s.subject_type || 'Theory').toString().trim();
           const key = code ? `code_${code.toLowerCase()}_sem_${sem}_type_${type.toLowerCase()}` : `name_${name.toLowerCase()}_sem_${sem}_type_${type.toLowerCase()}`;
-          subMap.set(key, s);
+          const existing = subMap.get(key) || {};
+          subMap.set(key, {
+            ...existing,
+            ...s,
+            subjectName: name,
+            shortName: shortName || existing.shortName || '',
+            code: code || existing.code || '',
+            subjectCode: code || existing.subjectCode || '',
+            semester: sem,
+            type: type || existing.type || 'Theory'
+          });
         };
+
+        if (Array.isArray(assignedTableSubjects) && assignedTableSubjects.length > 0) {
+          assignedTableSubjects.forEach(mergeSub);
+        }
+        if (Array.isArray(dbColSubjects) && dbColSubjects.length > 0) {
+          dbColSubjects.forEach(mergeSub);
+        }
         if (Array.isArray(fileSubjects) && fileSubjects.length > 0) {
           fileSubjects.forEach(mergeSub);
-        } else if (Array.isArray(embeddedSubjects)) {
+        }
+        if (Array.isArray(embeddedSubjects) && embeddedSubjects.length > 0) {
           embeddedSubjects.forEach(mergeSub);
         }
         const finalSubjects = Array.from(subMap.values());
@@ -1028,20 +1067,81 @@ router.get('/me', authenticateJWT, async (req, res) => {
       const adminEmail = (override && override.email ? override.email : req.user.email) || 'admin@ljcca.edu';
       const adminId = req.user.id;
 
+      const { data: facMatch } = await supabase.from('faculty')
+        .select('*')
+        .or(`email.eq.${adminEmail.toLowerCase()},username.eq.${adminEmail.toLowerCase()}`)
+        .maybeSingle();
+      const facultyId = facMatch ? facMatch.id : req.user.id;
+
+      let dbColSubjects = [];
+      if (facMatch && facMatch.subjects) {
+        if (typeof facMatch.subjects === 'string') {
+          try { dbColSubjects = JSON.parse(facMatch.subjects); } catch(e) {}
+        } else if (Array.isArray(facMatch.subjects)) {
+          dbColSubjects = facMatch.subjects;
+        }
+      }
+
+      let assignedTableSubjects = [];
+      try {
+        const idsToCheck = Array.from(new Set([facultyId, adminId, '78', 78].filter(Boolean)));
+        const orClause = idsToCheck.flatMap(id => [
+          `faculty_id_1.eq.${id}`,
+          `faculty_id_2.eq.${id}`,
+          `faculty_id_3.eq.${id}`
+        ]).join(',');
+
+        const { data: matchedTableSubs } = await supabase.from('subjects')
+          .select('*')
+          .or(orClause);
+        if (matchedTableSubs && Array.isArray(matchedTableSubs)) {
+          assignedTableSubjects = matchedTableSubs;
+        }
+      } catch(e) {}
+
       let fileSubjects = [];
       try {
         const p = path.join(__dirname, '../data/faculty_subjects.json');
         if (fs.existsSync(p)) {
           const map = JSON.parse(fs.readFileSync(p, 'utf8'));
-          fileSubjects = map['admin_primary'] || map[adminEmail.toLowerCase()] || map[adminId] || [];
+          fileSubjects = map['admin_primary'] || map[adminEmail.toLowerCase()] || map[adminId] || map[facultyId] || [];
         }
       } catch(e) {}
 
-      const { data: facMatch } = await supabase.from('faculty')
-        .select('id')
-        .or(`email.eq.${adminEmail.toLowerCase()},username.eq.${adminEmail.toLowerCase()}`)
-        .maybeSingle();
-      const facultyId = facMatch ? facMatch.id : req.user.id;
+      const subMap = new Map();
+      const mergeSub = (s) => {
+        if (!s) return;
+        const name = String(s.subjectName || s.name || s.subject_name || '').trim();
+        if (!name) return;
+        const shortName = String(s.shortName || s.short_name || s.shortCode || s.short_code || s.short || '').trim();
+        const sem = String(s.semester || '1').replace(/\D/g, '') || '1';
+        const code = (s.code || s.subjectCode || s.subject_code || s.subCode || '').toString().trim();
+        const type = (s.type || s.subjectType || s.subject_type || 'Theory').toString().trim();
+        const key = code ? `code_${code.toLowerCase()}_sem_${sem}_type_${type.toLowerCase()}` : `name_${name.toLowerCase()}_sem_${sem}_type_${type.toLowerCase()}`;
+        const existing = subMap.get(key) || {};
+        subMap.set(key, {
+          ...existing,
+          ...s,
+          subjectName: name,
+          shortName: shortName || existing.shortName || '',
+          code: code || existing.code || '',
+          subjectCode: code || existing.subjectCode || '',
+          semester: sem,
+          type: type || existing.type || 'Theory'
+        });
+      };
+
+      if (Array.isArray(assignedTableSubjects) && assignedTableSubjects.length > 0) {
+        assignedTableSubjects.forEach(mergeSub);
+      }
+      if (Array.isArray(dbColSubjects) && dbColSubjects.length > 0) {
+        dbColSubjects.forEach(mergeSub);
+      }
+      if (Array.isArray(fileSubjects) && fileSubjects.length > 0) {
+        fileSubjects.forEach(mergeSub);
+      }
+
+      const finalAdminSubjects = Array.from(subMap.values());
 
       const assignedAdminRoles = getFacultyRoles(facultyId || 'admin_primary', adminEmail, adminEmail, 'ADMIN-01');
       const cleanAdminRoles = Array.from(new Set([...(assignedAdminRoles || ['admin', 'faculty']), 'admin']));
@@ -1055,7 +1155,7 @@ router.get('/me', authenticateJWT, async (req, res) => {
           email: adminEmail,
           mobile: override && override.mobile !== undefined ? override.mobile : (req.user.mobile || ''),
           department: 'BCA',
-          subjects: fileSubjects,
+          subjects: finalAdminSubjects,
           role: 'admin',
           roles: cleanAdminRoles,
           hasAdminAccess: true,

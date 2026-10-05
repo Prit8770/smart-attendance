@@ -44,17 +44,61 @@ export default function SemesterAttendanceMatrix({
   dateLogs = [],
   qrSessionHistory = []
 }) {
+  const isFacultyContext = Boolean(availableSemesters && Array.isArray(availableSemesters) && availableSemesters.length > 0);
+
+  // Available semesters for filter dropdown (Strictly assigned semesters that have registered students)
+  const allSemestersList = useMemo(() => {
+    const studentSemSet = new Set(
+      (studentsList || []).map(s => String(s.semester || '').replace(/\D/g, '').trim()).filter(Boolean)
+    );
+
+    if (availableSemesters && Array.isArray(availableSemesters) && availableSemesters.length > 0) {
+      const semSet = new Set();
+      availableSemesters.forEach(s => {
+        const num = String(s).replace(/\D/g, '').trim();
+        if (num && (studentSemSet.size === 0 || studentSemSet.has(num))) {
+          semSet.add(num);
+        }
+      });
+      if (semSet.size > 0) {
+        return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
+      }
+    }
+
+    // Fallback (Admin mode: include all semesters present in students cohort)
+    const semSet = new Set();
+    (studentsList || []).forEach(s => {
+      const num = String(s.semester || '').replace(/\D/g, '').trim();
+      if (num) semSet.add(num);
+    });
+    if (semSet.size === 0) {
+      ['1', '2', '3', '4', '5', '6', '7', '8'].forEach(n => semSet.add(n));
+    }
+    return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
+  }, [availableSemesters, studentsList]);
+
   // Semester State
   const [selectedSem, setSelectedSem] = useState(() => {
+    if (semNumber && semNumber !== 'ALL') return String(semNumber);
+    if (isFacultyContext && allSemestersList && allSemestersList.length > 0) {
+      return allSemestersList[0];
+    }
+    if (isFacultyContext && availableSemesters.length > 0) {
+      return String(availableSemesters[0]).replace(/\D/g, '') || '1';
+    }
     return semNumber ? String(semNumber) : 'ALL';
   });
 
-  // Keep selectedSem synced if parent prop semNumber changes
+  // Keep selectedSem synced if parent prop semNumber changes or if selectedSem is ALL in faculty context
   useEffect(() => {
-    if (semNumber) {
+    if (semNumber && semNumber !== 'ALL') {
       setSelectedSem(String(semNumber));
+    } else if (isFacultyContext && (selectedSem === 'ALL' || !selectedSem)) {
+      if (allSemestersList && allSemestersList.length > 0) {
+        setSelectedSem(allSemestersList[0]);
+      }
     }
-  }, [semNumber]);
+  }, [semNumber, isFacultyContext, allSemestersList]);
 
   // Matrix Data & Loading State
   const [matrixData, setMatrixData] = useState(null);
@@ -83,7 +127,7 @@ export default function SemesterAttendanceMatrix({
     setMatrixLoading(true);
 
     try {
-      let query = `?semester=${sem}`;
+      let query = `?semester=${sem}&mode=faculty`;
       if (matrixDateMode === 'month' && matrixMonth) {
         query += `&month=${matrixMonth}`;
       } else if (matrixDateMode === 'custom') {
@@ -268,37 +312,6 @@ export default function SemesterAttendanceMatrix({
     fetchSemesterMatrix(selectedSem);
   }, [selectedSem, matrixDateMode, matrixMonth, matrixStartDate, matrixEndDate, matrixSingleDate, matrixDivFilter, matrixSubjectFilter]);
 
-  // Available semesters for filter dropdown (Strictly assigned semesters that have registered students)
-  const allSemestersList = useMemo(() => {
-    const studentSemSet = new Set(
-      (studentsList || []).map(s => String(s.semester || '').replace(/\D/g, '').trim()).filter(Boolean)
-    );
-
-    if (availableSemesters && Array.isArray(availableSemesters) && availableSemesters.length > 0) {
-      const semSet = new Set();
-      availableSemesters.forEach(s => {
-        const num = String(s).replace(/\D/g, '').trim();
-        if (num && (studentSemSet.size === 0 || studentSemSet.has(num))) {
-          semSet.add(num);
-        }
-      });
-      if (semSet.size > 0) {
-        return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
-      }
-    }
-
-    // Fallback (Admin mode: include all semesters present in students cohort)
-    const semSet = new Set();
-    (studentsList || []).forEach(s => {
-      const num = String(s.semester || '').replace(/\D/g, '').trim();
-      if (num) semSet.add(num);
-    });
-    if (semSet.size === 0) {
-      ['1', '2', '3', '4', '5', '6', '7', '8'].forEach(n => semSet.add(n));
-    }
-    return Array.from(semSet).sort((a, b) => Number(a) - Number(b));
-  }, [availableSemesters, studentsList]);
-
   // Auto-sync selectedSem if allSemestersList updates
   useEffect(() => {
     if (allSemestersList.length === 1 && selectedSem !== allSemestersList[0]) {
@@ -353,7 +366,7 @@ export default function SemesterAttendanceMatrix({
 
     let filteredColumns = matrixData.columns || [];
 
-    // If faculty assigned subjects provided, only keep columns matching those subjects
+    // If faculty assigned subjects provided, filter by assigned subjects flexibly
     if (assignedSubjects && Array.isArray(assignedSubjects) && assignedSubjects.length > 0) {
       const allowedSubs = new Set();
       const targetSem = (selectedSem && selectedSem !== 'ALL') ? String(selectedSem).replace(/\D/g, '').trim() : null;
@@ -361,16 +374,33 @@ export default function SemesterAttendanceMatrix({
       assignedSubjects.forEach(s => {
         if (!s) return;
         const subSem = String(s.semester || '').replace(/\D/g, '').trim();
-        if (targetSem && subSem && subSem !== targetSem) return;
-        const name = cleanSubjectTitle(s.subjectName || s.name || (typeof s === 'string' ? s : '')).toLowerCase();
-        if (name && name !== 'subject') allowedSubs.add(name);
+        if (!targetSem || !subSem || subSem === targetSem) {
+          const name = cleanSubjectTitle(s.subjectName || s.name || (typeof s === 'string' ? s : '')).toLowerCase();
+          if (name && name !== 'subject') allowedSubs.add(name);
+        }
       });
 
-      if (allowedSubs.size > 0) {
-        filteredColumns = filteredColumns.filter(col => {
-          const colSub = cleanSubjectTitle(col.subject).toLowerCase();
-          return allowedSubs.has(colSub);
+      // Fallback: if no subject matched target sem, include all assigned subject names
+      if (allowedSubs.size === 0) {
+        assignedSubjects.forEach(s => {
+          if (!s) return;
+          const name = cleanSubjectTitle(s.subjectName || s.name || (typeof s === 'string' ? s : '')).toLowerCase();
+          if (name && name !== 'subject') allowedSubs.add(name);
         });
+      }
+
+      if (allowedSubs.size > 0) {
+        const strictFiltered = filteredColumns.filter(col => {
+          const colSub = cleanSubjectTitle(col.subject).toLowerCase();
+          return Array.from(allowedSubs).some(sub =>
+            colSub === sub || colSub.includes(sub) || sub.includes(colSub)
+          );
+        });
+
+        // Only apply strict filtering if it doesn't wipe out all conducted sessions
+        if (strictFiltered.length > 0) {
+          filteredColumns = strictFiltered;
+        }
       }
     }
 
@@ -378,17 +408,18 @@ export default function SemesterAttendanceMatrix({
     if (matrixSubjectFilter && matrixSubjectFilter !== 'ALL') {
       const targetClean = cleanSubjectTitle(matrixSubjectFilter).toLowerCase();
       filteredColumns = filteredColumns.filter(col => {
-        return cleanSubjectTitle(col.subject).toLowerCase() === targetClean;
+        const colSub = cleanSubjectTitle(col.subject).toLowerCase();
+        return colSub === targetClean || colSub.includes(targetClean) || targetClean.includes(colSub);
       });
     }
 
-    // Rebuild dateGroups
+    // Rebuild dateGroups with clean date formatting (e.g. 02 Oct 2026)
     const dateGroupsMap = new Map();
     filteredColumns.forEach(col => {
       if (!dateGroupsMap.has(col.date)) {
         let fDate = col.date;
         try {
-          fDate = new Date(col.date + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+          fDate = new Date(col.date + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
         } catch(e) {}
         dateGroupsMap.set(col.date, {
           date: col.date,
@@ -715,7 +746,7 @@ export default function SemesterAttendanceMatrix({
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Folder size={14} color="#f59e0b" />
               <select
-                value={selectedSem || 'ALL'}
+                value={selectedSem || (allSemestersList[0] || '1')}
                 onChange={e => {
                   setSelectedSem(e.target.value);
                   setMatrixSearch('');
@@ -725,10 +756,8 @@ export default function SemesterAttendanceMatrix({
                 }}
                 style={{ height: '36px', padding: '6px 12px', borderRadius: '8px', border: '1.5px solid #cbd5e1', fontSize: '0.82rem', fontWeight: '700', background: '#ffffff', color: '#1e293b', cursor: 'pointer', boxSizing: 'border-box', outline: 'none' }}
               >
-                {allSemestersList.length > 1 && (
-                  <option value="ALL">
-                    {availableSemesters && availableSemesters.length > 0 ? 'All Assigned Semesters' : 'All Semesters'}
-                  </option>
+                {!isFacultyContext && allSemestersList.length > 1 && (
+                  <option value="ALL">All Semesters</option>
                 )}
                 {allSemestersList.map(sem => (
                   <option key={sem} value={sem}>Semester {sem}</option>

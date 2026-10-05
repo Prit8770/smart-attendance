@@ -202,12 +202,12 @@ router.get('/', authenticateJWT, requireAdmin, async (req, res) => {
         [];
       const subMap = new Map();
       const mergeSub = (s) => {
-        if (!s || (!s.subjectName && !s.name)) return;
-        const name = String(s.subjectName || s.name).trim();
+        if (!s || (!s.subjectName && !s.name && !s.subject_name)) return;
+        const name = String(s.subjectName || s.name || s.subject_name || '').trim();
         const sem = String(s.semester || '1').replace(/\D/g, '') || '1';
         const code = (s.code || s.subjectCode || s.subject_code || s.subCode || '').toString().trim();
-        const shortName = (s.shortName || s.shortCode || '').toString().trim();
-        const type = (s.type || s.subjectType || 'Theory').toString().trim();
+        const shortName = (s.shortName || s.short_name || s.shortCode || s.short_code || s.short || '').toString().trim();
+        const type = (s.type || s.subjectType || s.subject_type || 'Theory').toString().trim();
 
         const codeKey = code ? code.toLowerCase() : '';
         const typeKey = type ? type.toLowerCase() : 'theory';

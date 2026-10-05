@@ -712,7 +712,32 @@ export default function FacultyDashboard({
         otpSessions = otpData.otps || [];
       }
 
-      const formattedQr = (qrSessions || []).map((s) => {
+      const myFacIds = new Set([
+        activeUser?.id,
+        activeUser?.faculty_id,
+        user?.id,
+        user?.faculty_id,
+        fetchedFacultyUser?.id,
+        fetchedFacultyUser?.faculty_id
+      ].map(id => String(id || '').trim()).filter(Boolean));
+
+      const filteredQr = (qrSessions || []).filter(s => {
+        if (!s) return false;
+        if (myFacIds.size === 0) return true;
+        const creatorId = String(s.created_by_faculty_id || s.faculty_id || '').trim();
+        if (!creatorId) return true;
+        return myFacIds.has(creatorId);
+      });
+
+      const filteredOtp = (otpSessions || []).filter(s => {
+        if (!s) return false;
+        if (myFacIds.size === 0) return true;
+        const creatorId = String(s.generated_by || s.created_by_faculty_id || s.faculty_id || '').trim();
+        if (!creatorId) return true;
+        return myFacIds.has(creatorId);
+      });
+
+      const formattedQr = filteredQr.map((s) => {
         let sem = s.semester;
         let div = s.division;
         let subj = s.subject;
@@ -737,7 +762,7 @@ export default function FacultyDashboard({
         };
       });
 
-      const formattedOtp = (otpSessions || []).map((s) => {
+      const formattedOtp = filteredOtp.map((s) => {
         let sem = s.semester;
         let div = s.division;
         let subj = s.subject;
@@ -1186,23 +1211,48 @@ export default function FacultyDashboard({
 
   // All teaching subjects assigned to this faculty
   const allFacultySubjects = (() => {
-    const rawDept = activeUser?.department || '';
-    let subs = Array.isArray(activeUser?.subjects) ? activeUser.subjects : [];
-    
-    if (subs.length === 0 && rawDept.includes('||SUB:')) {
+    const subMap = new Map();
+    const addSubs = (arr) => {
+      if (!Array.isArray(arr)) return;
+      arr.forEach(s => {
+        if (!s) return;
+        const name = String(s.subjectName || s.name || s.subject_name || s.subject || '').trim();
+        const short = String(s.shortName || s.short_name || s.shortCode || s.short_code || s.short || '').trim();
+        const code = String(s.code || s.subjectCode || s.subject_code || '').trim();
+        const sem = String(s.semester || '1').replace(/\D/g, '') || '1';
+        const type = String(s.type || s.subjectType || s.subject_type || 'Theory').trim();
+
+        if (!name && !short && !code) return;
+        const key = code ? `code_${code.toLowerCase()}_sem_${sem}_type_${type.toLowerCase()}` : `name_${name.toLowerCase()}_sem_${sem}_type_${type.toLowerCase()}`;
+
+        const existing = subMap.get(key) || {};
+        subMap.set(key, {
+          ...existing,
+          ...s,
+          subjectName: name || existing.subjectName || '',
+          shortName: short || existing.shortName || '',
+          code: code || existing.code || '',
+          subjectCode: code || existing.subjectCode || '',
+          semester: sem,
+          type: type || existing.type || 'Theory'
+        });
+      });
+    };
+
+    addSubs(fetchedFacultyUser?.subjects);
+    addSubs(activeUser?.subjects);
+    addSubs(user?.subjects);
+
+    const rawDept = activeUser?.department || user?.department || fetchedFacultyUser?.department || '';
+    if (rawDept.includes('||SUB:')) {
       try {
         const jsonStr = rawDept.split('||SUB:')[1].split('||')[0];
         const parsed = JSON.parse(jsonStr);
-        if (Array.isArray(parsed)) subs = parsed;
+        if (Array.isArray(parsed)) addSubs(parsed);
       } catch(e) {}
     }
-    if (subs.length === 0 && Array.isArray(user?.subjects) && user.subjects.length > 0) {
-      subs = user.subjects;
-    }
-    if (subs.length === 0 && Array.isArray(fetchedFacultyUser?.subjects) && fetchedFacultyUser.subjects.length > 0) {
-      subs = fetchedFacultyUser.subjects;
-    }
-    return subs;
+
+    return Array.from(subMap.values());
   })();
 
   // Extract unique semester numbers strictly assigned to this faculty member THAT ALSO HAVE REGISTERED STUDENTS
@@ -2063,7 +2113,7 @@ export default function FacultyDashboard({
 
     setSelectedSemester(semStr);
     setAvailableDivisions(sortedDivs);
-    setSelectedDivision(sortedDivs.length > 0 ? '' : 'ALL');
+    setSelectedDivision('');
     setSelectedSubject('');
     setSelectedSubjectKey('');
   };
@@ -3859,7 +3909,7 @@ export default function FacultyDashboard({
           {activeTab === 'attendance_logs' && (
             <div style={styles.tabContent}>
               <SemesterAttendanceMatrix
-                semNumber={facultyAssignedSemesters.length === 1 ? facultyAssignedSemesters[0] : "ALL"}
+                semNumber={facultyAssignedSemesters.length > 0 ? facultyAssignedSemesters[0] : "1"}
                 token={token}
                 isMobile={isMobile}
                 availableSemesters={facultyAssignedSemesters}
@@ -5916,7 +5966,8 @@ export default function FacultyDashboard({
                           const displayName = isValidText(subName) ? subName : subLabel;
 
                           const subUniqueKey = subObj.id ? String(subObj.id) : `${subLabel}_${subType}_${subCode}_${subIdx}`;
-                          const isSelected = selectedSubjectKey === subUniqueKey || (selectedSubjectKey === '' && selectedSubject === subLabel);
+                          const fullSubValue = subCode ? `${subLabel} (${subCode})` : `${subLabel} (${subType})`;
+                          const isSelected = selectedSubjectKey === subUniqueKey || selectedSubject === fullSubValue || selectedSubject === subLabel;
 
                           return (
                             <button
@@ -5925,7 +5976,6 @@ export default function FacultyDashboard({
                               title={`${displayName} (${subType})`}
                               onClick={() => {
                                 setSelectedSubjectKey(subUniqueKey);
-                                const fullSubValue = subCode ? `${subLabel} (${subCode})` : `${subLabel} (${subType})`;
                                 setSelectedSubject(fullSubValue);
                               }}
                               style={{
