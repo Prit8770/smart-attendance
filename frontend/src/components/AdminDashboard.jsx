@@ -4295,7 +4295,7 @@ export default function AdminDashboard({
   const handleGetAdminLiveLocation = () => {
     setLocationMessage('');
     if (!navigator.geolocation) {
-      setLocationMessage('Geolocation is not supported by your browser.');
+      showToast('Geolocation is not supported by your browser.', 'error');
       return;
     }
     navigator.geolocation.getCurrentPosition(
@@ -4338,10 +4338,10 @@ export default function AdminDashboard({
           }
           return updated;
         });
-        setLocationMessage(`Set college location to your device GPS: Lat ${lat}, Lng ${lon}`);
+        showToast('Campus location set successfully to device GPS!', 'success');
       },
       (error) => {
-        setLocationMessage(`GPS Fetch Error: ${error.message}`);
+        showToast(`GPS Location Error: ${error.message}`, 'error');
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
@@ -4397,16 +4397,16 @@ export default function AdminDashboard({
             }
             return updated;
           });
-          setLocationMessage(`Found Location: ${display_name}`);
+          showToast(`Location set successfully: ${display_name.split(',')[0]}`, 'success');
         } else {
-          setLocationMessage('Location address not found. Please try again.');
+          showToast('Location address not found. Please try again.', 'error');
         }
       } else {
-        setLocationMessage('Failed to connect to search service.');
+        showToast('Failed to connect to location search service.', 'error');
       }
     } catch (err) {
       console.error('Geocoding error:', err);
-      setLocationMessage('Error connecting to search service.');
+      showToast('Error connecting to location search service.', 'error');
     } finally {
       setSearchLoading(false);
     }
@@ -7859,22 +7859,6 @@ export default function AdminDashboard({
             </button>
 
             <button
-              className={`admin-nav-item ${activeTab === 'otp' ? 'active' : ''}`}
-              onClick={() => { setActiveTab('otp'); setMobileSidebarOpen(false); }}
-            >
-              <QrCode size={19} />
-              <span>QR Attendance</span>
-            </button>
-
-            <button
-              className={`admin-nav-item ${activeTab === 'location' ? 'active' : ''}`}
-              onClick={() => { setActiveTab('location'); setMobileSidebarOpen(false); }}
-            >
-              <MapPin size={19} />
-              <span>College Location</span>
-            </button>
-
-            <button
               className={`admin-nav-item ${activeTab === 'leaves' ? 'active' : ''}`}
               onClick={() => { setActiveTab('leaves'); setMobileSidebarOpen(false); fetchAllLeaves(); }}
             >
@@ -7914,6 +7898,22 @@ export default function AdminDashboard({
             >
               <Download size={19} />
               <span>Reports</span>
+            </button>
+
+            <button
+              className={`admin-nav-item ${activeTab === 'otp' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('otp'); setMobileSidebarOpen(false); }}
+            >
+              <QrCode size={19} />
+              <span>QR Attendance</span>
+            </button>
+
+            <button
+              className={`admin-nav-item ${activeTab === 'location' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('location'); setMobileSidebarOpen(false); }}
+            >
+              <MapPin size={19} />
+              <span>College Location</span>
             </button>
 
             <button
@@ -8123,13 +8123,13 @@ export default function AdminDashboard({
                     className="glass-panel stat-card-v2"
                     style={{ border: '1px solid var(--panel-border)', justifyContent: 'center' }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #09355c, #0f4c81)', color: '#ffffff', width: '54px', height: '54px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(9, 53, 92, 0.3)' }}>
-                        <Users size={26} color="#ffffff" />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', width: '100%' }}>
+                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #09355c, #0f4c81)', color: '#ffffff', width: '48px', height: '48px', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(9, 53, 92, 0.3)', flexShrink: 0 }}>
+                        <Users size={24} color="#ffffff" />
                       </div>
-                      <div>
-                        <span className="stat-card-title" style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.2 }}>Total<br />Students</span>
-                        <div className="stat-card-value" style={{ fontSize: '2.2rem', fontWeight: '800', color: '#09355c', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <span className="stat-card-title" style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Total Students</span>
+                        <div className="stat-card-value" style={{ fontSize: '1.9rem', fontWeight: '800', color: '#09355c', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
                           {statsLoading ? '...' : stats.totalStudents}
                         </div>
                       </div>
@@ -8140,13 +8140,13 @@ export default function AdminDashboard({
                     className="glass-panel stat-card-v2"
                     style={{ border: '1px solid var(--panel-border)', justifyContent: 'center' }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #00a86b, #059669)', color: '#ffffff', width: '54px', height: '54px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(0, 168, 107, 0.3)' }}>
-                        <GraduationCap size={26} color="#ffffff" />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', width: '100%' }}>
+                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #00a86b, #059669)', color: '#ffffff', width: '48px', height: '48px', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(0, 168, 107, 0.3)', flexShrink: 0 }}>
+                        <GraduationCap size={24} color="#ffffff" />
                       </div>
-                      <div>
-                        <span className="stat-card-title" style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.2 }}>Faculty<br />Members</span>
-                        <div className="stat-card-value" style={{ fontSize: '2.2rem', fontWeight: '800', color: '#00a86b', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <span className="stat-card-title" style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Faculty Members</span>
+                        <div className="stat-card-value" style={{ fontSize: '1.9rem', fontWeight: '800', color: '#00a86b', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
                           {statsLoading ? '...' : (stats.totalFaculty || 0)}
                         </div>
                       </div>
@@ -8157,13 +8157,13 @@ export default function AdminDashboard({
                     className="glass-panel stat-card-v2"
                     style={{ border: '1px solid var(--panel-border)', justifyContent: 'center' }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #a855f7, #ec4899)', color: '#ffffff', width: '54px', height: '54px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(168, 85, 247, 0.3)' }}>
-                        <BookOpen size={26} color="#ffffff" />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', width: '100%' }}>
+                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #a855f7, #ec4899)', color: '#ffffff', width: '48px', height: '48px', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(168, 85, 247, 0.3)', flexShrink: 0 }}>
+                        <BookOpen size={24} color="#ffffff" />
                       </div>
-                      <div>
-                        <span className="stat-card-title" style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.2 }}>Subjects</span>
-                        <div className="stat-card-value" style={{ fontSize: '2.2rem', fontWeight: '800', color: '#9333ea', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <span className="stat-card-title" style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Subjects</span>
+                        <div className="stat-card-value" style={{ fontSize: '1.9rem', fontWeight: '800', color: '#9333ea', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
                           {allFacultySubjects.length || 0}
                         </div>
                       </div>
@@ -8174,13 +8174,13 @@ export default function AdminDashboard({
                     className="glass-panel stat-card-v2"
                     style={{ border: '1px solid var(--panel-border)', justifyContent: 'center' }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #0284c7, #0369a1)', color: '#ffffff', width: '54px', height: '54px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(2, 132, 199, 0.3)' }}>
-                        <Layers size={26} color="#ffffff" />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', width: '100%' }}>
+                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #0284c7, #0369a1)', color: '#ffffff', width: '48px', height: '48px', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(2, 132, 199, 0.3)', flexShrink: 0 }}>
+                        <Layers size={24} color="#ffffff" />
                       </div>
-                      <div>
-                        <span className="stat-card-title" style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.2 }}>Semester</span>
-                        <div className="stat-card-value" style={{ fontSize: '2.2rem', fontWeight: '800', color: '#0284c7', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <span className="stat-card-title" style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Semester</span>
+                        <div className="stat-card-value" style={{ fontSize: '1.9rem', fontWeight: '800', color: '#0284c7', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
                           {allSemestersList.length || 0}
                         </div>
                       </div>
@@ -8191,13 +8191,13 @@ export default function AdminDashboard({
                     className="glass-panel stat-card-v2"
                     style={{ border: '1px solid var(--panel-border)', justifyContent: 'center' }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #e69500, #f59e0b)', color: '#ffffff', width: '54px', height: '54px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(230, 149, 0, 0.3)' }}>
-                        <FileText size={26} color="#ffffff" />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', width: '100%' }}>
+                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #e69500, #f59e0b)', color: '#ffffff', width: '48px', height: '48px', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(230, 149, 0, 0.3)', flexShrink: 0 }}>
+                        <FileText size={24} color="#ffffff" />
                       </div>
-                      <div>
-                        <span className="stat-card-title" style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.2 }}>Leave<br />Requests</span>
-                        <div className="stat-card-value" style={{ fontSize: '2.2rem', fontWeight: '800', color: '#d97706', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <span className="stat-card-title" style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Leave Requests</span>
+                        <div className="stat-card-value" style={{ fontSize: '1.9rem', fontWeight: '800', color: '#d97706', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
                           {leavesLoading ? '...' : (allLeaves?.length || 0)}
                         </div>
                       </div>
@@ -8208,13 +8208,13 @@ export default function AdminDashboard({
                     className="glass-panel stat-card-v2"
                     style={{ border: '1px solid var(--panel-border)', justifyContent: 'center' }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #dc2626, #ef4444)', color: '#ffffff', width: '54px', height: '54px', borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(220, 38, 38, 0.3)' }}>
-                        <AlertTriangle size={26} color="#ffffff" />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', width: '100%' }}>
+                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #dc2626, #ef4444)', color: '#ffffff', width: '48px', height: '48px', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(220, 38, 38, 0.3)', flexShrink: 0 }}>
+                        <AlertTriangle size={24} color="#ffffff" />
                       </div>
-                      <div>
-                        <span className="stat-card-title" style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.2 }}>Defaulters</span>
-                        <div className="stat-card-value" style={{ fontSize: '2.2rem', fontWeight: '800', color: '#dc2626', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        <span className="stat-card-title" style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Defaulters</span>
+                        <div className="stat-card-value" style={{ fontSize: '1.9rem', fontWeight: '800', color: '#dc2626', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
                           {statsLoading ? '...' : (stats.totalDefaulters || 0)}
                         </div>
                       </div>
@@ -12791,16 +12791,6 @@ export default function AdminDashboard({
                 {/* Configuration Form */}
                 <div className="glass-panel" style={{ ...styles.dashboardPanelCard, flex: 1, minWidth: '320px' }}>
                   <h3 style={styles.cardTitle}>Location Configuration</h3>
-
-                  {locationMessage && (
-                    <div style={{
-                      ...styles.statusAlert,
-                      ...(locationMessage.toLowerCase().includes('success') || locationMessage.includes('Found') || locationMessage.includes('Set') ? styles.statusSuccess : styles.statusDanger),
-                      marginBottom: '16px'
-                    }}>
-                      {locationMessage}
-                    </div>
-                  )}
 
                   {/* 1. Geocoding Search Textbox */}
                   <form onSubmit={handleSearchAddress} style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>

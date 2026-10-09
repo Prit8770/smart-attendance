@@ -530,6 +530,15 @@ select option {
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 16px;
   margin-bottom: 30px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+@media (max-width: 1480px) {
+  .dashboard-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 14px !important;
+  }
 }
 
 /* Stats Card */
@@ -2483,14 +2492,17 @@ div[style*="cursor:pointer"],
 
 /* Stat Cards V2 (Photo 2 Layout) */
 .stat-card-v2 {
-  padding: 20px 22px;
+  padding: 18px 20px;
   border-radius: 16px;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
   gap: 12px;
   transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  min-height: 130px;
+  min-height: 120px;
+  box-sizing: border-box;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .stat-card-v2:hover {
@@ -2502,12 +2514,14 @@ div[style*="cursor:pointer"],
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+  width: 100%;
 }
 
 .stat-card-badge {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2515,18 +2529,25 @@ div[style*="cursor:pointer"],
 }
 
 .stat-card-title {
-  font-size: 0.88rem;
+  font-size: 0.85rem;
   font-weight: 600;
   color: var(--text-primary);
   letter-spacing: 0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
 }
 
 .stat-card-value {
   font-family: var(--font-display);
-  font-size: 2.1rem;
+  font-size: clamp(1.6rem, 2vw, 2.1rem);
   font-weight: 800;
   line-height: 1.1;
   color: var(--stat-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .stat-card-sub {

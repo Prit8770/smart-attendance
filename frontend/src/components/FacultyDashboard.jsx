@@ -3333,7 +3333,7 @@ export default function FacultyDashboard({
           {activeTab === 'dashboard' && (
             <div style={{ ...styles.tabContent, gap: isMobile ? '16px' : '24px' }}>
               {/* Statistics Grid */}
-              <div className="grid-4-cols" style={{ marginBottom: isMobile ? '10px' : '20px', display: 'grid', gridTemplateColumns: isMobile ? '100%' : 'repeat(4, 1fr)', gap: isMobile ? '12px' : '16px' }}>
+              <div className="grid-4-cols" style={{ marginBottom: isMobile ? '10px' : '20px', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: isMobile ? '12px' : '16px' }}>
 
                 {/* Present Today - Clickable (Styled like Photo 2) */}
                 <div
