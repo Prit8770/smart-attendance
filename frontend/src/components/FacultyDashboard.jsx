@@ -477,7 +477,7 @@ export default function FacultyDashboard({
   useEffect(() => {
     if (folderSearchDate && token) {
       setFolderDateLoading(true);
-      fetch(`/api/attendance/reports?date=${folderSearchDate}`, {
+      fetch(`/api/attendance/reports?date=${folderSearchDate}&view=faculty`, {
         headers: { Authorization: `Bearer ${token}` }
       })
         .then(res => res.json())
@@ -493,7 +493,7 @@ export default function FacultyDashboard({
   // Fetch Dashboard Statistics
   const fetchStats = async () => {
     try {
-      const res = await fetch('/api/attendance/stats', {
+      const res = await fetch('/api/attendance/stats?view=faculty', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -515,7 +515,7 @@ export default function FacultyDashboard({
   const fetchActiveSessions = async () => {
     try {
       // 1. Fetch active QR session
-      const resActiveQr = await fetch('/api/qr/active', {
+      const resActiveQr = await fetch('/api/qr/active?view=faculty', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (resActiveQr.ok) {
@@ -530,7 +530,7 @@ export default function FacultyDashboard({
       }
 
       // 2. Fetch active OTP session
-      const resActiveOtp = await fetch('/api/otp/active', {
+      const resActiveOtp = await fetch('/api/otp/active?view=faculty', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (resActiveOtp.ok) {
@@ -548,7 +548,7 @@ export default function FacultyDashboard({
       }
 
       // 3. Fetch OTP history/counts for limit check
-      const resOtpToday = await fetch('/api/otp/today', {
+      const resOtpToday = await fetch('/api/otp/today?view=faculty', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (resOtpToday.ok) {
@@ -563,7 +563,7 @@ export default function FacultyDashboard({
   // Fetch Live Logs (Monitor)
   const fetchLiveLogs = async () => {
     try {
-      const res = await fetch('/api/attendance/monitor', {
+      const res = await fetch('/api/attendance/monitor?view=faculty', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -613,7 +613,8 @@ export default function FacultyDashboard({
     }
 
     try {
-      const res = await fetch(`/api/attendance/reports${query}`, {
+      const fullQuery = `${query}${query ? '&' : '?'}view=faculty`;
+      const res = await fetch(`/api/attendance/reports${fullQuery}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -630,7 +631,7 @@ export default function FacultyDashboard({
   const fetchTodayAllAttendance = async (targetDate) => {
     try {
       const qDate = targetDate || manualDateRef.current || getLocalDateStr(new Date());
-      const res = await fetch(`/api/attendance/reports?date=${qDate}`, {
+      const res = await fetch(`/api/attendance/reports?date=${qDate}&view=faculty`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -697,8 +698,8 @@ export default function FacultyDashboard({
     try {
       const qDate = targetDate || manualDateRef.current || getLocalDateStr(new Date());
       const [qrRes, otpRes] = await Promise.all([
-        fetch(`/api/qr/today?date=${qDate}`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`/api/otp/today?date=${qDate}`, { headers: { Authorization: `Bearer ${token}` } })
+        fetch(`/api/qr/today?date=${qDate}&view=faculty`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`/api/otp/today?date=${qDate}&view=faculty`, { headers: { Authorization: `Bearer ${token}` } })
       ]);
 
       let qrSessions = [];
@@ -723,17 +724,17 @@ export default function FacultyDashboard({
 
       const filteredQr = (qrSessions || []).filter(s => {
         if (!s) return false;
-        if (myFacIds.size === 0) return true;
         const creatorId = String(s.created_by_faculty_id || s.faculty_id || '').trim();
-        if (!creatorId) return true;
+        if (!creatorId) return false;
+        if (myFacIds.size === 0) return true;
         return myFacIds.has(creatorId);
       });
 
       const filteredOtp = (otpSessions || []).filter(s => {
         if (!s) return false;
-        if (myFacIds.size === 0) return true;
         const creatorId = String(s.generated_by || s.created_by_faculty_id || s.faculty_id || '').trim();
-        if (!creatorId) return true;
+        if (!creatorId) return false;
+        if (myFacIds.size === 0) return true;
         return myFacIds.has(creatorId);
       });
 
@@ -1059,17 +1060,47 @@ export default function FacultyDashboard({
     };
   }, []);
 
-  const handleEndCurrentQrSession = async () => {
-    try {
-      await fetch('/api/qr/end', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
-      });
-    } catch (e) {}
-    setActiveQrSessionDetails(null);
-    setQrSessionTimer(0);
-    showToast('QR Session ended successfully', 'info');
-    fetchStats();
+  const handleEndCurrentQrSession = () => {
+    Swal.fire({
+      title: 'End Current Session?',
+      text: 'Are you sure you want to end this live attendance session? Students will no longer be able to mark attendance for this session.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Yes, End Session',
+      cancelButtonText: 'Cancel',
+      background: '#0f172a',
+      color: '#ffffff',
+      customClass: {
+        popup: 'swal2-custom-dark'
+      }
+    }).then(async (result) => {
+      if (result.isConfirmed) {
+        try {
+          await fetch('/api/qr/end', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${token}` }
+          });
+        } catch (e) {}
+        setActiveQrSessionDetails(null);
+        setActiveOtpDetails(null);
+        setQrSessionTimer(0);
+        setOtpCountdown(0);
+
+        Swal.fire({
+          title: 'Session Ended!',
+          text: 'The live attendance session has been ended successfully.',
+          icon: 'success',
+          timer: 2000,
+          showConfirmButton: false,
+          background: '#0f172a',
+          color: '#ffffff'
+        });
+
+        fetchStats();
+      }
+    });
   };
 
   // Timers for QR and OTP
@@ -3883,12 +3914,42 @@ export default function FacultyDashboard({
                         {activeOtpDetails.otp}
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: '500px', fontSize: '0.95rem', color: 'var(--text-primary)', fontWeight: '600' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: '500px', fontSize: '0.95rem', color: 'var(--text-primary)', fontWeight: '600', marginBottom: '12px' }}>
                         <span>OTP Expiry Remaining:</span>
                         <span style={{ color: '#f59e0b', fontFamily: 'monospace', fontSize: '1.2rem', fontWeight: '700' }}>
                           {Math.floor(otpCountdown / 60)}:{String(otpCountdown % 60).padStart(2, '0')}
                         </span>
                       </div>
+
+                      {/* End Current Session Button (Red Glass Style) */}
+                      <button
+                        type="button"
+                        onClick={handleEndCurrentQrSession}
+                        style={{
+                          width: '100%',
+                          maxWidth: '440px',
+                          padding: '13px 24px',
+                          borderRadius: '14px',
+                          border: '1.5px solid rgba(239, 68, 68, 0.45)',
+                          background: 'linear-gradient(135deg, rgba(239, 68, 68, 0.14) 0%, rgba(220, 38, 38, 0.26) 100%)',
+                          backdropFilter: 'blur(16px)',
+                          WebkitBackdropFilter: 'blur(16px)',
+                          color: '#ef4444',
+                          fontSize: '0.94rem',
+                          fontWeight: '700',
+                          letterSpacing: '0.02em',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '8px',
+                          transition: 'all 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
+                          boxShadow: '0 4px 20px -2px rgba(239, 68, 68, 0.22), inset 0 1px 1px 0 rgba(255, 255, 255, 0.35)'
+                        }}
+                      >
+                        <XCircle size={17} style={{ strokeWidth: 2.3 }} />
+                        End Current Session
+                      </button>
                     </div>
                   ) : (
                     <div style={{ textAlign: 'center', padding: '40px 10px', width: '100%' }}>
@@ -5566,7 +5627,7 @@ export default function FacultyDashboard({
                               <td colSpan={5} style={{ ...styles.noDataRow, textAlign: 'center' }}>No students found for this session class filter.</td>
                             </tr>
                           ) : filteredStudents.map(student => {
-                            const safeLogs = Array.isArray(manualTodayLogs) ? manualTodayLogs : [];
+                            const safeLogs = [...(Array.isArray(liveLogs) ? liveLogs : []), ...(Array.isArray(manualTodayLogs) ? manualTodayLogs : [])];
                             const sessionRecord = safeLogs.find(l => {
                               const matchStudent = (l.student_id && String(l.student_id) === String(student.id)) ||
                                 (l.enrollment_no && String(l.enrollment_no).trim().toLowerCase() === String(student.enrollment_no || '').trim().toLowerCase());
@@ -5598,6 +5659,19 @@ export default function FacultyDashboard({
                                     <span style={{ fontSize: '0.8rem', color: '#f87171', fontWeight: '600' }}>
                                       {manualActionMsg.text}
                                     </span>
+                                  ) : isPhone ? (
+                                    <button
+                                      disabled
+                                      style={{
+                                        padding: '6px 14px', borderRadius: '10px', fontSize: '0.8rem', fontWeight: '700',
+                                        border: '1px solid rgba(148,163,184,0.3)', background: 'rgba(148,163,184,0.12)',
+                                        color: '#94a3b8', cursor: 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: '5px',
+                                        opacity: 0.85
+                                      }}
+                                      title="Attendance marked online via QR/OTP. Status cannot be modified manually."
+                                    >
+                                      🔒 Blocked (Online)
+                                    </button>
                                   ) : isPresent ? (
                                     <button
                                       onClick={() => handleManualUnmark(student, selectedSess)}
@@ -5627,8 +5701,8 @@ export default function FacultyDashboard({
                                 </td>
                                 <td style={styles.tableTd}>
                                   {isPhone ? (
-                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', background: 'rgba(34,197,94,0.12)', color: '#4ade80', fontSize: '0.78rem', fontWeight: '700' }}>
-                                      <Smartphone size={12} /> Phone
+                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', background: 'rgba(34,197,94,0.15)', color: '#4ade80', fontSize: '0.78rem', fontWeight: '700', border: '1px solid rgba(34,197,94,0.3)' }}>
+                                      <Smartphone size={12} /> Online Present
                                     </span>
                                   ) : isManual ? (
                                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', background: 'rgba(245,158,11,0.15)', color: '#fbbf24', fontSize: '0.78rem', fontWeight: '700' }}>

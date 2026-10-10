@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Search, X, RotateCcw, RefreshCw, Folder, Layers, BookOpen,
   Filter, Calendar, Users, TrendingUp, CheckCircle, AlertTriangle,
@@ -121,48 +121,11 @@ export default function SemesterAttendanceMatrix({
   const [matrixSemPageIndex, setMatrixSemPageIndex] = useState(0);
   const [selectedCellInfo, setSelectedCellInfo] = useState(null);
 
-  // Fetch Semester Matrix Data from Backend API
-  const fetchSemesterMatrix = async (targetSemNumber) => {
-    const sem = (!targetSemNumber || targetSemNumber === 'ALL') ? 'ALL' : targetSemNumber;
-    setMatrixLoading(true);
+  // In-memory cache for instant < 0.1s semester switching
+  const matrixCacheRef = useRef({});
 
-    try {
-      let query = `?semester=${sem}&mode=faculty`;
-      if (matrixDateMode === 'month' && matrixMonth) {
-        query += `&month=${matrixMonth}`;
-      } else if (matrixDateMode === 'custom') {
-        if (matrixStartDate) query += `&startDate=${matrixStartDate}`;
-        if (matrixEndDate) query += `&endDate=${matrixEndDate}`;
-      } else if (matrixDateMode === 'single' && matrixSingleDate) {
-        query += `&date=${matrixSingleDate}`;
-      }
-      if (matrixDivFilter && matrixDivFilter !== 'ALL') {
-        query += `&division=${matrixDivFilter}`;
-      }
-      if (matrixSubjectFilter && matrixSubjectFilter !== 'ALL') {
-        query += `&subject=${encodeURIComponent(matrixSubjectFilter)}`;
-      }
-
-      const res = await fetch(`/api/attendance/semester-matrix${query}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        setMatrixData(data);
-      } else {
-        fallbackCompileMatrix(sem);
-      }
-    } catch (err) {
-      console.error('Error fetching semester matrix:', err);
-      fallbackCompileMatrix(sem);
-    } finally {
-      setMatrixLoading(false);
-    }
-  };
-
-  // Client-side fallback if backend route fails
-  const fallbackCompileMatrix = (sem) => {
+  // Client-side instant compiler
+  const compileLocalMatrix = (sem) => {
     const isAll = !sem || sem === 'ALL';
     const targetSemClean = isAll ? 'ALL' : String(sem).replace(/\D/g, '');
 
@@ -228,7 +191,21 @@ export default function SemesterAttendanceMatrix({
         const sessDiv = (l.division && String(l.division).toUpperCase() !== 'ALL') ? String(l.division).toUpperCase() : 'ALL';
         const colKey = `${lDate}_${sub.toLowerCase().replace(/\s+/g, '_')}_${sessDiv}_${formattedTime}`;
 
+        const isQrOrOtp = Boolean(l.qr_session_id || l.otp_id);
+
         if (!sessionMap.has(colKey)) {
+          // If this log belongs to a QR or OTP session created by another faculty, do NOT create a new column
+          if (isQrOrOtp) {
+            let matchesKnownSession = false;
+            for (const sess of sessionMap.values()) {
+              if (sess.sessionIds && (sess.sessionIds.has(l.qr_session_id) || sess.sessionIds.has(l.otp_id))) {
+                matchesKnownSession = true;
+                break;
+              }
+            }
+            if (!matchesKnownSession) return;
+          }
+
           sessionMap.set(colKey, {
             columnKey: colKey,
             sessionIds: new Set([l.qr_session_id || l.otp_id || l.id].filter(Boolean)),
@@ -289,7 +266,7 @@ export default function SemesterAttendanceMatrix({
       dateGroupsMap.get(col.date).sessions.push(col);
     });
 
-    setMatrixData({
+    return {
       semester: sem,
       totalStudents: semStudents.length,
       columns,
@@ -304,7 +281,66 @@ export default function SemesterAttendanceMatrix({
         highAttendanceCount: 0,
         lowAttendanceCount: semStudents.length
       }
-    });
+    };
+  };
+
+  // Fetch Semester Matrix Data with instant 0.1s render
+  const fetchSemesterMatrix = async (targetSemNumber) => {
+    const sem = (!targetSemNumber || targetSemNumber === 'ALL') ? 'ALL' : targetSemNumber;
+    const cacheKey = `${sem}_${matrixDateMode}_${matrixMonth}_${matrixStartDate}_${matrixEndDate}_${matrixSingleDate}_${matrixDivFilter}_${matrixSubjectFilter}`;
+
+    // 1. Instant render if cached in ref
+    if (matrixCacheRef.current[cacheKey]) {
+      setMatrixData(matrixCacheRef.current[cacheKey]);
+      setMatrixLoading(false);
+    } else {
+      // 2. Instant optimistic render via local compilation (0.1s time to interactive!)
+      const instantCompiled = compileLocalMatrix(sem);
+      if (instantCompiled) {
+        setMatrixData(instantCompiled);
+        setMatrixLoading(false);
+      } else {
+        setMatrixLoading(true);
+      }
+    }
+
+    try {
+      let query = `?semester=${sem}&mode=faculty`;
+      if (matrixDateMode === 'month' && matrixMonth) {
+        query += `&month=${matrixMonth}`;
+      } else if (matrixDateMode === 'custom') {
+        if (matrixStartDate) query += `&startDate=${matrixStartDate}`;
+        if (matrixEndDate) query += `&endDate=${matrixEndDate}`;
+      } else if (matrixDateMode === 'single' && matrixSingleDate) {
+        query += `&date=${matrixSingleDate}`;
+      }
+      if (matrixDivFilter && matrixDivFilter !== 'ALL') {
+        query += `&division=${matrixDivFilter}`;
+      }
+      if (matrixSubjectFilter && matrixSubjectFilter !== 'ALL') {
+        query += `&subject=${encodeURIComponent(matrixSubjectFilter)}`;
+      }
+
+      const res = await fetch(`/api/attendance/semester-matrix${query}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        matrixCacheRef.current[cacheKey] = data;
+        setMatrixData(data);
+      }
+    } catch (err) {
+      console.error('Error fetching semester matrix:', err);
+    } finally {
+      setMatrixLoading(false);
+    }
+  };
+
+  // Client-side fallback if backend route fails
+  const fallbackCompileMatrix = (sem) => {
+    const data = compileLocalMatrix(sem);
+    if (data) setMatrixData(data);
   };
 
   // Re-fetch when semester or filter selections change

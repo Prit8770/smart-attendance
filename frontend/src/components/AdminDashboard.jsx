@@ -6888,7 +6888,7 @@ export default function AdminDashboard({
 
   // Download Subject Excel Sample Template (Headers only)
   const handleDownloadSubjectSampleTemplate = () => {
-    const headers = [['Subject Name', 'Short Name', 'Subject Code', 'Semester', 'Type', 'Faculty Email']];
+    const headers = [['Subject Name', 'Short Name', 'Subject Code', 'Semester', 'Type']];
     const worksheet = XLSX.utils.aoa_to_sheet(headers);
     const workbook = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Subject Sample');
@@ -8170,22 +8170,7 @@ export default function AdminDashboard({
                     </div>
                   </div>
 
-                  <div
-                    className="glass-panel stat-card-v2"
-                    style={{ border: '1px solid var(--panel-border)', justifyContent: 'center' }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '14px', width: '100%' }}>
-                      <div className="stat-card-badge" style={{ background: 'linear-gradient(135deg, #0284c7, #0369a1)', color: '#ffffff', width: '48px', height: '48px', borderRadius: '14px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(2, 132, 199, 0.3)', flexShrink: 0 }}>
-                        <Layers size={24} color="#ffffff" />
-                      </div>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <span className="stat-card-title" style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: '600', display: 'block', marginBottom: '2px', lineHeight: 1.25, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Semester</span>
-                        <div className="stat-card-value" style={{ fontSize: '1.9rem', fontWeight: '800', color: '#0284c7', margin: 0, lineHeight: 1, letterSpacing: '-0.02em', fontFamily: "'Inter', system-ui, -apple-system, sans-serif" }}>
-                          {allSemestersList.length || 0}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+
 
                   <div
                     className="glass-panel stat-card-v2"

@@ -133,13 +133,9 @@ async function resolveValidFacultyId(user) {
     const { data: byUser } = await supabase.from('faculty').select('id').eq('username', username).maybeSingle();
     if (byUser && byUser.id) return byUser.id;
   }
-  // 4. If admin, check admin@ljcca.edu in faculty table
-  const { data: adminFac } = await supabase.from('faculty').select('id').eq('email', 'admin@ljcca.edu').maybeSingle();
-  if (adminFac && adminFac.id) return adminFac.id;
 
-  // 5. Fallback: get any first faculty member ID
-  const { data: firstFac } = await supabase.from('faculty').select('id').limit(1).maybeSingle();
-  return firstFac ? firstFac.id : null;
+  // 4. Return per-user ID to ensure each faculty has an isolated session count
+  return user.faculty_id || user.id || null;
 }
 
 // POST start new QR session (Faculty only)
@@ -159,12 +155,14 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
       return res.status(400).json({ error: 'No valid faculty account found to associate with this QR session.' });
     }
 
-    // 2. Get daily limit from settings, then check if this faculty has reached it today
+    // 2. Get daily limit from settings, then check if THIS SPECIFIC faculty has reached it today
     const { data: limitSetting } = await supabase.from('settings').select('value').eq('key', 'qr_daily_limit').maybeSingle();
     const dailyLimit = limitSetting ? (parseInt(limitSetting.value) || 5) : 5;
 
+    const facIdsToMatch = Array.from(new Set([facultyId, req.user.faculty_id, req.user.id].filter(Boolean)));
+
     const { count } = await supabase.from('qr_sessions').select('*', { count: 'exact', head: true })
-      .eq('created_by_faculty_id', facultyId)
+      .in('created_by_faculty_id', facIdsToMatch)
       .eq('date', today);
 
     if (count !== null && count >= dailyLimit) {
@@ -331,7 +329,7 @@ router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) =>
       .select('*')
       .eq('date', today)
       .order('id', { ascending: false });
-    if (req.query.all !== 'true') {
+    if (req.query.all !== 'true' || req.query.view === 'faculty') {
       const activeFacId = req.user.faculty_id || req.user.id;
       const resolvedFacId = await resolveValidFacultyId(req.user);
       const facIdSet = new Set([String(req.user.id), String(activeFacId), String(resolvedFacId)].filter(Boolean));

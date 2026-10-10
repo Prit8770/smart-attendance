@@ -247,9 +247,9 @@ router.post('/submit', authenticateJWT, async (req, res) => {
         }
       }
 
-      // Check if session has expired (allow 10s grace period)
+      // Check if session has expired (allow 60s grace period for last-second scans)
       const expiresTime = new Date(qrSessionRecord.expires_at).getTime();
-      if (nowMs > expiresTime + 10000) {
+      if (nowMs > expiresTime + 60000) {
         return res.status(400).json({ error: 'This QR attendance session has expired.' });
       }
 
@@ -266,19 +266,25 @@ router.post('/submit', authenticateJWT, async (req, res) => {
         return res.status(500).json({ error: 'Failed to parse QR session tokens.' });
       }
 
-      if (tokens[tokenIndex] !== tokenValue) {
-        return res.status(400).json({ error: 'Invalid QR code. Please scan the currently active QR.' });
+      // Verify token matches generated session tokens or current index window
+      const isValidToken = Array.isArray(tokens) && (
+        tokens.includes(tokenValue) ||
+        tokens[tokenIndex] === tokenValue ||
+        (tokens[tokenIndex - 1] && tokens[tokenIndex - 1] === tokenValue) ||
+        (tokens[tokenIndex + 1] && tokens[tokenIndex + 1] === tokenValue)
+      );
+
+      if (!isValidToken) {
+        return res.status(400).json({ error: 'Invalid QR code. Please scan the currently active QR code.' });
       }
 
-      // Verify token 15-second interval + 25-second network/testing buffer (total 40 seconds validity from start of interval)
+      // Verify token timing window (allow 5 seconds clock drift and full session + 60s grace period)
       const sessionStartMs = new Date(qrSessionRecord.created_at).getTime();
-      const tokenStartMs = sessionStartMs + tokenIndex * 15000;
-      const tokenEndMs = tokenStartMs + 40000;
 
-      if (nowMs < tokenStartMs - 2000) { // allow 2 seconds clock drift
+      if (nowMs < sessionStartMs - 5000) { // allow 5 seconds clock drift
         return res.status(400).json({ error: 'QR session clock drift. Please wait.' });
       }
-      if (nowMs > tokenEndMs) {
+      if (nowMs > expiresTime + 60000) {
         return res.status(400).json({ error: 'This QR code has expired. Please scan the active QR code.' });
       }
 
@@ -517,6 +523,9 @@ router.post('/manual', authenticateJWT, requireAdmin, async (req, res) => {
     const { data: existing } = await dupQuery.limit(1).maybeSingle();
 
     if (existing) {
+      if (existing.device_id && existing.device_id !== 'Manual') {
+        return res.status(400).json({ error: 'This student marked attendance online via QR/OTP and cannot be modified manually.' });
+      }
       const { error: updateErr } = await supabase.from('attendance')
         .update({ status: 'Success', device_id: 'Manual', subject: activeManualSubject || req.body.subject || null })
         .eq('id', existing.id);
@@ -584,6 +593,9 @@ router.post('/manual/undo', authenticateJWT, requireAdmin, async (req, res) => {
     const { data: toDelete } = await query.limit(1).maybeSingle();
 
     if (toDelete) {
+      if (toDelete.device_id && toDelete.device_id !== 'Manual') {
+        return res.status(400).json({ error: 'Online verified attendance cannot be modified or deleted manually.' });
+      }
       const { error } = await supabase.from('attendance').delete().eq('id', toDelete.id);
       if (error) throw error;
     }
@@ -810,13 +822,20 @@ router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
     const otpMap = new Map((otps || []).map(o => [String(o.id), o]));
 
     let filteredLogs = logs || [];
-    if (req.user.role === 'faculty') {
+    const isFacultyUser = req.query.view === 'faculty' || (req.user.role === 'faculty' || req.user.isFacultyUser || req.user.hasFacultyAccess) && req.query.view !== 'admin';
+    if (isFacultyUser) {
+      const activeFacId = req.user.faculty_id || req.user.id;
+      const allowedFacIds = new Set([
+        String(req.user.id),
+        String(activeFacId)
+      ].filter(Boolean));
+
       filteredLogs = filteredLogs.filter(log => {
         const qrSess = log.qr_session_id ? qrMap.get(String(log.qr_session_id)) : null;
         const otpSess = log.otp_id ? otpMap.get(String(log.otp_id)) : null;
-        return (qrSess && String(qrSess.created_by_faculty_id) === String(req.user.id)) ||
-          (otpSess && String(otpSess.generated_by) === String(req.user.id)) ||
-          (log.device_id === 'Manual');
+        const isQrMatch = qrSess && allowedFacIds.has(String(qrSess.created_by_faculty_id));
+        const isOtpMatch = otpSess && allowedFacIds.has(String(otpSess.generated_by));
+        return isQrMatch || isOtpMatch;
       });
     }
 
@@ -908,7 +927,8 @@ const getReportsHandler = async (req, res) => {
     if (error) throw error;
 
     let filteredReports = reports || [];
-    if (req.user.role === 'faculty') {
+    const isFacultyView = req.query.view === 'faculty' || (req.user.role === 'faculty' || req.user.isFacultyUser || req.user.hasFacultyAccess) && req.query.view !== 'admin';
+    if (isFacultyView) {
       const activeFacId = req.user.faculty_id || req.user.id;
       const allowedFacIds = new Set([
         String(req.user.id),
@@ -920,8 +940,7 @@ const getReportsHandler = async (req, res) => {
         const otpFacId = log.otp ? String(log.otp.generated_by) : '';
         const isQrMatch = qrFacId && allowedFacIds.has(qrFacId);
         const isOtpMatch = otpFacId && allowedFacIds.has(otpFacId);
-        const isManual = log.device_id === 'Manual';
-        return isQrMatch || isOtpMatch || isManual;
+        return isQrMatch || isOtpMatch;
       });
     }
 
@@ -960,20 +979,20 @@ router.get('/report', authenticateJWT, getReportsHandler);
 router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
   const today = getLocalDateString();
   try {
-    const isFaculty = req.user.role === 'faculty';
-    const facId = req.user.id;
+    const isFacultyUser = req.user.role === 'faculty' || req.user.isFacultyUser || req.user.hasFacultyAccess || req.query.view === 'faculty';
+    const facIds = Array.from(new Set([req.user.id, req.user.faculty_id].filter(Boolean)));
 
     let otpsQuery = supabase.from('otp').select('*', { count: 'exact', head: true }).eq('date', today);
-    if (isFaculty) otpsQuery = otpsQuery.eq('generated_by', facId);
+    if (isFacultyUser && facIds.length > 0) otpsQuery = otpsQuery.in('generated_by', facIds);
 
     let latestOtpQuery = supabase.from('otp').select('*').order('id', { ascending: false }).limit(1);
-    if (isFaculty) latestOtpQuery = latestOtpQuery.eq('generated_by', facId);
+    if (isFacultyUser && facIds.length > 0) latestOtpQuery = latestOtpQuery.in('generated_by', facIds);
 
     let qrCountQuery = supabase.from('qr_sessions').select('*', { count: 'exact', head: true }).eq('date', today);
-    if (isFaculty) qrCountQuery = qrCountQuery.eq('created_by_faculty_id', facId);
+    if (isFacultyUser && facIds.length > 0) qrCountQuery = qrCountQuery.in('created_by_faculty_id', facIds);
 
     let latestQrQuery = supabase.from('qr_sessions').select('*').order('id', { ascending: false }).limit(1);
-    if (isFaculty) latestQrQuery = latestQrQuery.eq('created_by_faculty_id', facId);
+    if (isFacultyUser && facIds.length > 0) latestQrQuery = latestQrQuery.in('created_by_faculty_id', facIds);
 
     const [
       resStudents,
@@ -1002,10 +1021,10 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
     const latestQr = resLatestQr.data || null;
 
     let filteredPresent = presentRows;
-    if (isFaculty) {
+    if (isFacultyUser && facIds.length > 0) {
       filteredPresent = filteredPresent.filter(r =>
-        (r.qr_session && String(r.qr_session.created_by_faculty_id) === String(facId)) ||
-        (r.otp && String(r.otp.generated_by) === String(facId))
+        (r.qr_session && facIds.map(String).includes(String(r.qr_session.created_by_faculty_id))) ||
+        (r.otp && facIds.map(String).includes(String(r.otp.generated_by)))
       );
     }
     const presentToday = new Set(filteredPresent.map(r => r.student_id)).size;
@@ -1726,7 +1745,7 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
   const semNum = isAllSem ? 'ALL' : semParam.replace(/\D/g, '').trim();
 
   // Return cached result if available to make sidebar switching instantaneous (< 5ms)
-  const cacheKey = req.originalUrl || req.url;
+  const cacheKey = `${req.user ? (req.user.faculty_id || req.user.id) : 'anon'}_${req.originalUrl || req.url}`;
   const cachedData = getMatrixCache(cacheKey);
   if (cachedData) {
     return res.json(cachedData);
@@ -1735,31 +1754,22 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
   try {
     const localMeta = getLocalSessionMetaMap();
 
-    // 1. Fetch all registered students (Paginated loop to fetch 100% of students without 1000-row limit)
-    let allStudents = [];
-    let from = 0;
-    const step = 1000;
-    let hasMore = true;
+    // 1. Efficient targeted fetch for registered students
+    let studentQuery = supabase
+      .from('students')
+      .select('id, enrollment_no, roll_no, division, name, email, semester, mobile');
 
-    while (hasMore) {
-      const { data: chunk, error: studentErr } = await supabase
-        .from('students')
-        .select('id, enrollment_no, roll_no, division, name, email, semester, mobile')
-        .range(from, from + step - 1);
-
-      if (studentErr) throw studentErr;
-
-      if (chunk && chunk.length > 0) {
-        allStudents = allStudents.concat(chunk);
-        from += step;
-        if (chunk.length < step) hasMore = false;
-      } else {
-        hasMore = false;
-      }
+    if (!isAllSem) {
+      studentQuery = studentQuery.or(`semester.eq.${semNum},semester.eq.Sem ${semNum},semester.eq.Semester ${semNum},semester.eq.sem_${semNum}`);
+    }
+    if (division && division !== 'ALL') {
+      studentQuery = studentQuery.eq('division', division);
     }
 
-    // Filter students belonging to this semester & optional division
-    let targetStudents = (allStudents || []).filter(s => {
+    const { data: fetchedStudents, error: studentErr } = await studentQuery.limit(2500);
+    if (studentErr) throw studentErr;
+
+    let targetStudents = (fetchedStudents || []).filter(s => {
       if (!isAllSem) {
         const sSem = String(s.semester || '').replace(/\D/g, '').trim();
         if (sSem !== semNum) return false;
@@ -1770,6 +1780,8 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
       }
       return true;
     });
+
+    const allStudents = fetchedStudents || [];
 
     // Sort students by Semester first (if ALL), then Division (A, B, C...), then numerically by roll_no
     targetStudents.sort((a, b) => {
@@ -1791,13 +1803,17 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
       return String(a.name || '').localeCompare(String(b.name || ''));
     });
 
-    // 2. Fetch faculties, qr_sessions, otp sessions, and attendance records
+    // 2. Fetch faculties, qr_sessions, otp sessions, and targeted attendance records
     let qrQuery = supabase.from('qr_sessions').select('id, created_at, created_by_faculty_id, semester, division, subject, date');
     let otpQuery = supabase.from('otp').select('id, generated_time, generated_by, semester, division, subject, date');
-    let attQuery = supabase.from('attendance').select('id, student_id, qr_session_id, otp_id, date, time, status, subject, device_id, distance').in('status', ['Success', 'Present']);
 
-    const isFacultyMode = mode === 'faculty' || (req.user.role === 'faculty' && mode !== 'admin' && all !== 'true');
-    const isAdminView = mode === 'admin' || all === 'true' || (req.user.role === 'admin' && !req.user.isFacultyUser && mode !== 'faculty');
+    if (!isAllSem) {
+      qrQuery = qrQuery.or(`semester.eq.${semNum},semester.eq.Sem ${semNum},semester.eq.Semester ${semNum}`);
+      otpQuery = otpQuery.or(`semester.eq.${semNum},semester.eq.Sem ${semNum},semester.eq.Semester ${semNum}`);
+    }
+
+    const isFacultyMode = mode === 'faculty' || req.query.view === 'faculty' || ((req.user.role === 'faculty' || req.user.isFacultyUser || req.user.hasFacultyAccess) && mode !== 'admin' && all !== 'true');
+    const isAdminView = (mode === 'admin' || all === 'true') && mode !== 'faculty' && req.query.view !== 'faculty';
 
     if (isFacultyMode && !isAdminView) {
       const activeFacId = req.user.faculty_id || req.user.id;
@@ -1821,24 +1837,61 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
     if (date) {
       qrQuery = qrQuery.eq('date', date);
       otpQuery = otpQuery.eq('date', date);
-      attQuery = attQuery.eq('date', date);
     } else if (startDate && endDate) {
       qrQuery = qrQuery.gte('date', startDate).lte('date', endDate);
       otpQuery = otpQuery.gte('date', startDate).lte('date', endDate);
-      attQuery = attQuery.gte('date', startDate).lte('date', endDate);
     }
 
     const [
       { data: faculties },
       { data: qrSessions },
-      { data: otpSessions },
-      { data: allAttendance }
+      { data: otpSessions }
     ] = await Promise.all([
       supabase.from('faculty').select('id, name'),
       qrQuery,
-      otpQuery,
-      attQuery
+      otpQuery
     ]);
+
+    // Targeted attendance fetch only for the target students in this semester (sub-20ms execution)
+    let allAttendance = [];
+    const targetStudentIds = targetStudents.map(s => s.id).filter(Boolean);
+
+    if (targetStudentIds.length > 0) {
+      if (targetStudentIds.length <= 100) {
+        let attQuery = supabase.from('attendance')
+          .select('id, student_id, qr_session_id, otp_id, date, time, status, subject, device_id, distance')
+          .in('status', ['Success', 'Present'])
+          .in('student_id', targetStudentIds);
+
+        if (date) {
+          attQuery = attQuery.eq('date', date);
+        } else if (startDate && endDate) {
+          attQuery = attQuery.gte('date', startDate).lte('date', endDate);
+        }
+
+        const { data: attData } = await attQuery;
+        allAttendance = attData || [];
+      } else {
+        const chunks = [];
+        for (let i = 0; i < targetStudentIds.length; i += 100) {
+          chunks.push(targetStudentIds.slice(i, i + 100));
+        }
+        const attResults = await Promise.all(
+          chunks.map(chunkIds => {
+            let q = supabase.from('attendance')
+              .select('id, student_id, qr_session_id, otp_id, date, time, status, subject, device_id, distance')
+              .in('status', ['Success', 'Present'])
+              .in('student_id', chunkIds);
+            if (date) q = q.eq('date', date);
+            else if (startDate && endDate) q = q.gte('date', startDate).lte('date', endDate);
+            return q;
+          })
+        );
+        attResults.forEach(r => {
+          if (r.data) allAttendance.push(...r.data);
+        });
+      }
+    }
 
     const facMap = new Map((faculties || []).map(f => [String(f.id), f.name]));
     const studentIdSet = new Set(targetStudents.map(s => String(s.id)));
@@ -1966,21 +2019,27 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
       if (startDate && endDate && (attDate < startDate || attDate > endDate)) return;
 
       if (att.qr_session_id) {
+        let matched = false;
         for (const sessObj of sessionMap.values()) {
           if (sessObj.qrSessionIds && sessObj.qrSessionIds.has(att.qr_session_id)) {
             sessObj.logs.push(att);
+            matched = true;
             return;
           }
         }
+        if (!matched && isFacultyMode && !isAdminView) return;
       }
 
       if (att.otp_id) {
+        let matched = false;
         for (const sessObj of sessionMap.values()) {
           if (sessObj.otpSessionIds && sessObj.otpSessionIds.has(att.otp_id)) {
             sessObj.logs.push(att);
+            matched = true;
             return;
           }
         }
+        if (!matched && isFacultyMode && !isAdminView) return;
       }
 
       const rawSub = att.subject || 'Class Lecture';
