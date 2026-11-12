@@ -120,11 +120,13 @@ export default function FacultyDashboard({
   const [tokenIndex, setTokenIndex] = useState(0);
   const [qrCodeTimer, setQrCodeTimer] = useState(15);
   const qrCanvasRef = useRef(null);
+  const qrDashboardCanvasRef = useRef(null);
   const [otpRemaining, setOtpRemaining] = useState(5);
   const [activeOtpDetails, setActiveOtpDetails] = useState(null);
   const [otpCountdown, setOtpCountdown] = useState(0);
   const [qrGenerationEnabled, setQrGenerationEnabled] = useState(true);
   const [qrDailyLimit, setQrDailyLimit] = useState(5);
+  const [qrCodeTime, setQrCodeTime] = useState(10);
   const [dashModalSem, setDashModalSem] = useState('');
   const [liveFeedSemFilter, setLiveFeedSemFilter] = useState('');
   const [selectedSemFolder, setSelectedSemFolder] = useState(null);
@@ -288,9 +290,10 @@ export default function FacultyDashboard({
 
   const fetchQrSettings = async () => {
     try {
-      const [resSettings, resLimit] = await Promise.all([
+      const [resSettings, resLimit, resTime] = await Promise.all([
         fetch('/api/qr/settings', { headers: { Authorization: `Bearer ${token}` } }),
-        fetch('/api/qr/limit', { headers: { Authorization: `Bearer ${token}` } })
+        fetch('/api/qr/limit', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/qr/time', { headers: { Authorization: `Bearer ${token}` } })
       ]);
       if (resSettings.ok) {
         const data = await resSettings.json();
@@ -299,6 +302,10 @@ export default function FacultyDashboard({
       if (resLimit.ok) {
         const data = await resLimit.json();
         setQrDailyLimit(data.limit || 5);
+      }
+      if (resTime && resTime.ok) {
+        const data = await resTime.json();
+        setQrCodeTime(data.time || 10);
       }
     } catch (err) {
       console.error('Error fetching QR settings:', err);
@@ -460,6 +467,13 @@ export default function FacultyDashboard({
     return user;
   })();
 
+  // Derived QR sessions count for logged-in faculty today (accurate & cross-referenced)
+  const qrSessionsRunCount = Math.max(
+    typeof stats?.qrSessionsGenerated === 'number' ? stats.qrSessionsGenerated : 0,
+    (facultySessionsToday || []).filter(s => s && (s.type === 'QR' || !s.type)).length
+  );
+  const remainingQrSessions = Math.max(0, (qrDailyLimit || 5) - qrSessionsRunCount);
+
   // Synchronize profile form state with active faculty user
   useEffect(() => {
     const targetUser = activeUser || user;
@@ -499,6 +513,9 @@ export default function FacultyDashboard({
       if (res.ok) {
         const data = await res.json();
         setStats(data);
+        if (data && data.qrDailyLimit) {
+          setQrDailyLimit(data.qrDailyLimit);
+        }
         try {
           sessionStorage.setItem('cached_faculty_stats', JSON.stringify(data));
           localStorage.setItem('cached_faculty_stats', JSON.stringify(data));
@@ -510,6 +527,15 @@ export default function FacultyDashboard({
       setStatsLoading(false);
     }
   };
+
+  // Re-fetch dashboard stats and today's sessions whenever switching to the dashboard tab
+  useEffect(() => {
+    if (activeTab === 'dashboard' && token) {
+      fetchStats();
+      fetchTodaySessions();
+      fetchActiveSessions();
+    }
+  }, [activeTab]);
 
   // Fetch active QR session & OTP
   const fetchActiveSessions = async () => {
@@ -610,6 +636,12 @@ export default function FacultyDashboard({
       query = `?startDate=${startOfMonth}&endDate=${todayStr}`;
     } else if (reportType === 'student_wise') {
       query = `?studentId=${reportStudentId}`;
+    } else if (reportType === 'subject_date_wise' || reportType === 'semester_date_wise') {
+      if (reportStartDate && reportEndDate) {
+        query = `?startDate=${reportStartDate}&endDate=${reportEndDate}`;
+      } else if (reportStartDate) {
+        query = `?date=${reportStartDate}`;
+      }
     }
 
     try {
@@ -722,8 +754,11 @@ export default function FacultyDashboard({
         fetchedFacultyUser?.faculty_id
       ].map(id => String(id || '').trim()).filter(Boolean));
 
+      const isAdmin = activeUser?.role === 'admin' || activeUser?.hasAdminAccess || user?.role === 'admin' || user?.hasAdminAccess;
+
       const filteredQr = (qrSessions || []).filter(s => {
         if (!s) return false;
+        if (isAdmin) return true;
         const creatorId = String(s.created_by_faculty_id || s.faculty_id || '').trim();
         if (!creatorId) return false;
         if (myFacIds.size === 0) return true;
@@ -732,6 +767,7 @@ export default function FacultyDashboard({
 
       const filteredOtp = (otpSessions || []).filter(s => {
         if (!s) return false;
+        if (isAdmin) return true;
         const creatorId = String(s.generated_by || s.created_by_faculty_id || s.faculty_id || '').trim();
         if (!creatorId) return false;
         if (myFacIds.size === 0) return true;
@@ -980,15 +1016,16 @@ export default function FacultyDashboard({
     if (!isSessionActive && activeTab === 'attendance_logs') {
       return;
     }
-    const intervalTime = isSessionActive ? 3000 : 30000;
+    const intervalTime = (isSessionActive || activeTab === 'manual') ? 2500 : 30000;
 
     const interval = setInterval(() => {
       fetchMyProfile();
       fetchTodaySessions(manualDateRef.current);
       fetchStats();
       fetchQrSettings();
-      if (isSessionActive) {
+      if (isSessionActive || activeTab === 'manual') {
         fetchLiveLogs();
+        fetchTodayAllAttendance(manualDateRef.current);
       }
     }, intervalTime);
 
@@ -1115,7 +1152,7 @@ export default function FacultyDashboard({
             return 0;
           }
           const totalTokens = activeQrSessionDetails?.tokens?.length || 20;
-          const ROTATE_INTERVAL = 6;
+          const ROTATE_INTERVAL = activeQrSessionDetails?.qr_time || qrCodeTime || 10;
           const elapsed = 120 - (prev - 1);
           const idx = Math.min(totalTokens - 1, Math.floor(elapsed / ROTATE_INTERVAL));
           setTokenIndex(idx);
@@ -1125,7 +1162,7 @@ export default function FacultyDashboard({
       }, 1000);
     }
     return () => clearInterval(qrTimerInterval);
-  }, [activeQrSessionDetails, qrSessionTimer]);
+  }, [activeQrSessionDetails, qrSessionTimer, qrCodeTime]);
 
   useEffect(() => {
     let otpTimerInterval;
@@ -1162,13 +1199,20 @@ export default function FacultyDashboard({
 
   useEffect(() => {
     if (!activeQrSessionDetails) return;
-    // requestAnimationFrame se wait karo taaki canvas DOM mein mount ho jaye
-    const frame = requestAnimationFrame(() => {
-      if (qrCanvasRef.current) {
-        renderQrToCanvas(qrCanvasRef.current);
-      }
-    });
-    return () => cancelAnimationFrame(frame);
+    const renderAll = () => {
+      const canvases = document.querySelectorAll('canvas.faculty-qr-canvas');
+      canvases.forEach(c => renderQrToCanvas(c));
+      if (qrCanvasRef.current) renderQrToCanvas(qrCanvasRef.current);
+      if (qrDashboardCanvasRef.current) renderQrToCanvas(qrDashboardCanvasRef.current);
+    };
+
+    renderAll();
+    const frame = requestAnimationFrame(renderAll);
+    const timer = setTimeout(renderAll, 120);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
   }, [activeQrSessionDetails, tokenIndex, activeTab, dashModal]);
 
   const [selectedSubject, setSelectedSubject] = useState('');
@@ -1545,91 +1589,155 @@ export default function FacultyDashboard({
       return s.trim();
     };
 
-    const getSemNum = (val) => {
-      if (!val) return '';
-      return String(val).replace(/\D/g, '').trim();
+    const cleanSubTitle = (sub) => {
+      if (!sub) return 'Subject';
+      let s = String(sub).trim();
+      s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+      s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+      s = s.replace(/\s*\(\s*\)/g, '').replace(/\s*\[\s*\]/g, '').trim();
+      return s || String(sub).trim() || 'Subject';
     };
 
-    const allSystemLogs = [...(dateLogs || []), ...(reportData || [])];
+    const allSystemLogs = [...(dateLogs || []), ...(reportData || []), ...(liveLogs || []), ...(manualTodayLogs || [])];
 
-    const sessionCols = [];
+    // Build unique sessions list from conducted sessions + reports logs
+    const sessionMap = new Map();
 
-    dates.forEach(dStr => {
-      const conductedForDate = (dateLogs || []).filter(s => {
-        if (!s) return false;
-        if (normDateStr(s.date || s.created_at) !== dStr) return false;
-        if (targetSem) {
-          const sSem = getSemNum(s.semester || '1');
-          if (sSem && sSem !== targetSem) return false;
-        }
-        if (targetSubName) {
-          const sName = (s.subject_name || s.subject || '').trim().toLowerCase();
-          if (sName && sName !== targetSubName) return false;
-        }
-        return true;
-      });
+    (facultySessionsToday || []).forEach(sess => {
+      if (!sess) return;
+      const sDate = normDateStr(sess.date || sess.created_at);
+      const qId = sess.qr_session_id || (String(sess.id).startsWith('qr_') ? String(sess.id).replace('qr_', '') : null);
+      const oId = sess.otp_id || (String(sess.id).startsWith('otp_') ? String(sess.id).replace('otp_', '') : null);
+      const sId = qId ? `qr_${qId}` : (oId ? `otp_${oId}` : (sess.id || `sess_${sDate}_${sessionMap.size}`));
 
-      let finalSesses = [...conductedForDate];
-      if (finalSesses.length === 0) {
-        const dateLogsSub = (allSystemLogs || []).filter(l => {
-          if (!l) return false;
-          if (normDateStr(l.date || l.created_at) !== dStr) return false;
-          if (targetSem) {
-            const lSem = getSemNum(l.semester);
-            if (lSem && lSem !== targetSem) return false;
-          }
-          if (targetSubName) {
-            const lSub = (l.subject || '').trim().toLowerCase();
-            if (lSub && lSub !== targetSubName) return false;
-          }
-          return true;
+      if (!sessionMap.has(sId)) {
+        sessionMap.set(sId, {
+          id: sId,
+          qr_session_id: qId ? String(qId) : null,
+          otp_id: oId ? String(oId) : null,
+          date: sDate,
+          created_at: sess.created_at || (sess.date ? `${sess.date}T${sess.time || '00:00:00'}` : null),
+          semester: sess.semester,
+          division: sess.division || 'ALL',
+          subject: sess.subject,
+          time: sess.time
         });
+      }
+    });
 
-        const sessGroupMap = new Map();
-        dateLogsSub.forEach(l => {
-          const key = l.qr_session_id ? `qr_${l.qr_session_id}` : l.otp_id ? `otp_${l.otp_id}` : (l.subject || 'default');
-          if (!sessGroupMap.has(key)) {
-            sessGroupMap.set(key, {
-              id: key,
-              date: dStr,
-              semester: l.semester || targetSem || '1',
-              division: l.division || 'ALL',
-              subject: l.subject || targetSubName || 'Subject'
-            });
+    allSystemLogs.forEach(l => {
+      if (!l) return;
+      const sDate = normDateStr(l.date || l.created_at);
+      const qId = l.qr_session_id ? String(l.qr_session_id) : null;
+      const oId = l.otp_id ? String(l.otp_id) : null;
+      const sId = qId ? `qr_${qId}` : (oId ? `otp_${oId}` : (l.session_id ? `sess_${l.session_id}` : null));
+
+      if (sId) {
+        if (!sessionMap.has(sId)) {
+          sessionMap.set(sId, {
+            id: sId,
+            qr_session_id: qId,
+            otp_id: oId,
+            date: sDate,
+            created_at: l.created_at || (l.date && l.time ? `${l.date}T${l.time}` : null) || sDate,
+            semester: l.semester || l.session_semester,
+            division: l.division || l.session_division || 'ALL',
+            subject: l.subject,
+            time: l.time
+          });
+        } else {
+          const existing = sessionMap.get(sId);
+          if ((!existing.subject || existing.subject === 'Subject') && l.subject) {
+            existing.subject = l.subject;
           }
-        });
-        if (sessGroupMap.size > 0) {
-          finalSesses = Array.from(sessGroupMap.values());
+          if ((!existing.division || existing.division === 'ALL') && (l.division || l.session_division)) {
+            existing.division = l.division || l.session_division;
+          }
+          if (!existing.semester && (l.semester || l.session_semester)) {
+            existing.semester = l.semester || l.session_semester;
+          }
+          if (!existing.created_at && (l.created_at || l.time)) {
+            existing.created_at = l.created_at || `${sDate}T${l.time}`;
+          }
+        }
+      } else if (l.device_id === 'Manual') {
+        const manKey = `manual_${sDate}_${cleanSubTitle(l.subject || 'class').replace(/\s+/g, '_')}_${(l.time || '00').replace(/:/g, '')}_${l.id}`;
+        if (!sessionMap.has(manKey)) {
+          sessionMap.set(manKey, {
+            id: manKey,
+            qr_session_id: null,
+            otp_id: null,
+            date: sDate,
+            created_at: l.created_at || (l.date && l.time ? `${l.date}T${l.time}` : null) || sDate,
+            semester: l.semester,
+            division: l.division || 'ALL',
+            subject: l.subject,
+            time: l.time
+          });
         }
       }
+    });
 
-      if (finalSesses.length === 0) return;
+    const activeSessions = Array.from(sessionMap.values()).filter(sess => {
+      if (!sess) return false;
+      if (!dates.includes(sess.date)) return false;
+      if (targetSem) {
+        const sSem = String(sess.semester || '').replace(/\D/g, '').trim();
+        if (sSem && sSem !== targetSem) return false;
+      }
+      if (targetDiv) {
+        const sDiv = String(sess.division || 'ALL').trim().toUpperCase();
+        if (sDiv !== 'ALL' && sDiv !== targetDiv) return false;
+      }
+      if (targetSubName) {
+        const sClean = cleanSubTitle(sess.subject).toLowerCase();
+        if (sClean !== targetSubName && !sClean.includes(targetSubName) && !targetSubName.includes(sClean)) return false;
+      }
+      return true;
+    });
 
-      finalSesses.sort((a, b) => {
-        const tA = new Date(a.created_at || a.date || 0).getTime();
-        const tB = new Date(b.created_at || b.date || 0).getTime();
-        return tA - tB;
-      });
+    activeSessions.sort((a, b) => {
+      const tA = new Date(a.created_at || `${a.date}T${a.time || '00:00:00'}`).getTime() || 0;
+      const tB = new Date(b.created_at || `${b.date}T${b.time || '00:00:00'}`).getTime() || 0;
+      if (tA !== tB) return tA - tB;
+      const idA = parseInt(String(a.qr_session_id || a.otp_id || a.id || 0).replace(/\D/g, ''), 10) || 0;
+      const idB = parseInt(String(b.qr_session_id || b.otp_id || b.id || 0).replace(/\D/g, ''), 10) || 0;
+      return idA - idB;
+    });
 
-      const dParts = dStr.split('-');
-      const formattedDate = dParts.length === 3 ? `${dParts[2]}-${dParts[1]}-${dParts[0]}` : dStr;
+    const subDateCounts = {};
+    activeSessions.forEach(s => {
+      const subClean = cleanSubTitle(s.subject);
+      const k = `${s.date}_${subClean}`;
+      subDateCounts[k] = (subDateCounts[k] || 0) + 1;
+    });
 
-      finalSesses.forEach((sess, sIdx) => {
-        const sessId = sess.id || sess.qr_session_id || sess.otp_id || `${dStr}_${sessionCols.length}`;
-        const sessDiv = String(sess.division || 'ALL').trim().toUpperCase();
-        const colKey = finalSesses.length > 1 ? `${formattedDate} (L${sIdx + 1})` : formattedDate;
+    const subDateCurrentIdx = {};
+    const sessionCols = activeSessions.map((sess, idx) => {
+      const subClean = cleanSubTitle(sess.subject);
+      const k = `${sess.date}_${subClean}`;
+      const totalCountForSubDate = subDateCounts[k] || 1;
+      const currentSubIdx = (subDateCurrentIdx[k] || 0) + 1;
+      subDateCurrentIdx[k] = currentSubIdx;
 
-        sessionCols.push({
-          colKey,
-          dateStr: formattedDate,
-          rawDate: dStr,
-          sessId: String(sessId),
-          qr_session_id: sess.qr_session_id ? String(sess.qr_session_id) : null,
-          otp_id: sess.otp_id ? String(sess.otp_id) : null,
-          sessDiv,
-          subject: sess.subject || sess.subject_name || targetSubName
-        });
-      });
+      const dParts = sess.date.split('-');
+      const formattedDate = dParts.length === 3 ? `${dParts[2]}-${dParts[1]}-${dParts[0]}` : sess.date;
+
+      const colKey = totalCountForSubDate > 1 ? `${formattedDate} (Session ${currentSubIdx})` : formattedDate;
+
+      return {
+        colKey,
+        dateStr: formattedDate,
+        rawDate: sess.date,
+        sessId: sess.id,
+        qr_session_id: sess.qr_session_id,
+        otp_id: sess.otp_id,
+        sessDiv: sess.division || 'ALL',
+        subject: subClean,
+        semester: String(sess.semester || targetSem || '1'),
+        created_at: sess.created_at,
+        time: sess.time
+      };
     });
 
     const columns = [
@@ -1643,8 +1751,8 @@ export default function FacultyDashboard({
       if (!log) return;
       const status = String(log.status || '').toLowerCase();
       if (status === 'success' || status === 'present') {
-        const enroll = String(log.enrollment_no || log.student_id || log.roll_no || '').trim().toLowerCase();
-        if (enroll) {
+        const enrolls = [log.enrollment_no, log.student_id, log.roll_no].filter(Boolean).map(x => String(x).trim().toLowerCase());
+        enrolls.forEach(enroll => {
           if (log.qr_session_id) {
             presentMap.add(`${enroll}_qr_${log.qr_session_id}`);
             presentMap.add(`${enroll}_${log.qr_session_id}`);
@@ -1661,14 +1769,14 @@ export default function FacultyDashboard({
             presentMap.add(`${enroll}_log_${log.id}`);
             presentMap.add(`${enroll}_${log.id}`);
           }
-        }
+        });
       }
     });
 
     const rows = filteredStudents.map((std, sIdx) => {
       const semStr = std.semester ? `${std.semester}` : (targetSem || '1');
       const divCode = String(std.division || std.div || 'A').trim().toUpperCase();
-      const studentEnroll = String(std.enrollment_no || std.roll_no || std.roll || std.id || '').trim().toLowerCase();
+      const studentKeys = [std.enrollment_no, std.student_id, std.roll_no, std.id].filter(Boolean).map(x => String(x).trim().toLowerCase());
 
       let subjName = '';
       let subjCode = '-';
@@ -1721,44 +1829,23 @@ export default function FacultyDashboard({
       };
 
       sessionCols.forEach(colObj => {
-        const colDiv = colObj.sessDiv;
+        const colDiv = String(colObj.sessDiv || 'ALL').trim().toUpperCase();
         const isApplicableForStudentDiv = (colDiv === 'ALL' || colDiv === divCode);
 
         if (!isApplicableForStudentDiv) {
           rowObj[colObj.colKey] = '-';
         } else {
           conductedForStudentCount++;
-          const qId = colObj.qr_session_id || (String(colObj.sessId).startsWith('qr_') ? String(colObj.sessId).replace('qr_', '') : null);
-          const oId = colObj.otp_id || (String(colObj.sessId).startsWith('otp_') ? String(colObj.sessId).replace('otp_', '') : null);
+          const qId = colObj.qr_session_id;
+          const oId = colObj.otp_id;
           const sId = colObj.sessId;
 
-          let isPresent = false;
-          if (qId && (presentMap.has(`${studentEnroll}_qr_${qId}`) || presentMap.has(`${studentEnroll}_${qId}`))) {
-            isPresent = true;
-          } else if (oId && (presentMap.has(`${studentEnroll}_otp_${oId}`) || presentMap.has(`${studentEnroll}_${oId}`))) {
-            isPresent = true;
-          } else if (sId && presentMap.has(`${studentEnroll}_${sId}`)) {
-            isPresent = true;
-          } else {
-            isPresent = allSystemLogs.some(l => {
-              if (!l) return false;
-              const st = String(l.status || '').toLowerCase();
-              if (st !== 'success' && st !== 'present') return false;
-              const lEnroll = String(l.enrollment_no || l.student_id || l.roll_no || '').trim().toLowerCase();
-              if (lEnroll !== studentEnroll) return false;
-              
-              if (qId && String(l.qr_session_id || '').trim() === qId) return true;
-              if (oId && String(l.otp_id || '').trim() === oId) return true;
-              if (sId && (
-                String(l.qr_session_id || '').trim() === sId ||
-                String(l.otp_id || '').trim() === sId ||
-                String(l.session_id || '').trim() === sId ||
-                `qr_${l.qr_session_id}` === sId ||
-                `otp_${l.otp_id}` === sId
-              )) return true;
-              return false;
-            });
-          }
+          const isPresent = studentKeys.some(enroll => {
+            if (qId && (presentMap.has(`${enroll}_qr_${qId}`) || presentMap.has(`${enroll}_${qId}`))) return true;
+            if (oId && (presentMap.has(`${enroll}_otp_${oId}`) || presentMap.has(`${enroll}_${oId}`))) return true;
+            if (sId && presentMap.has(`${enroll}_${sId}`)) return true;
+            return false;
+          });
 
           if (isPresent) {
             rowObj[colObj.colKey] = 'P';
@@ -1822,138 +1909,170 @@ export default function FacultyDashboard({
       return s.trim();
     };
 
-    const allSystemLogs = [...(dateLogs || []), ...(reportData || [])];
-
-    const resolveSessionSubject = (sess, sessIdx, dStr, semVal) => {
-      let rawName = sess.subject || sess.subject_name || sess.subjectTitle || '';
-      
-      if (!rawName || rawName.trim().toLowerCase() === 'subject' || rawName.trim().toLowerCase() === 'all subjects') {
-        const sId = sess.id || sess.qr_session_id || sess.otp_id;
-        const matchingLog = (allSystemLogs || []).find(l => 
-          l && (String(l.qr_session_id) === String(sId) || String(l.otp_id) === String(sId) || (normDateStr(l.date || l.created_at) === dStr && l.subject && l.subject.trim().toLowerCase() !== 'subject'))
-        );
-        if (matchingLog && matchingLog.subject) {
-          rawName = matchingLog.subject;
-        }
-      }
-
-      const semClean = String(semVal || targetSem || '1').replace(/\D/g, '').trim();
-      const semSubjects = (allFacultySubjects || []).filter(s => String(s.semester || '').replace(/\D/g, '').trim() === semClean);
-
-      if ((!rawName || rawName.trim().toLowerCase() === 'subject') && semSubjects.length > 0) {
-        const chosen = semSubjects[sessIdx % semSubjects.length];
-        rawName = chosen ? (chosen.subjectName || chosen.name || '') : '';
-      }
-
-      if (!rawName) rawName = `Lecture ${sessIdx + 1}`;
-
-      const nameClean = String(rawName).trim().toLowerCase();
-      const matched = (allFacultySubjects || []).find(s => {
-        const sName = String(s.subjectName || s.name || '').trim().toLowerCase();
-        return sName === nameClean && String(s.semester || '').replace(/\D/g, '').trim() === semClean;
-      }) || (allFacultySubjects || []).find(s => String(s.subjectName || s.name || '').trim().toLowerCase() === nameClean);
-
-      if (matched) {
-        const short = matched.shortName || matched.shortCode || matched.short;
-        if (short && String(short).trim() !== '' && String(short).trim() !== '-' && isNaN(String(short).trim())) {
-          return String(short).trim();
-        }
-        if (matched.subjectName || matched.name) {
-          return String(matched.subjectName || matched.name).trim();
-        }
-      }
-
-      return String(rawName).trim();
+    const cleanSubTitle = (sub) => {
+      if (!sub) return 'Subject';
+      let s = String(sub).trim();
+      s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+      s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+      s = s.replace(/\s*\(\s*\)/g, '').replace(/\s*\[\s*\]/g, '').trim();
+      return s || String(sub).trim() || 'Subject';
     };
 
-    const sessionCols = [];
+    const allSystemLogs = [...(dateLogs || []), ...(reportData || []), ...(liveLogs || []), ...(manualTodayLogs || [])];
 
-    dates.forEach(dStr => {
-      const conductedForDate = (dateLogs || []).filter(s => {
-        if (!s) return false;
-        if (normDateStr(s.date || s.created_at) !== dStr) return false;
-        if (targetSem) {
-          const sSem = String(s.semester || '').replace(/\D/g, '').trim();
-          if (sSem && sSem !== targetSem) return false;
-        }
-        return true;
-      });
+    // Build unique sessions list from conducted sessions + reports logs
+    const sessionMap = new Map();
 
-      let finalSesses = [...conductedForDate];
-      if (finalSesses.length === 0) {
-        const dateLogsSub = (allSystemLogs || []).filter(l => {
-          if (!l) return false;
-          if (normDateStr(l.date || l.created_at) !== dStr) return false;
-          if (targetSem) {
-            const lSem = String(l.semester || '').replace(/\D/g, '').trim();
-            if (lSem && lSem !== targetSem) return false;
-          }
-          return true;
+    // 1. From facultySessionsToday (contains live/today's sessions for this faculty)
+    (facultySessionsToday || []).forEach(sess => {
+      if (!sess) return;
+      const sDate = normDateStr(sess.date || sess.created_at);
+      const qId = sess.qr_session_id || (String(sess.id).startsWith('qr_') ? String(sess.id).replace('qr_', '') : null);
+      const oId = sess.otp_id || (String(sess.id).startsWith('otp_') ? String(sess.id).replace('otp_', '') : null);
+      const sId = qId ? `qr_${qId}` : (oId ? `otp_${oId}` : (sess.id || `sess_${sDate}_${sessionMap.size}`));
+
+      if (!sessionMap.has(sId)) {
+        sessionMap.set(sId, {
+          id: sId,
+          qr_session_id: qId ? String(qId) : null,
+          otp_id: oId ? String(oId) : null,
+          date: sDate,
+          created_at: sess.created_at || (sess.date ? `${sess.date}T${sess.time || '00:00:00'}` : null),
+          semester: sess.semester,
+          division: sess.division || 'ALL',
+          subject: sess.subject,
+          time: sess.time
         });
-
-        const sessGroupMap = new Map();
-        dateLogsSub.forEach(l => {
-          const key = l.qr_session_id ? `qr_${l.qr_session_id}` : l.otp_id ? `otp_${l.otp_id}` : (l.subject || 'default');
-          if (!sessGroupMap.has(key)) {
-            sessGroupMap.set(key, {
-              id: key,
-              date: dStr,
-              semester: l.semester || targetSem || '1',
-              division: l.division || 'ALL',
-              subject: l.subject || 'Subject'
-            });
-          }
-        });
-        if (sessGroupMap.size > 0) {
-          finalSesses = Array.from(sessGroupMap.values());
-        }
       }
-
-      if (finalSesses.length === 0) return;
-
-      finalSesses.sort((a, b) => {
-        const tA = new Date(a.created_at || a.date || 0).getTime();
-        const tB = new Date(b.created_at || b.date || 0).getTime();
-        return tA - tB;
-      });
-
-      const dParts = dStr.split('-');
-      const formattedDate = dParts.length === 3 ? `${dParts[2]}-${dParts[1]}-${dParts[0]}` : dStr;
-
-      const seenSlotKeys = new Set();
-      finalSesses.forEach((sess, sIdx) => {
-        const semVal = sess.semester || targetSem;
-        const resolvedSub = resolveSessionSubject(sess, sIdx, dStr, semVal);
-        const sessionLabel = resolvedSub;
-        const sessId = sess.id || sess.qr_session_id || `${dStr}_${sessionCols.length}`;
-        const sessDiv = String(sess.division || 'ALL').trim().toUpperCase();
-        const formattedTime = sess.created_at ? new Date(sess.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (sess.time || 'Session');
-        const slotKey = `${dStr}_${resolvedSub.toLowerCase().replace(/\s+/g, '_')}_${sessDiv}_${formattedTime}`;
-
-        if (!seenSlotKeys.has(slotKey)) {
-          seenSlotKeys.add(slotKey);
-          sessionCols.push({
-            key: `col_${sessionCols.length}_${sessId}`,
-            dateStr: formattedDate,
-            rawDate: dStr,
-            sessionLabel,
-            sessId,
-            sessDiv,
-            subject: resolvedSub,
-            semester: String(semVal),
-            time: formattedTime
-          });
-        }
-      });
     });
 
+    // 2. Discover distinct sessions from all logs (has past dates too)
+    allSystemLogs.forEach(l => {
+      if (!l) return;
+      const sDate = normDateStr(l.date || l.created_at);
+      const qId = l.qr_session_id ? String(l.qr_session_id) : null;
+      const oId = l.otp_id ? String(l.otp_id) : null;
+      const sId = qId ? `qr_${qId}` : (oId ? `otp_${oId}` : (l.session_id ? `sess_${l.session_id}` : null));
+
+      if (sId) {
+        if (!sessionMap.has(sId)) {
+          sessionMap.set(sId, {
+            id: sId,
+            qr_session_id: qId,
+            otp_id: oId,
+            date: sDate,
+            created_at: l.created_at || (l.date && l.time ? `${l.date}T${l.time}` : null) || sDate,
+            semester: l.semester || l.session_semester,
+            division: l.division || l.session_division || 'ALL',
+            subject: l.subject,
+            time: l.time
+          });
+        } else {
+          const existing = sessionMap.get(sId);
+          if ((!existing.subject || existing.subject === 'Subject') && l.subject) {
+            existing.subject = l.subject;
+          }
+          if ((!existing.division || existing.division === 'ALL') && (l.division || l.session_division)) {
+            existing.division = l.division || l.session_division;
+          }
+          if (!existing.semester && (l.semester || l.session_semester)) {
+            existing.semester = l.semester || l.session_semester;
+          }
+          if (!existing.created_at && (l.created_at || l.time)) {
+            existing.created_at = l.created_at || `${sDate}T${l.time}`;
+          }
+        }
+      } else if (l.device_id === 'Manual') {
+        const manKey = `manual_${sDate}_${cleanSubTitle(l.subject || 'class').replace(/\s+/g, '_')}_${(l.time || '00').replace(/:/g, '')}_${l.id}`;
+        if (!sessionMap.has(manKey)) {
+          sessionMap.set(manKey, {
+            id: manKey,
+            qr_session_id: null,
+            otp_id: null,
+            date: sDate,
+            created_at: l.created_at || (l.date && l.time ? `${l.date}T${l.time}` : null) || sDate,
+            semester: l.semester,
+            division: l.division || 'ALL',
+            subject: l.subject,
+            time: l.time
+          });
+        }
+      }
+    });
+
+    // Filter active sessions by date range and semester/division
+    const activeSessions = Array.from(sessionMap.values()).filter(sess => {
+      if (!sess) return false;
+      if (!dates.includes(sess.date)) return false;
+      if (targetSem) {
+        const sSem = String(sess.semester || '').replace(/\D/g, '').trim();
+        if (sSem && sSem !== targetSem) return false;
+      }
+      if (targetDiv) {
+        const sDiv = String(sess.division || 'ALL').trim().toUpperCase();
+        if (sDiv !== 'ALL' && sDiv !== targetDiv) return false;
+      }
+      return true;
+    });
+
+    // Sort strictly chronologically: earliest session first, subsequent sessions after it
+    activeSessions.sort((a, b) => {
+      const tA = new Date(a.created_at || `${a.date}T${a.time || '00:00:00'}`).getTime() || 0;
+      const tB = new Date(b.created_at || `${b.date}T${b.time || '00:00:00'}`).getTime() || 0;
+      if (tA !== tB) return tA - tB;
+      const idA = parseInt(String(a.qr_session_id || a.otp_id || a.id || 0).replace(/\D/g, ''), 10) || 0;
+      const idB = parseInt(String(b.qr_session_id || b.otp_id || b.id || 0).replace(/\D/g, ''), 10) || 0;
+      return idA - idB;
+    });
+
+    // Count sessions per date + subject to distinguish multiple sessions as (Session 1), (Session 2)...
+    const subDateCounts = {};
+    activeSessions.forEach(s => {
+      const subClean = cleanSubTitle(s.subject);
+      const k = `${s.date}_${subClean}`;
+      subDateCounts[k] = (subDateCounts[k] || 0) + 1;
+    });
+
+    const subDateCurrentIdx = {};
+    const sessionCols = activeSessions.map((sess, idx) => {
+      const subClean = cleanSubTitle(sess.subject);
+      const k = `${sess.date}_${subClean}`;
+      const totalCountForSubDate = subDateCounts[k] || 1;
+      const currentSubIdx = (subDateCurrentIdx[k] || 0) + 1;
+      subDateCurrentIdx[k] = currentSubIdx;
+
+      let sessionLabel = subClean;
+      if (totalCountForSubDate > 1) {
+        sessionLabel = `${subClean} (Session ${currentSubIdx})`;
+      }
+
+      const dParts = sess.date.split('-');
+      const formattedDate = dParts.length === 3 ? `${dParts[2]}-${dParts[1]}-${dParts[0]}` : sess.date;
+
+      return {
+        key: `col_${idx}_${sess.id}`,
+        dateStr: formattedDate,
+        rawDate: sess.date,
+        sessionLabel,
+        sessId: sess.id,
+        qr_session_id: sess.qr_session_id,
+        otp_id: sess.otp_id,
+        sessDiv: sess.division || 'ALL',
+        subject: subClean,
+        semester: String(sess.semester || targetSem || '1'),
+        created_at: sess.created_at,
+        time: sess.time
+      };
+    });
+
+    // Build presentMap strictly keyed by enrollment + session ID
     const presentMap = new Set();
     allSystemLogs.forEach(log => {
       if (!log) return;
       const status = String(log.status || '').toLowerCase();
       if (status === 'success' || status === 'present') {
-        const enroll = String(log.enrollment_no || log.student_id || log.roll_no || '').trim().toLowerCase();
-        if (enroll) {
+        const enrolls = [log.enrollment_no, log.student_id, log.roll_no].filter(Boolean).map(x => String(x).trim().toLowerCase());
+        enrolls.forEach(enroll => {
           if (log.qr_session_id) {
             presentMap.add(`${enroll}_qr_${log.qr_session_id}`);
             presentMap.add(`${enroll}_${log.qr_session_id}`);
@@ -1970,14 +2089,14 @@ export default function FacultyDashboard({
             presentMap.add(`${enroll}_log_${log.id}`);
             presentMap.add(`${enroll}_${log.id}`);
           }
-        }
+        });
       }
     });
 
     const rows = filteredStudents.map((std, sIdx) => {
       const semStr = std.semester ? `${std.semester}` : (targetSem || '1');
       const divCode = String(std.division || std.div || 'A').trim().toUpperCase();
-      const studentEnroll = String(std.enrollment_no || std.roll_no || std.roll || std.id || '').trim().toLowerCase();
+      const studentKeys = [std.enrollment_no, std.student_id, std.roll_no, std.id].filter(Boolean).map(x => String(x).trim().toLowerCase());
 
       let totalPresent = 0;
       let totalAbsent = 0;
@@ -1985,44 +2104,23 @@ export default function FacultyDashboard({
       const sessionAttendance = {};
 
       sessionCols.forEach((col) => {
-        const colDiv = col.sessDiv;
+        const colDiv = String(col.sessDiv || 'ALL').trim().toUpperCase();
         const isApplicableForStudentDiv = (colDiv === 'ALL' || colDiv === divCode);
 
         if (!isApplicableForStudentDiv) {
           sessionAttendance[col.key] = '-';
         } else {
           conductedForStudentCount++;
-          const qId = String(col.sessId).startsWith('qr_') ? String(col.sessId).replace('qr_', '') : null;
-          const oId = String(col.sessId).startsWith('otp_') ? String(col.sessId).replace('otp_', '') : null;
+          const qId = col.qr_session_id;
+          const oId = col.otp_id;
           const sId = col.sessId;
 
-          let isPresent = false;
-          if (qId && (presentMap.has(`${studentEnroll}_qr_${qId}`) || presentMap.has(`${studentEnroll}_${qId}`))) {
-            isPresent = true;
-          } else if (oId && (presentMap.has(`${studentEnroll}_otp_${oId}`) || presentMap.has(`${studentEnroll}_${oId}`))) {
-            isPresent = true;
-          } else if (sId && presentMap.has(`${studentEnroll}_${sId}`)) {
-            isPresent = true;
-          } else {
-            isPresent = allSystemLogs.some(l => {
-              if (!l) return false;
-              const st = String(l.status || '').toLowerCase();
-              if (st !== 'success' && st !== 'present') return false;
-              const lEnroll = String(l.enrollment_no || l.student_id || l.roll_no || '').trim().toLowerCase();
-              if (lEnroll !== studentEnroll) return false;
-              
-              if (qId && String(l.qr_session_id || '').trim() === qId) return true;
-              if (oId && String(l.otp_id || '').trim() === oId) return true;
-              if (sId && (
-                String(l.qr_session_id || '').trim() === sId ||
-                String(l.otp_id || '').trim() === sId ||
-                String(l.session_id || '').trim() === sId ||
-                `qr_${l.qr_session_id}` === sId ||
-                `otp_${l.otp_id}` === sId
-              )) return true;
-              return false;
-            });
-          }
+          const isPresent = studentKeys.some(enroll => {
+            if (qId && (presentMap.has(`${enroll}_qr_${qId}`) || presentMap.has(`${enroll}_${qId}`))) return true;
+            if (oId && (presentMap.has(`${enroll}_otp_${oId}`) || presentMap.has(`${enroll}_${oId}`))) return true;
+            if (sId && presentMap.has(`${enroll}_${sId}`)) return true;
+            return false;
+          });
 
           if (isPresent) {
             sessionAttendance[col.key] = 'P';
@@ -2050,7 +2148,7 @@ export default function FacultyDashboard({
       };
     });
 
-    // Sort rows by Semester, Division, then Roll No
+    // Sort rows by Semester, Division, then numerically by Roll No
     rows.sort((a, b) => {
       const semA = parseInt(String(a.sem || a.semester || '').replace(/\D/g, '')) || 0;
       const semB = parseInt(String(b.sem || b.semester || '').replace(/\D/g, '')) || 0;
@@ -2085,6 +2183,10 @@ export default function FacultyDashboard({
         setQrSessionTimer(120);
         setTokenIndex(0);
         setQrCodeTimer(15);
+        setStats(prev => ({
+          ...prev,
+          qrSessionsGenerated: Math.max((prev?.qrSessionsGenerated || 0) + 1, qrSessionsRunCount + 1)
+        }));
         fetchStats();
         fetchTodaySessions();
         setActiveTab('otp'); // Switch to view code
@@ -2548,7 +2650,7 @@ export default function FacultyDashboard({
     if (activeTab === 'reports') {
       fetchReportData();
     }
-  }, [reportType, reportStudentId, activeTab]);
+  }, [reportType, reportStudentId, reportStartDate, reportEndDate, activeTab]);
 
   return (
     <div className={`admin-dashboard-root ${theme === 'light' ? 'admin-theme-light' : ''}`}>
@@ -3020,10 +3122,10 @@ export default function FacultyDashboard({
                       background: '#ffffff', borderRadius: '20px', padding: '18px',
                       display: 'inline-block', boxShadow: '0 8px 30px rgba(0,0,0,0.08)', border: '1px solid #e2e8f0', margin: '0 auto 20px'
                     }}>
-                      <canvas ref={qrCanvasRef} />
+                      <canvas ref={qrCanvasRef} className="faculty-qr-canvas" />
                     </div>
                     <div style={{ fontSize: '0.92rem', color: '#475569', marginBottom: '8px' }}>
-                      Token <strong style={{ color: '#0f172a' }}>{tokenIndex + 1}</strong> of {activeQrSessionDetails?.tokens?.length || 8} • Rotates every 15s
+                      Token <strong style={{ color: '#0f172a' }}>{tokenIndex + 1}</strong> of {activeQrSessionDetails?.tokens?.length || 8} • Rotates every {activeQrSessionDetails?.qr_time || qrCodeTime || 10}s
                     </div>
                     <div style={{
                       fontSize: '2.5rem', fontWeight: '800', color: '#9333ea',
@@ -3608,8 +3710,16 @@ export default function FacultyDashboard({
                     <span style={styles.statLabel}>QR Sessions Run</span>
                     <QrCode size={20} color="#a855f7" />
                   </div>
-                  <div style={styles.statVal}>{stats.qrSessionsGenerated} / {qrDailyLimit}</div>
-                  <div style={styles.statSubText}>Daily maximum limit of {qrDailyLimit} session{qrDailyLimit === 1 ? '' : 's'}</div>
+                  <div style={styles.statVal}>{qrSessionsRunCount} / {qrDailyLimit}</div>
+                  <div style={{
+                    ...styles.statSubText,
+                    color: remainingQrSessions === 0 ? '#ef4444' : 'var(--text-secondary)',
+                    fontWeight: remainingQrSessions === 0 ? '600' : '500'
+                  }}>
+                    {remainingQrSessions > 0
+                      ? `${remainingQrSessions} session${remainingQrSessions === 1 ? '' : 's'} remaining today`
+                      : `Daily limit reached (${qrDailyLimit} / ${qrDailyLimit})`}
+                  </div>
                 </div>
 
                 {/* Column 2: Active Session (Moved between QR Sessions & Session Controllers) */}
@@ -3674,7 +3784,7 @@ export default function FacultyDashboard({
                     <button
                       onClick={() => openSemesterModal('qr')}
                       className="btn btn-primary"
-                      disabled={!!activeQrSessionDetails || !!activeOtpDetails || !qrGenerationEnabled || stats.qrSessionsGenerated >= qrDailyLimit}
+                      disabled={!!activeQrSessionDetails || !!activeOtpDetails || !qrGenerationEnabled || qrSessionsRunCount >= qrDailyLimit}
                       style={{ flex: 1, gap: '8px' }}
                     >
                       <QrCode size={18} />
@@ -3695,7 +3805,7 @@ export default function FacultyDashboard({
                       Daily maximum limit of 5 OTP sessions reached.
                     </p>
                   )}
-                  {stats.qrSessionsGenerated >= qrDailyLimit && (
+                  {qrSessionsRunCount >= qrDailyLimit && (
                     <p style={{ color: '#ef4444', fontSize: '0.8rem', marginTop: '10px', textAlign: 'center', fontWeight: '500' }}>
                       Daily maximum limit of {qrDailyLimit} QR session{qrDailyLimit === 1 ? '' : 's'} reached.
                     </p>
@@ -3726,7 +3836,7 @@ export default function FacultyDashboard({
                     <button
                       onClick={() => openSemesterModal('qr')}
                       className="btn btn-primary"
-                      disabled={!!activeQrSessionDetails || !!activeOtpDetails || !qrGenerationEnabled || stats.qrSessionsGenerated >= qrDailyLimit}
+                      disabled={!!activeQrSessionDetails || !!activeOtpDetails || !qrGenerationEnabled || qrSessionsRunCount >= qrDailyLimit}
                       style={{ gap: '8px', padding: '10px 20px' }}
                     >
                       <QrCode size={18} />
@@ -3747,7 +3857,7 @@ export default function FacultyDashboard({
                 {/* Limit Warnings */}
                 <div style={{ display: 'flex', gap: '20px', marginTop: '16px', flexWrap: 'wrap', borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '12px' }}>
                   <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                    QR Sessions Today: <strong style={{ color: stats.qrSessionsGenerated >= qrDailyLimit ? '#ef4444' : '#4ade80' }}>{stats.qrSessionsGenerated} / {qrDailyLimit}</strong>
+                    QR Sessions Today: <strong style={{ color: qrSessionsRunCount >= qrDailyLimit ? '#ef4444' : '#4ade80' }}>{qrSessionsRunCount} / {qrDailyLimit}</strong> ({remainingQrSessions > 0 ? `${remainingQrSessions} remaining` : 'Limit reached'})
                   </span>
                   <span style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
                     OTP Remaining Today: <strong style={{ color: otpRemaining === 0 ? '#ef4444' : '#60a5fa' }}>{otpRemaining}</strong>
@@ -3809,7 +3919,7 @@ export default function FacultyDashboard({
                         boxShadow: '0 12px 36px rgba(168, 85, 247, 0.25)',
                         marginBottom: '8px'
                       }}>
-                        <canvas ref={qrCanvasRef} />
+                        <canvas ref={qrDashboardCanvasRef} className="faculty-qr-canvas" />
                       </div>
 
                       {/* Stats Row: Session Expires & Token Rotates */}
@@ -5403,13 +5513,17 @@ export default function FacultyDashboard({
                             }
                           }
 
-                          const safeLogs = Array.isArray(manualTodayLogs) ? manualTodayLogs : [];
-                          const sessionPresentCount = safeLogs.filter(l => {
-                            if (l.status !== 'Success') return false;
-                            if (sess.qr_session_id && String(l.qr_session_id) === String(sess.qr_session_id)) return true;
-                            if (sess.otp_id && String(l.otp_id) === String(sess.otp_id)) return true;
-                            return false;
-                          }).length;
+                          const combinedLogs = [...(Array.isArray(liveLogs) ? liveLogs : []), ...(Array.isArray(manualTodayLogs) ? manualTodayLogs : [])];
+                          const matchingPresentStudentIds = new Set();
+                          combinedLogs.forEach(l => {
+                            if (l.status !== 'Success') return;
+                            if ((sess.qr_session_id && String(l.qr_session_id) === String(sess.qr_session_id)) ||
+                                (sess.otp_id && String(l.otp_id) === String(sess.otp_id))) {
+                              const sId = l.student_id || l.student?.id || (l.enrollment_no ? String(l.enrollment_no).trim().toLowerCase() : null);
+                              if (sId) matchingPresentStudentIds.add(String(sId));
+                            }
+                          });
+                          const sessionPresentCount = matchingPresentStudentIds.size;
 
                           return (
                             <div
@@ -5664,13 +5778,13 @@ export default function FacultyDashboard({
                                       disabled
                                       style={{
                                         padding: '6px 14px', borderRadius: '10px', fontSize: '0.8rem', fontWeight: '700',
-                                        border: '1px solid rgba(148,163,184,0.3)', background: 'rgba(148,163,184,0.12)',
-                                        color: '#94a3b8', cursor: 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: '5px',
-                                        opacity: 0.85
+                                        border: '1.5px solid rgba(16,185,129,0.4)', background: 'rgba(16,185,129,0.12)',
+                                        color: '#34d399', cursor: 'not-allowed', display: 'inline-flex', alignItems: 'center', gap: '6px',
+                                        opacity: 0.95
                                       }}
-                                      title="Attendance marked online via QR/OTP. Status cannot be modified manually."
+                                      title="Attendance marked online via QR scan. Cannot be modified manually."
                                     >
-                                      🔒 Blocked (Online)
+                                      🔒 Marked via QR
                                     </button>
                                   ) : isPresent ? (
                                     <button
@@ -5701,15 +5815,48 @@ export default function FacultyDashboard({
                                 </td>
                                 <td style={styles.tableTd}>
                                   {isPhone ? (
-                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', background: 'rgba(34,197,94,0.15)', color: '#4ade80', fontSize: '0.78rem', fontWeight: '700', border: '1px solid rgba(34,197,94,0.3)' }}>
-                                      <Smartphone size={12} /> Online Present
+                                    <span style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      padding: '5px 14px',
+                                      borderRadius: '20px',
+                                      background: 'rgba(34,197,94,0.15)',
+                                      color: '#4ade80',
+                                      fontSize: '0.78rem',
+                                      fontWeight: '700',
+                                      border: '1.5px solid rgba(34,197,94,0.35)',
+                                      boxShadow: '0 2px 8px rgba(34,197,94,0.15)'
+                                    }}>
+                                      <Smartphone size={13} /> Present (QR Online)
                                     </span>
                                   ) : isManual ? (
-                                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', padding: '4px 12px', borderRadius: '20px', background: 'rgba(245,158,11,0.15)', color: '#fbbf24', fontSize: '0.78rem', fontWeight: '700' }}>
-                                      <ClipboardList size={12} /> Manual
+                                    <span style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      padding: '5px 14px',
+                                      borderRadius: '20px',
+                                      background: 'rgba(245,158,11,0.15)',
+                                      color: '#fbbf24',
+                                      fontSize: '0.78rem',
+                                      fontWeight: '700',
+                                      border: '1.5px solid rgba(245,158,11,0.35)'
+                                    }}>
+                                      <ClipboardList size={13} /> Manual Present
                                     </span>
                                   ) : (
-                                    <span style={{ padding: '4px 12px', borderRadius: '20px', background: 'rgba(239,68,68,0.1)', color: '#f87171', fontSize: '0.78rem', fontWeight: '600' }}>
+                                    <span style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      padding: '5px 14px',
+                                      borderRadius: '20px',
+                                      background: 'rgba(239,68,68,0.1)',
+                                      color: '#f87171',
+                                      fontSize: '0.78rem',
+                                      fontWeight: '600',
+                                      border: '1.5px solid rgba(239,68,68,0.2)'
+                                    }}>
                                       Absent
                                     </span>
                                   )}

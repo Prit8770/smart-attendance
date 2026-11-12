@@ -94,6 +94,38 @@ router.post('/limit', authenticateJWT, async (req, res) => {
   }
 });
 
+// GET QR rotation/refresh time in seconds (Admin or Faculty)
+router.get('/time', authenticateJWT, async (req, res) => {
+  try {
+    const { data: timeSetting } = await supabase.from('settings').select('value').eq('key', 'qr_code_time').maybeSingle();
+    const time = timeSetting ? parseInt(timeSetting.value) || 10 : 10;
+    res.json({ time });
+  } catch (err) {
+    console.error('Error fetching QR time:', err);
+    res.status(500).json({ error: 'Failed to fetch QR time' });
+  }
+});
+
+// POST set QR rotation/refresh time in seconds (Admin only)
+router.post('/time', authenticateJWT, async (req, res) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return res.status(403).json({ error: 'Access denied. Admins only.' });
+  }
+  const { time } = req.body;
+  const timeVal = parseInt(time);
+  if (isNaN(timeVal) || timeVal < 3 || timeVal > 120) {
+    return res.status(400).json({ error: 'Time must be a number between 3 and 120 seconds.' });
+  }
+  try {
+    await supabase.from('settings').upsert({ key: 'qr_code_time', value: String(timeVal) });
+    notifyChange('settings', 'QR_TIME_CHANGED', { time: timeVal });
+    res.json({ success: true, time: timeVal });
+  } catch (err) {
+    console.error('Error setting QR time:', err);
+    res.status(500).json({ error: 'Failed to set QR time' });
+  }
+});
+
 // TOGGLE global QR generation (Admin only)
 router.post('/toggle-settings', authenticateJWT, async (req, res) => {
   if (!req.user || req.user.role !== 'admin') {
@@ -169,9 +201,14 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
       return res.status(403).json({ error: `Daily limit reached. You can generate a maximum of ${dailyLimit} QR session${dailyLimit === 1 ? '' : 's'} per day.` });
     }
 
-    // Generate 8 random 16-character hex tokens (120 seconds valid, changed every 15 seconds)
+    // Fetch configured rotation time (default 10s)
+    const { data: timeSetting } = await supabase.from('settings').select('value').eq('key', 'qr_code_time').maybeSingle();
+    const qrTime = timeSetting ? (parseInt(timeSetting.value) || 10) : 10;
+    const tokenCount = Math.max(8, Math.ceil(120 / qrTime));
+
+    // Generate random 16-character hex tokens
     const tokens = [];
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < tokenCount; i++) {
       tokens.push(crypto.randomBytes(8).toString('hex'));
     }
 
@@ -179,58 +216,37 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
     const createdAt = now.toISOString();
     const expiresAt = new Date(now.getTime() + 2 * 60 * 1000).toISOString(); // 2 minutes
 
-    // Check if an active QR session already exists for this faculty, semester, division, and subject
-    const { data: activeExisting } = await supabase.from('qr_sessions')
-      .select('*')
-      .eq('created_by_faculty_id', facultyId)
-      .eq('date', today)
-      .gt('expires_at', now.toISOString())
-      .order('id', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    // Expire any previous active session of this faculty so only the newly generated session is active
+    try {
+      await supabase.from('qr_sessions')
+        .update({ expires_at: createdAt })
+        .eq('created_by_faculty_id', facultyId)
+        .gt('expires_at', createdAt);
+    } catch(e) {}
 
-    let result = null;
-    let error = null;
+    let insertPayload = {
+      created_at: createdAt,
+      expires_at: expiresAt,
+      created_by_faculty_id: facultyId,
+      date: today,
+      tokens: JSON.stringify(tokens),
+      semester: semester ? parseInt(semester, 10) : null,
+      division: (division && String(division).trim() !== '') ? String(division).trim().toUpperCase() : null,
+      subject: (subject && String(subject).trim() !== '') ? String(subject).trim() : null
+    };
 
-    if (activeExisting) {
-      const updateRes = await supabase.from('qr_sessions')
-        .update({
-          tokens: JSON.stringify(tokens),
-          expires_at: expiresAt,
-          semester: semester ? parseInt(semester) : activeExisting.semester,
-          division: (division && String(division).trim() !== '') ? String(division).trim().toUpperCase() : activeExisting.division,
-          subject: (subject && String(subject).trim() !== '') ? String(subject).trim() : activeExisting.subject
-        })
-        .eq('id', activeExisting.id)
-        .select()
-        .single();
-      result = updateRes.data;
-      error = updateRes.error;
-    } else {
-      let insertPayload = {
-        created_at: createdAt,
-        expires_at: expiresAt,
-        created_by_faculty_id: facultyId,
-        date: today,
-        tokens: JSON.stringify(tokens),
-        semester: semester ? parseInt(semester) : null,
-        division: (division && String(division).trim() !== '') ? String(division).trim().toUpperCase() : null,
-        subject: (subject && String(subject).trim() !== '') ? String(subject).trim() : null
-      };
+    let insertRes = await supabase.from('qr_sessions').insert([insertPayload]).select().single();
+    let result = insertRes.data;
+    let error = insertRes.error;
 
-      let insertRes = await supabase.from('qr_sessions').insert([insertPayload]).select().single();
-      result = insertRes.data;
-      error = insertRes.error;
+    // Fallback: If DB table lacks 'subject' or 'division' columns, retry without missing column and save local meta
+    if (error && error.message && (error.message.includes('subject') || error.message.includes('division') || error.message.includes('schema cache'))) {
+      if (error.message.includes('subject')) delete insertPayload.subject;
+      if (error.message.includes('division')) delete insertPayload.division;
 
-      // Fallback: If DB table lacks 'subject' or 'division' columns, retry without missing column and save local meta
-      if (error && error.message && (error.message.includes('subject') || error.message.includes('division') || error.message.includes('schema cache'))) {
-        if (error.message.includes('subject')) delete insertPayload.subject;
-        if (error.message.includes('division')) delete insertPayload.division;
-
-        const retry = await supabase.from('qr_sessions').insert([insertPayload]).select().single();
-        result = retry.data;
-        error = retry.error;
-      }
+      const retry = await supabase.from('qr_sessions').insert([insertPayload]).select().single();
+      result = retry.data;
+      error = retry.error;
     }
 
     if (error) {
@@ -258,6 +274,7 @@ router.post('/start-session', authenticateJWT, requireFacultyOnly, async (req, r
         createdAt,
         expiresAt,
         tokens,
+        qr_time: qrTime,
         secondsLeft: 120,
         semester: result.semester || null,
         division: result.division || null,
@@ -305,7 +322,8 @@ router.get('/active', authenticateJWT, async (req, res) => {
           tokens: JSON.parse(latestSession.tokens),
           facultyName: facultyName,
           semester: latestSession.semester || null,
-          division: latestSession.division || null
+          division: latestSession.division || null,
+          subject: latestSession.subject || null
         },
         secondsLeft: Math.max(0, Math.floor((expireTime - now) / 1000))
       });
@@ -329,7 +347,8 @@ router.get('/today', authenticateJWT, requireAdminOrFaculty, async (req, res) =>
       .select('*')
       .eq('date', today)
       .order('id', { ascending: false });
-    if (req.query.all !== 'true' || req.query.view === 'faculty') {
+    const isFacultyRestricted = (req.user.role === 'faculty' && req.query.view !== 'admin') || req.query.view === 'faculty';
+    if (isFacultyRestricted && req.query.all !== 'true') {
       const activeFacId = req.user.faculty_id || req.user.id;
       const resolvedFacId = await resolveValidFacultyId(req.user);
       const facIdSet = new Set([String(req.user.id), String(activeFacId), String(resolvedFacId)].filter(Boolean));

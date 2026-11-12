@@ -5,16 +5,24 @@ const path = require('path');
 const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
 
-// Path for local fallback storage if Supabase table is not configured
+// Path for local fallback storage when Supabase table is not configured yet
 const leavesFilePath = path.join(__dirname, '../data/leaves.json');
-
-// Ensure data directory exists
 const dataDir = path.join(__dirname, '../data');
+
 if (!fs.existsSync(dataDir)) {
   fs.mkdirSync(dataDir, { recursive: true });
 }
 
-// Helper to get local leaves JSON
+function isMissingLeavesTableError(error) {
+  if (!error) return false;
+  const msg = String(error.message || '');
+  return (
+    error.code === 'PGRST205' ||
+    error.code === '42P01' ||
+    /could not find the table|relation .*leaves.* does not exist/i.test(msg)
+  );
+}
+
 function getLocalLeaves() {
   if (fs.existsSync(leavesFilePath)) {
     try {
@@ -28,7 +36,6 @@ function getLocalLeaves() {
   return [];
 }
 
-// Helper to save local leaves JSON
 function saveLocalLeaves(leaves) {
   try {
     fs.writeFileSync(leavesFilePath, JSON.stringify(leaves, null, 2), 'utf8');
@@ -37,7 +44,6 @@ function saveLocalLeaves(leaves) {
   }
 }
 
-// Helper to get local date string YYYY-MM-DD
 function getLocalDateString() {
   const d = new Date();
   const year = d.getFullYear();
@@ -46,12 +52,48 @@ function getLocalDateString() {
   return `${year}-${month}-${day}`;
 }
 
+function extractAttachmentMetadata(attachment) {
+  if (!attachment || typeof attachment !== 'string') {
+    return { fileType: null, fileSize: null };
+  }
+  const match = /^data:([^;]+);base64,(.+)$/.exec(attachment);
+  if (!match) {
+    return { fileType: null, fileSize: null };
+  }
+  return {
+    fileType: match[1] || null,
+    fileSize: Buffer.from(match[2], 'base64').length
+  };
+}
+
+function mergeLeaveLists(primaryList, fallbackList) {
+  const mergedMap = new Map();
+  [...(primaryList || []), ...(fallbackList || [])].forEach(item => {
+    if (item && item.id !== undefined && item.id !== null) {
+      const key = String(item.id);
+      const existing = mergedMap.get(key) || {};
+      mergedMap.set(key, {
+        ...existing,
+        ...item,
+        attachment: item.attachment || existing.attachment || null,
+        file_name: item.file_name || existing.file_name || null
+      });
+    }
+  });
+  return Array.from(mergedMap.values()).sort((a, b) => Number(b.id) - Number(a.id));
+}
+
+function cleanRecipientLabel(name) {
+  let clean = String(name || 'Admin').trim();
+  if (clean.includes('(')) clean = clean.split('(')[0].trim();
+  if (clean.includes('||')) clean = clean.split('||')[0].trim();
+  return clean || 'Admin';
+}
+
 // GET recipients list (Faculty members + Admin) for leave application dropdown
 router.get('/recipients', authenticateJWT, async (req, res) => {
   try {
-    const list = [
-      { id: 'ADMIN', name: 'Admin' }
-    ];
+    const list = [{ id: 'ADMIN', name: 'Admin' }];
 
     try {
       const { data: faculty, error } = await supabase.from('faculty').select('id, name');
@@ -61,12 +103,8 @@ router.get('/recipients', authenticateJWT, async (req, res) => {
             let cleanName = String(f.name).trim();
             if (cleanName.includes('(')) cleanName = cleanName.split('(')[0].trim();
             if (cleanName.includes('||')) cleanName = cleanName.split('||')[0].trim();
-
             if (cleanName) {
-              list.push({
-                id: String(f.id),
-                name: cleanName
-              });
+              list.push({ id: String(f.id), name: cleanName });
             }
           }
         });
@@ -96,52 +134,69 @@ router.post('/apply', authenticateJWT, async (req, res) => {
 
   try {
     const today = getLocalDateString();
-    let cleanRecName = recipient_name || 'Admin';
-    if (cleanRecName.includes('(')) cleanRecName = cleanRecName.split('(')[0].trim();
-    if (cleanRecName.includes('||')) cleanRecName = cleanRecName.split('||')[0].trim();
+    const cleanRecName = cleanRecipientLabel(recipient_name);
+    const cleanEnroll = String(req.user.enrollment_no || req.user.username || 'STUDENT').trim();
+    const { fileType, fileSize } = extractAttachmentMetadata(attachment);
 
     const leaveObj = {
       id: Date.now(),
-      student_id: req.user.id,
-      enrollment_no: req.user.enrollment_no || req.user.username || 'STUDENT',
+      student_id: String(req.user.id),
+      enrollment_no: cleanEnroll,
+      student_enrollment: cleanEnroll,
+      email: req.user.email || null,
       roll_no: req.user.roll_no || req.user.roll || '',
       student_name: req.user.name || 'Student',
       course: req.user.course || 'BCA',
-      semester: req.user.semester || '1',
+      semester: String(req.user.semester || '1'),
       division: req.user.division || 'A',
       type: type || 'Personal Leave',
-      recipient_id: recipient_id || 'ADMIN',
+      recipient_id: String(recipient_id || 'ADMIN'),
       recipient_name: cleanRecName,
       from_date: from,
       to_date: to,
-      reason: reason,
+      reason: String(reason).trim(),
       attachment: attachment || null,
       file_name: file_name || null,
+      file_type: fileType,
+      file_size: fileSize,
       status: 'Pending',
       admin_remarks: '',
+      reviewed_by: '',
       date_submitted: today,
       created_at: new Date().toISOString()
     };
 
-    // 1. Save to Supabase (if table exists)
-    let supabaseSaved = false;
-    try {
-      const { data, error } = await supabase.from('leaves').insert([leaveObj]).select().single();
-      if (!error && data) {
-        supabaseSaved = true;
+    let savedLeave = leaveObj;
+    const { data, error } = await supabase.from('leaves').insert([leaveObj]).select().single();
+
+    if (!error && data) {
+      savedLeave = data;
+    } else if (error && !isMissingLeavesTableError(error)) {
+      console.error('Supabase leaves insert error:', error.message || error);
+      // Fallback insert omitting newer optional columns in case of partial schema
+      const minimalObj = { ...leaveObj };
+      delete minimalObj.student_enrollment;
+      delete minimalObj.email;
+      delete minimalObj.file_type;
+      delete minimalObj.file_size;
+      delete minimalObj.reviewed_by;
+
+      const retry = await supabase.from('leaves').insert([minimalObj]).select().single();
+      if (!retry.error && retry.data) {
+        savedLeave = retry.data;
+      } else if (retry.error) {
+        return res.status(400).json({ error: retry.error.message || 'Failed to store leave application in database.' });
       }
-    } catch (dbErr) {
-      console.warn('Supabase leaves insert fallback:', dbErr.message);
     }
 
-    // 2. Always persist to local JSON fallback as backup
+    // Mirror locally as backup
     const localLeaves = getLocalLeaves();
-    localLeaves.unshift(leaveObj);
+    localLeaves.unshift(savedLeave);
     saveLocalLeaves(localLeaves);
 
     return res.status(201).json({
       message: 'Leave application submitted successfully for review!',
-      leave: leaveObj
+      leave: savedLeave
     });
   } catch (err) {
     console.error('Error submitting leave application:', err);
@@ -156,39 +211,23 @@ router.get('/my', authenticateJWT, async (req, res) => {
   }
 
   try {
-    let leavesList = [];
-    
-    // Try Supabase first
-    try {
-      const { data, error } = await supabase.from('leaves')
-        .select('*')
-        .eq('student_id', req.user.id)
-        .order('id', { ascending: false });
-      
-      if (!error && data && data.length > 0) {
-        leavesList = data;
-      }
-    } catch (e) {}
+    const studentIdStr = String(req.user.id);
+    const { data, error } = await supabase
+      .from('leaves')
+      .select('*')
+      .eq('student_id', studentIdStr)
+      .order('id', { ascending: false });
 
-    // Combine with local JSON fallback
-    const localLeaves = getLocalLeaves().filter(l => String(l.student_id) === String(req.user.id));
-    const mergedMap = new Map();
-    [...leavesList, ...localLeaves].forEach(item => {
-      if (item && item.id) {
-        const key = String(item.id);
-        const existing = mergedMap.get(key) || {};
-        mergedMap.set(key, {
-          ...existing,
-          ...item,
-          attachment: item.attachment || existing.attachment || null,
-          file_name: item.file_name || existing.file_name || null
-        });
-      }
-    });
+    if (!error) {
+      return res.json(data || []);
+    }
 
-    const finalLeaves = Array.from(mergedMap.values()).sort((a, b) => Number(b.id) - Number(a.id));
+    if (!isMissingLeavesTableError(error)) {
+      console.warn('Supabase fetch student leaves error:', error.message || error);
+    }
 
-    return res.json(finalLeaves);
+    const localLeaves = getLocalLeaves().filter(l => String(l.student_id) === studentIdStr);
+    return res.json(mergeLeaveLists([], localLeaves));
   } catch (err) {
     console.error('Error fetching student leaves:', err);
     return res.status(500).json({ error: 'Failed to fetch leave applications.' });
@@ -202,57 +241,33 @@ router.get('/all', authenticateJWT, async (req, res) => {
   }
 
   try {
-    let leavesList = [];
+    let finalLeaves = [];
+    const { data, error } = await supabase
+      .from('leaves')
+      .select('*')
+      .order('id', { ascending: false });
 
-    // Try Supabase
-    try {
-      const { data, error } = await supabase.from('leaves')
-        .select('*')
-        .order('id', { ascending: false });
-      
-      if (!error && data) {
-        leavesList = data;
+    if (!error) {
+      finalLeaves = data || [];
+      saveLocalLeaves(finalLeaves);
+    } else {
+      if (!isMissingLeavesTableError(error)) {
+        console.warn('Supabase fetch all leaves error:', error.message || error);
       }
-    } catch (e) {}
+      finalLeaves = mergeLeaveLists([], getLocalLeaves());
+    }
 
-    // Combine with local JSON fallback
-    const localLeaves = getLocalLeaves();
-    const mergedMap = new Map();
-    [...leavesList, ...localLeaves].forEach(item => {
-      if (item && item.id) {
-        const key = String(item.id);
-        const existing = mergedMap.get(key) || {};
-        mergedMap.set(key, {
-          ...existing,
-          ...item,
-          attachment: item.attachment || existing.attachment || null,
-          file_name: item.file_name || existing.file_name || null
-        });
-      }
-    });
-
-    let finalLeaves = Array.from(mergedMap.values()).sort((a, b) => Number(b.id) - Number(a.id));
-
-    // Filter for Faculty Panel: show only leaves targeted to ALL, or specifically to this Faculty
     if (req.user.role === 'faculty') {
       const facultyId = String(req.user.id || '').trim();
-      let facultyName = String(req.user.name || '').trim().toLowerCase();
-      if (facultyName.includes('(')) facultyName = facultyName.split('(')[0].trim();
-      if (facultyName.includes('||')) facultyName = facultyName.split('||')[0].trim();
+      const facultyName = cleanRecipientLabel(req.user.name || '').toLowerCase();
 
       finalLeaves = finalLeaves.filter(l => {
         const recId = String(l.recipient_id || '').trim();
-        let recName = String(l.recipient_name || '').trim().toLowerCase();
-        if (recName.includes('(')) recName = recName.split('(')[0].trim();
-        if (recName.includes('||')) recName = recName.split('||')[0].trim();
+        const recName = cleanRecipientLabel(l.recipient_name || '').toLowerCase();
 
-        // 1. Target is ALL or missing
         if (!recId || recId === 'ALL') return true;
-        // 2. Target ID matches Faculty ID
         if (recId === facultyId) return true;
-        // 3. Target Name matches Faculty Name
         if (facultyName && recName && (recName.includes(facultyName) || facultyName.includes(recName))) return true;
-
         return false;
       });
     }
@@ -279,35 +294,41 @@ router.put('/:id/status', authenticateJWT, async (req, res) => {
 
   try {
     const leaveId = isNaN(id) ? id : Number(id);
+    const updatePayload = {
+      status,
+      admin_remarks: admin_remarks || '',
+      reviewed_by: req.user.name || 'Admin',
+      reviewed_at: new Date().toISOString()
+    };
 
-    // 1. Update in local JSON
+    let updatedRecord = null;
+    const { data, error } = await supabase
+      .from('leaves')
+      .update(updatePayload)
+      .eq('id', leaveId)
+      .select()
+      .single();
+
+    if (!error && data) {
+      updatedRecord = data;
+    } else if (error && !isMissingLeavesTableError(error)) {
+      console.warn('Supabase update leave status error:', error.message || error);
+    }
+
     const localLeaves = getLocalLeaves();
-    let updatedLocalObj = null;
     const updatedLocalLeaves = localLeaves.map(l => {
       if (String(l.id) === String(id)) {
-        l.status = status;
-        if (admin_remarks !== undefined) l.admin_remarks = admin_remarks;
-        l.reviewed_by = req.user.name || 'Admin';
-        l.reviewed_at = new Date().toISOString();
-        updatedLocalObj = l;
+        const merged = { ...l, ...updatePayload };
+        if (!updatedRecord) updatedRecord = merged;
+        return merged;
       }
       return l;
     });
     saveLocalLeaves(updatedLocalLeaves);
 
-    // 2. Update in Supabase (if table exists)
-    try {
-      await supabase.from('leaves').update({
-        status,
-        admin_remarks: admin_remarks || '',
-        reviewed_by: req.user.name || 'Admin',
-        reviewed_at: new Date().toISOString()
-      }).eq('id', leaveId);
-    } catch (e) {}
-
     return res.json({
       message: `Leave application status updated to ${status}`,
-      leave: updatedLocalObj || { id: leaveId, status }
+      leave: updatedRecord || { id: leaveId, ...updatePayload }
     });
   } catch (err) {
     console.error('Error updating leave status:', err);
@@ -324,16 +345,15 @@ router.delete('/:id', authenticateJWT, async (req, res) => {
   const { id } = req.params;
 
   try {
-    // 1. Delete from local JSON
+    const leaveId = isNaN(id) ? id : Number(id);
+    const { error } = await supabase.from('leaves').delete().eq('id', leaveId);
+    if (error && !isMissingLeavesTableError(error)) {
+      console.warn('Supabase delete leave error:', error.message || error);
+    }
+
     const localLeaves = getLocalLeaves();
     const updatedLocalLeaves = localLeaves.filter(l => String(l.id) !== String(id));
     saveLocalLeaves(updatedLocalLeaves);
-
-    // 2. Delete from Supabase (if table exists)
-    try {
-      const leaveId = isNaN(id) ? id : Number(id);
-      await supabase.from('leaves').delete().eq('id', leaveId);
-    } catch (e) {}
 
     return res.json({ message: 'Leave application deleted successfully.' });
   } catch (err) {

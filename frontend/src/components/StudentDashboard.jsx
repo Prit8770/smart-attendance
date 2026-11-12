@@ -9,7 +9,7 @@ import {
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
-import { Html5Qrcode } from 'html5-qrcode';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import AttendanceNotification from './AttendanceNotification';
 import ToastContainer from './ToastContainer';
 import Swal from 'sweetalert2';
@@ -370,6 +370,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   const initialPinchDistanceRef = useRef(null);
   const initialZoomRef = useRef(1.0);
   const scannerContainerRef = useRef(null);
+  const isScanProcessingRef = useRef(false);
 
   // GPS refresh requirement & Device Cooldown States
   const [isGpsRefreshed, setIsGpsRefreshed] = useState(false);
@@ -730,9 +731,29 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
 
   // Submit QR-based attendance logic
   const handleQrSubmit = async (qrData) => {
-    if (!location) {
-      setMessage({ text: 'GPS Location is not ready. Please allow GPS and wait.', type: 'danger' });
-      return;
+    let currentLoc = location;
+    if (!currentLoc) {
+      try {
+        currentLoc = await new Promise((resolve, reject) => {
+          if (!navigator.geolocation) return reject(new Error('Geolocation not supported by device'));
+          navigator.geolocation.getCurrentPosition(
+            pos => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+            err => reject(err),
+            { enableHighAccuracy: true, timeout: 8000 }
+          );
+        });
+        setLocation(currentLoc);
+        setIsGpsRefreshed(true);
+      } catch (geoErr) {
+        setMessage({ text: 'GPS Location required. Please enable device location permission.', type: 'danger' });
+        setPopMessage({
+          type: 'error',
+          title: 'GPS Location Required',
+          message: 'Please allow GPS location permission on your browser/phone to mark attendance.'
+        });
+        isScanProcessingRef.current = false;
+        return;
+      }
     }
 
     setSubmitLoading(true);
@@ -749,8 +770,8 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           sessionId: qrData.sessionId,
           tokenIndex: qrData.tokenIndex,
           tokenValue: qrData.tokenValue,
-          latitude: location.latitude,
-          longitude: location.longitude,
+          latitude: currentLoc.latitude,
+          longitude: currentLoc.longitude,
           deviceId: getDeviceId()
         })
       });
@@ -761,30 +782,69 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
         throw new Error(data.error || 'Failed to submit attendance.');
       }
 
-      setMessage({ text: 'Attendance marked successfully!', type: 'success' });
-      setPopMessage({
-        type: 'success',
-        title: 'Attendance Marked Successfully!',
-        message: 'Student attendance has been recorded successfully.'
-      });
+      if (data.alreadyMarked) {
+        setMessage({ text: data.message || 'Attendance already marked successfully!', type: 'success' });
+        setPopMessage({
+          type: 'success',
+          title: 'Attendance Already Marked!',
+          message: data.message || 'Your attendance is already recorded successfully for this session.'
+        });
+        Swal.fire({
+          icon: 'info',
+          title: 'Already Marked! ℹ️',
+          text: data.message || 'Aapki attendance is session ke liye pehle se recorded hai.',
+          timer: 3500,
+          showConfirmButton: false
+        });
+      } else {
+        setMessage({ text: data.message || 'Attendance marked successfully!', type: 'success' });
+        setPopMessage({
+          type: 'success',
+          title: 'Attendance Present! ✅',
+          message: data.message || 'Student attendance has been recorded successfully.'
+        });
+        Swal.fire({
+          icon: 'success',
+          title: 'Attendance Present! ✅',
+          text: data.message || 'Aapki attendance successfully PRESENT mark ho chuki hai.',
+          timer: 3500,
+          showConfirmButton: false
+        });
+      }
 
-      const unlockTime = Date.now() + 2 * 60 * 1000;
-      localStorage.setItem('qr_attendance_cooldown', unlockTime.toString());
-      setCooldownTime(120);
+      // Sync across open windows and tabs
+      if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+        try {
+          const bc = new BroadcastChannel('attendance_system_sync');
+          bc.postMessage({ type: 'DATA_CHANGED', scope: 'attendance' });
+          bc.close();
+        } catch(e) {}
+      }
+      window.dispatchEvent(new Event('app_data_changed'));
 
-      fetchHistory();
-      fetchStudentTrend();
-      fetchSubjectBreakdown();
-      fetchWeeklyAnalysis();
+      setSessionStatus(prev => ({ ...prev, alreadySubmitted: true }));
+      try { if (typeof fetchSessionStatus === 'function') fetchSessionStatus(); } catch(e) {}
+      try { fetchHistory(); } catch(e) {}
+      try { fetchStudentTrend(); } catch(e) {}
+      try { fetchSubjectBreakdown(); } catch(e) {}
+      try { fetchWeeklyAnalysis(); } catch(e) {}
     } catch (err) {
       setMessage({ text: err.message, type: 'danger' });
       setPopMessage({
         type: 'error',
-        title: 'Attendance Rejected!',
+        title: 'Attendance Rejected! ❌',
         message: err.message || 'Failed to submit attendance.'
+      });
+      Swal.fire({
+        icon: 'error',
+        title: 'Attendance Rejected! ❌',
+        text: err.message || 'Attendance submit nahi ho payi. Invalid QR code ya session expire ho chuka hai.',
+        confirmButtonColor: '#ef4444',
+        confirmButtonText: 'OK'
       });
     } finally {
       setSubmitLoading(false);
+      isScanProcessingRef.current = false;
     }
   };
 
@@ -822,82 +882,135 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
         const track = videoEl.srcObject.getVideoTracks()[0];
         if (track) {
           videoTrackRef.current = track;
-          const capabilities = track.getCapabilities ? track.getCapabilities() : {};
-          if (capabilities.zoom) {
-            setZoomSupported(true);
-            setMinZoom(capabilities.zoom.min || 1.0);
-            setMaxZoom(capabilities.zoom.max || 3.0);
-            applyZoom(capabilities.zoom.min || 1.0);
-          } else {
-            setZoomSupported(false);
-            setMinZoom(1.0);
-            setMaxZoom(3.0);
-            applyZoom(1.0);
+          try {
+            const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+            if (capabilities.focusMode && Array.isArray(capabilities.focusMode) && capabilities.focusMode.includes('continuous')) {
+              track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+            }
+            if (capabilities.zoom) {
+              setZoomSupported(true);
+              setMinZoom(capabilities.zoom.min || 1.0);
+              setMaxZoom(capabilities.zoom.max || 3.0);
+              applyZoom(capabilities.zoom.min || 1.0);
+            } else {
+              setZoomSupported(false);
+              setMinZoom(1.0);
+              setMaxZoom(3.0);
+              applyZoom(1.0);
+            }
+          } catch(e) {
+            console.warn("Could not inspect track capabilities:", e);
           }
         }
       }
-    }, 600);
+    }, 500);
   };
 
-  const startScanningWithCamera = async (scannerInstance, targetCameraId) => {
+  const startScanningWithCamera = async (scannerInstance, targetCameraId, preferEnvironment = false) => {
     const scanConfig = {
-      fps: 10,
-      qrbox: { width: 250, height: 250 }
+      fps: 15,
+      // Full frame decoding: do not restrict qrbox so ZXing and native BarcodeDetector scan the entire view without errors
+      disableFlip: false
     };
 
     const handleScanSuccess = async (decodedText) => {
+      console.log('✅ QR Code detected successfully:', decodedText);
+      if (isScanProcessingRef.current) return;
+      isScanProcessingRef.current = true;
+
       try {
         let qrData;
-        if (decodedText.startsWith('{')) {
-          qrData = JSON.parse(decodedText);
+        const cleanText = String(decodedText || '').trim();
+        if (cleanText.startsWith('{')) {
+          qrData = JSON.parse(cleanText);
         } else {
-          const parts = decodedText.split(',');
+          const parts = cleanText.split(',');
           qrData = {
             sessionId: parseInt(parts[0], 10),
             tokenIndex: parseInt(parts[1], 10),
-            tokenValue: parts[2]
+            tokenValue: String(parts[2] || '').trim()
           };
         }
 
         if (qrData.sessionId && qrData.tokenIndex !== undefined && qrData.tokenValue) {
           if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
-            await html5QrCodeRef.current.stop();
+            try {
+              await html5QrCodeRef.current.stop();
+            } catch (e) {}
           }
           html5QrCodeRef.current = null;
           setScannerOpen(false);
-          handleQrSubmit(qrData);
+          await handleQrSubmit(qrData);
         } else {
-          setScannerError('Invalid QR Code format scanned.');
+          setScannerError('Invalid QR Code. Please scan the live QR code on the faculty screen.');
+          setTimeout(() => {
+            isScanProcessingRef.current = false;
+          }, 1500);
         }
       } catch (e) {
-        setScannerError('Could not parse scanned QR Code.');
+        setScannerError('Invalid QR Code format. Please scan the live QR code on the faculty screen.');
+        setTimeout(() => {
+          isScanProcessingRef.current = false;
+        }, 1500);
       }
     };
 
+    // 1. If explicit camera ID provided
     if (targetCameraId) {
-      await scannerInstance.start(
-        targetCameraId,
-        scanConfig,
-        handleScanSuccess,
-        () => {}
-      );
-      setupZoomTrack();
-      return;
+      try {
+        await scannerInstance.start(
+          targetCameraId,
+          scanConfig,
+          handleScanSuccess,
+          () => {}
+        );
+        setupZoomTrack();
+        return;
+      } catch (e) {
+        console.warn("Could not start camera with targetCameraId, falling back to facingMode:", e);
+      }
     }
 
-    // Fallback if no specific camera id available
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    // 2. If mobile device, prioritize back environment camera with autofocus
+    if (preferEnvironment) {
+      try {
+        await scannerInstance.start(
+          { facingMode: { exact: "environment" } },
+          scanConfig,
+          handleScanSuccess,
+          () => {}
+        );
+        setupZoomTrack();
+        return;
+      } catch (e1) {
+        try {
+          await scannerInstance.start(
+            { facingMode: "environment" },
+            scanConfig,
+            handleScanSuccess,
+            () => {}
+          );
+          setupZoomTrack();
+          return;
+        } catch (e2) {
+          console.warn("Environment camera not available, falling back:", e2);
+        }
+      }
+    }
+
+    // 3. Fallback to user facing camera
     try {
       await scannerInstance.start(
-        { facingMode: isMobile ? 'environment' : 'user' },
+        { facingMode: "user" },
         scanConfig,
         handleScanSuccess,
         () => {}
       );
       setupZoomTrack();
     } catch (err) {
+      // 4. Fallback to any default camera
       await scannerInstance.start(
-        { facingMode: 'user' },
+        {},
         scanConfig,
         handleScanSuccess,
         () => {}
@@ -907,28 +1020,12 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   };
 
   const startScanner = () => {
-    if (!sessionStatus.unlocked) {
-      const msg = sessionStatus.message || `Attendance session is locked. Faculty has not started a Live QR session for Semester ${user.semester}${user.division ? ' - Div ' + user.division : ''} yet.`;
-      setScannerError(msg);
-      showToast(msg, 'error');
-      return;
-    }
-
-    if (cooldownTime > 0) {
-      const msg = `Attendance submitted! Scan button is blocked for ${formatCooldown(cooldownTime)} on this device.`;
-      setScannerError(msg);
-      showToast(msg, 'warning');
-      return;
-    }
-
-    if (!isGpsRefreshed) {
-      const msg = "Set GPS! Please click on the 'Refresh GPS' button first before scanning QR.";
-      setScannerError(msg);
-      showToast(msg, 'error');
-      return;
+    if (!location) {
+      handleGetLocation();
     }
 
     setScannerError('');
+    isScanProcessingRef.current = false;
     setScannerOpen(true);
 
     setTimeout(async () => {
@@ -936,10 +1033,16 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
       if (!container) return;
 
       try {
-        const html5QrCode = new Html5Qrcode('qr-reader-container');
+        const html5QrCode = new Html5Qrcode('qr-reader-container', {
+          formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE],
+          verbose: false,
+          experimentalFeatures: {
+            useBarCodeDetectorIfSupported: true
+          }
+        });
         html5QrCodeRef.current = html5QrCode;
 
-        // Enumerate devices to pick the best physical camera
+        // Enumerate devices
         let availableDevices = [];
         try {
           availableDevices = await Html5Qrcode.getCameras();
@@ -948,17 +1051,31 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           console.warn("Could not list cameras:", e);
         }
 
-        const bestCamId = pickBestCamera(availableDevices);
-        if (bestCamId) {
-          setSelectedCameraId(bestCamId);
+        const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+
+        if (isMobileDevice) {
+          // On mobile, start with environment back camera with continuous auto-focus
+          await startScanningWithCamera(html5QrCode, null, true);
+        } else {
+          const bestCamId = pickBestCamera(availableDevices);
+          if (bestCamId) {
+            setSelectedCameraId(bestCamId);
+          }
+          await startScanningWithCamera(html5QrCode, bestCamId, false);
         }
 
-        await startScanningWithCamera(html5QrCode, bestCamId);
+        // Once camera permission is granted, re-fetch cameras to get readable labels
+        try {
+          const freshDevices = await Html5Qrcode.getCameras();
+          if (freshDevices && freshDevices.length > 0) {
+            setCameras(freshDevices);
+          }
+        } catch(e) {}
       } catch (err) {
         console.error("Camera access error:", err);
         setScannerError('Camera access failed. Please ensure camera permissions are allowed and select a working camera.');
       }
-    }, 300);
+    }, 250);
   };
 
   // Dynamic Camera Switcher
@@ -974,7 +1091,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
         await html5QrCodeRef.current.stop();
       }
       videoTrackRef.current = null;
-      await startScanningWithCamera(html5QrCodeRef.current, newCameraId);
+      await startScanningWithCamera(html5QrCodeRef.current, newCameraId, false);
     } catch (err) {
       console.error("Error switching camera:", err);
       setScannerError('Failed to switch camera: ' + (err.message || 'Device error'));
@@ -984,6 +1101,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
   };
 
   const stopScanner = async () => {
+    isScanProcessingRef.current = false;
     if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
       try {
         await html5QrCodeRef.current.stop();
@@ -996,14 +1114,6 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
     setScannerOpen(false);
     setIsSwitchingCamera(false);
   };
-
-  // Auto-close scanner if session becomes locked while scanning is open
-  useEffect(() => {
-    if (!sessionStatus.loading && !sessionStatus.unlocked && scannerOpen) {
-      stopScanner();
-      setScannerError('Session Locked: Faculty has locked or ended the attendance session.');
-    }
-  }, [sessionStatus.unlocked, sessionStatus.loading, scannerOpen]);
 
   // Fetch Student's Leave Applications & Recipients list from backend
   const fetchLeaves = async () => {
@@ -1508,29 +1618,27 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
           </div>
         )}
 
-        {/* Live Session lock banner */}
+        {/* Live Session Status Banner & QR Scanner */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: '500' }}>Camera QR Scanner</label>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '6px' }}>
+            <label style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: '600' }}>Camera QR Attendance</label>
             {sessionStatus.unlocked ? (
               <span style={{ color: '#34d399', fontSize: '0.78rem', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                🔓 Session Active (Sem {sessionStatus.semester}{sessionStatus.division ? ` - Div ${sessionStatus.division}` : ''})
+                🟢 Session Live ({sessionStatus.secondsLeft ? `${sessionStatus.secondsLeft}s left` : 'Active'})
               </span>
             ) : (
-              <span style={{ color: '#f87171', fontSize: '0.78rem', fontWeight: '700', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                🔒 Session Locked
+              <span style={{ color: '#94a3b8', fontSize: '0.78rem', fontWeight: '600', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                📷 Ready to Scan
               </span>
             )}
           </div>
 
-
-
-          {sessionStatus.unlocked && (
+          {sessionStatus.unlocked ? (
             <div style={{
               padding: '12px 14px',
               borderRadius: '10px',
-              background: 'rgba(52, 211, 153, 0.1)',
-              border: '1px solid rgba(52, 211, 153, 0.3)',
+              background: 'rgba(52, 211, 153, 0.12)',
+              border: '1px solid rgba(52, 211, 153, 0.35)',
               color: '#34d399',
               fontSize: '0.85rem',
               display: 'flex',
@@ -1539,8 +1647,23 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
             }}>
               <CheckCircle2 size={20} style={{ flexShrink: 0 }} />
               <span>
-                <strong>Session Active!</strong> Live session started by {sessionStatus.facultyName || 'Faculty'} for Sem {sessionStatus.semester} {sessionStatus.division ? `(Div ${sessionStatus.division})` : ''}.
+                <strong>Live Attendance Active!</strong> {sessionStatus.subject ? `📚 ${sessionStatus.subject} • ` : ''}Faculty: {sessionStatus.facultyName || 'Faculty'} (Sem {sessionStatus.semester}{sessionStatus.division && sessionStatus.division !== 'ALL' ? ` Div ${sessionStatus.division}` : ''}).
               </span>
+            </div>
+          ) : (
+            <div style={{
+              padding: '10px 14px',
+              borderRadius: '10px',
+              background: 'rgba(245, 158, 11, 0.08)',
+              border: '1px solid rgba(245, 158, 11, 0.2)',
+              color: '#fbbf24',
+              fontSize: '0.82rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              <AlertCircle size={16} style={{ flexShrink: 0 }} />
+              <span>Faculty Live QR • Tap the button below to scan the rotating QR code on faculty screen.</span>
             </div>
           )}
 
@@ -1588,18 +1711,49 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                   </div>
                 )}
 
-                <div 
-                  id="qr-reader-container" 
-                  style={{ 
-                    width: '100%', 
-                    aspectRatio: '1/1', 
-                    borderRadius: '12px', 
-                    overflow: 'hidden', 
-                    border: '2px solid rgba(255,255,255,0.1)', 
-                    background: '#000',
-                    position: 'relative'
-                  }} 
-                />
+                <div style={{ position: 'relative', width: '100%', aspectRatio: '1/1' }}>
+                  <div 
+                    id="qr-reader-container" 
+                    style={{ 
+                      width: '100%', 
+                      height: '100%',
+                      borderRadius: '16px', 
+                      overflow: 'hidden', 
+                      border: '2px solid rgba(168, 85, 247, 0.4)', 
+                      background: '#000',
+                      position: 'relative'
+                    }} 
+                  />
+                  {/* Visual Laser Reticle Overlay */}
+                  <div style={{
+                    position: 'absolute',
+                    top: 0, left: 0, right: 0, bottom: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    pointerEvents: 'none',
+                    zIndex: 10
+                  }}>
+                    <div style={{
+                      width: '74%',
+                      height: '74%',
+                      border: '2px dashed rgba(168, 85, 247, 0.9)',
+                      borderRadius: '16px',
+                      boxShadow: '0 0 24px rgba(168, 85, 247, 0.45), inset 0 0 20px rgba(168, 85, 247, 0.15)',
+                      position: 'relative',
+                      overflow: 'hidden'
+                    }}>
+                      <div style={{
+                        position: 'absolute',
+                        top: 0, left: 0, right: 0,
+                        height: '3px',
+                        background: 'linear-gradient(90deg, transparent, #a855f7, #c084fc, #a855f7, transparent)',
+                        boxShadow: '0 0 14px #a855f7',
+                        animation: 'scanLaser 2.2s ease-in-out infinite'
+                      }} />
+                    </div>
+                  </div>
+                </div>
                 
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
                   <button type="button" onClick={handleZoomOut} disabled={zoomLevel <= minZoom} style={{ background: 'transparent', border: 'none', color: zoomLevel <= minZoom ? 'var(--text-muted)' : 'var(--primary)', cursor: zoomLevel <= minZoom ? 'not-allowed' : 'pointer', padding: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1629,7 +1783,7 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
               type="button"
               className="btn btn-primary"
               onClick={startScanner}
-              disabled={submitLoading || !location || !sessionStatus.unlocked || sessionStatus.alreadySubmitted}
+              disabled={submitLoading}
               style={{ 
                 width: '100%', 
                 display: 'flex', 
@@ -1637,41 +1791,40 @@ export default function StudentDashboard({ user, token, onLogout, theme, toggleT
                 justifyContent: 'center', 
                 gap: '8px', 
                 padding: '14px',
-                opacity: (submitLoading || !location || !sessionStatus.unlocked || sessionStatus.alreadySubmitted) ? 0.7 : 1,
-                cursor: (!sessionStatus.unlocked || sessionStatus.alreadySubmitted) ? 'not-allowed' : 'pointer',
+                cursor: submitLoading ? 'wait' : 'pointer',
                 background: sessionStatus.alreadySubmitted 
                   ? 'rgba(34, 197, 94, 0.15)' 
-                  : !sessionStatus.unlocked 
-                  ? 'rgba(239, 68, 68, 0.15)' 
-                  : undefined,
+                  : 'linear-gradient(135deg, var(--primary) 0%, var(--primary-hover, #4f46e5) 100%)',
                 border: sessionStatus.alreadySubmitted 
-                  ? '1px solid rgba(34, 197, 94, 0.4)' 
-                  : !sessionStatus.unlocked 
-                  ? '1px solid rgba(239, 68, 68, 0.3)' 
-                  : undefined,
+                  ? '1.5px solid rgba(34, 197, 94, 0.45)' 
+                  : 'none',
                 color: sessionStatus.alreadySubmitted 
                   ? '#34d399' 
-                  : !sessionStatus.unlocked 
-                  ? '#f87171' 
-                  : undefined
+                  : '#ffffff',
+                fontWeight: '700',
+                fontSize: '0.95rem',
+                boxShadow: sessionStatus.alreadySubmitted 
+                  ? 'none' 
+                  : '0 4px 14px rgba(245, 158, 11, 0.25)',
+                transition: 'all 0.2s ease'
               }}
             >
-              {sessionStatus.alreadySubmitted ? (
-                <CheckCircle2 size={18} color="#34d399" />
-              ) : !sessionStatus.unlocked ? (
-                <ShieldAlert size={18} />
+              {submitLoading ? (
+                <>
+                  <div className="spinner" style={{ width: '18px', height: '18px' }} />
+                  <span>Processing Scan...</span>
+                </>
+              ) : sessionStatus.alreadySubmitted ? (
+                <>
+                  <CheckCircle2 size={18} color="#34d399" />
+                  <span>Attendance Recorded ✓ (Tap to Scan Again)</span>
+                </>
               ) : (
-                <Camera size={18} />
+                <>
+                  <Camera size={18} />
+                  <span>Scan Attendance QR Code</span>
+                </>
               )}
-              {sessionStatus.alreadySubmitted
-                ? 'Attendance Marked Successfully ✓ (Locked)'
-                : !sessionStatus.unlocked
-                ? 'Scan Attendance QR (Locked - Waiting for Faculty)'
-                : submitLoading 
-                ? 'Processing Scan...' 
-                : !isGpsRefreshed 
-                ? 'Scan Attendance QR (Click Refresh GPS first)' 
-                : 'Scan Attendance QR'}
             </button>
           )}
 

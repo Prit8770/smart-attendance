@@ -83,7 +83,8 @@ router.get('/today', authenticateJWT, requireAdmin, async (req, res) => {
 
     // Select OTPs for the target date
     let otpQuery = supabase.from('otp').select('*').eq('date', today);
-    if (req.query.all !== 'true' || req.query.view === 'faculty') {
+    const isFacultyRestricted = (req.user.role === 'faculty' && req.query.view !== 'admin') || req.query.view === 'faculty';
+    if (isFacultyRestricted && req.query.all !== 'true') {
       if (orClause) {
         otpQuery = otpQuery.or(orClause);
       }

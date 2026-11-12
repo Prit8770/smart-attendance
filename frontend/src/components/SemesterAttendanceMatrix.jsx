@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  Search, X, RotateCcw, RefreshCw, Folder, Layers, BookOpen,
+  Search, X, RefreshCw, Folder, Layers, BookOpen,
   Filter, Calendar, Users, TrendingUp, CheckCircle, AlertTriangle,
   Clock, FileText, ArrowLeft
 } from 'lucide-react';
@@ -11,7 +11,11 @@ import AdminModalCloseBtn from './AdminModalCloseBtn';
  */
 const cleanSubjectTitle = (sub) => {
   if (!sub) return 'Subject';
-  return String(sub).replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim() || sub;
+  let s = String(sub).trim();
+  s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+  s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+  s = s.replace(/\s*\(\s*\)/g, '').replace(/\s*\[\s*\]/g, '').trim();
+  return s || String(sub).trim() || 'Subject';
 };
 
 const getLocalDateStr = (dInput) => {
@@ -162,13 +166,17 @@ export default function SemesterAttendanceMatrix({
         const sub = cleanSubjectTitle(sess.subject || 'Subject');
         const formattedTime = sess.created_at ? new Date(sess.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (sess.time || 'Session');
         const sessDiv = (sess.division && String(sess.division).toUpperCase() !== 'ALL') ? String(sess.division).toUpperCase() : 'ALL';
-        const colKey = `${dateStr}_${sub.toLowerCase().replace(/\s+/g, '_')}_${sessDiv}_${formattedTime}`;
+        const colKey = sess.qr_session_id ? `qr_${sess.qr_session_id}` : (sess.otp_id ? `otp_${sess.otp_id}` : (sess.id || `sess_${dateStr}_${sessionMap.size}`));
 
         if (!sessionMap.has(colKey)) {
+          const sIds = new Set([sess.id, sess.qr_session_id, sess.otp_id].filter(Boolean));
+          if (sess.qr_session_id) sIds.add(Number(sess.qr_session_id));
+          if (sess.otp_id) sIds.add(Number(sess.otp_id));
           sessionMap.set(colKey, {
             columnKey: colKey,
-            sessionIds: new Set([sess.id || sess.qr_session_id || sess.otp_id].filter(Boolean)),
+            sessionIds: sIds,
             date: dateStr,
+            created_at: sess.created_at || (sess.date ? `${sess.date}T${sess.time || '00:00:00'}` : null),
             subject: sub,
             faculty_name: sess.faculty_name || 'Faculty',
             time: formattedTime,
@@ -177,7 +185,10 @@ export default function SemesterAttendanceMatrix({
           });
         } else {
           const sId = sess.id || sess.qr_session_id || sess.otp_id;
-          if (sId) sessionMap.get(colKey).sessionIds.add(sId);
+          if (sId) {
+            sessionMap.get(colKey).sessionIds.add(sId);
+            if (!isNaN(Number(sId))) sessionMap.get(colKey).sessionIds.add(Number(sId));
+          }
         }
       }
     });
@@ -189,7 +200,7 @@ export default function SemesterAttendanceMatrix({
         const sub = cleanSubjectTitle(l.subject || 'Subject');
         const formattedTime = l.time || (l.created_at ? new Date(l.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Session');
         const sessDiv = (l.division && String(l.division).toUpperCase() !== 'ALL') ? String(l.division).toUpperCase() : 'ALL';
-        const colKey = `${lDate}_${sub.toLowerCase().replace(/\s+/g, '_')}_${sessDiv}_${formattedTime}`;
+        const colKey = l.qr_session_id ? `qr_${l.qr_session_id}` : (l.otp_id ? `otp_${l.otp_id}` : `manual_${lDate}_${sub.toLowerCase().replace(/\s+/g, '_')}_${(l.time || 'class').replace(/:/g, '')}_${l.id}`);
 
         const isQrOrOtp = Boolean(l.qr_session_id || l.otp_id);
 
@@ -198,18 +209,25 @@ export default function SemesterAttendanceMatrix({
           if (isQrOrOtp) {
             let matchesKnownSession = false;
             for (const sess of sessionMap.values()) {
-              if (sess.sessionIds && (sess.sessionIds.has(l.qr_session_id) || sess.sessionIds.has(l.otp_id))) {
+              if (sess.sessionIds && (
+                (l.qr_session_id && (sess.sessionIds.has(l.qr_session_id) || sess.sessionIds.has(Number(l.qr_session_id)))) ||
+                (l.otp_id && (sess.sessionIds.has(l.otp_id) || sess.sessionIds.has(Number(l.otp_id))))
+              )) {
                 matchesKnownSession = true;
                 break;
               }
             }
-            if (!matchesKnownSession) return;
+            if (!matchesKnownSession && qrSessionHistory && qrSessionHistory.length > 0) return;
           }
 
+          const sIds = new Set([l.qr_session_id, l.otp_id, l.id].filter(Boolean));
+          if (l.qr_session_id) sIds.add(Number(l.qr_session_id));
+          if (l.otp_id) sIds.add(Number(l.otp_id));
           sessionMap.set(colKey, {
             columnKey: colKey,
-            sessionIds: new Set([l.qr_session_id || l.otp_id || l.id].filter(Boolean)),
+            sessionIds: sIds,
             date: lDate,
+            created_at: l.created_at || (l.date && l.time ? `${l.date}T${l.time}` : null),
             subject: sub,
             faculty_name: l.faculty_name || 'Faculty',
             time: formattedTime,
@@ -218,12 +236,44 @@ export default function SemesterAttendanceMatrix({
           });
         } else {
           const sId = l.qr_session_id || l.otp_id || l.id;
-          if (sId) sessionMap.get(colKey).sessionIds.add(sId);
+          if (sId) {
+            sessionMap.get(colKey).sessionIds.add(sId);
+            if (!isNaN(Number(sId))) sessionMap.get(colKey).sessionIds.add(Number(sId));
+          }
         }
       }
     });
 
-    const columns = Array.from(sessionMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+    // Sort strictly chronologically: earliest session first, later sessions after it
+    const columns = Array.from(sessionMap.values()).sort((a, b) => {
+      const tA = new Date(a.created_at || (a.date + 'T' + (a.time || '00:00:00'))).getTime() || 0;
+      const tB = new Date(b.created_at || (b.date + 'T' + (b.time || '00:00:00'))).getTime() || 0;
+      if (tA !== tB) return tA - tB;
+      return String(a.columnKey).localeCompare(String(b.columnKey));
+    });
+
+    const subDateCounts = {};
+    columns.forEach(s => {
+      const k = `${s.date}_${cleanSubjectTitle(s.subject)}`;
+      subDateCounts[k] = (subDateCounts[k] || 0) + 1;
+    });
+
+    const subDateCurrentIdx = {};
+    columns.forEach(sess => {
+      const k = `${sess.date}_${cleanSubjectTitle(sess.subject)}`;
+      const totalCount = subDateCounts[k] || 1;
+      const currentIdx = (subDateCurrentIdx[k] || 0) + 1;
+      subDateCurrentIdx[k] = currentIdx;
+
+      if (totalCount > 1) {
+        sess.displayTime = `${sess.time} (S${currentIdx})`;
+        sess.sessionLabel = `${cleanSubjectTitle(sess.subject)} (Session ${currentIdx})`;
+      } else {
+        sess.displayTime = sess.time;
+        sess.sessionLabel = cleanSubjectTitle(sess.subject);
+      }
+    });
+
     const attendanceMatrix = {};
 
     semStudents.forEach(st => {
@@ -237,19 +287,29 @@ export default function SemesterAttendanceMatrix({
         const hasLog = semLogs.some(l => {
           const matchStudent = String(l.student_id) === String(st.id) ||
             String(l.enrollment_no || '').toLowerCase() === String(st.enrollment_no || '').toLowerCase();
+          if (!matchStudent) return false;
           const lDate = getLocalDateStr(l.date || l.timestamp || l.created_at);
+          if (lDate !== col.date) return false;
+
+          if (col.sessionIds && col.sessionIds.size > 0) {
+            return (
+              (l.qr_session_id && (col.sessionIds.has(l.qr_session_id) || col.sessionIds.has(Number(l.qr_session_id)) || col.sessionIds.has(`qr_${l.qr_session_id}`))) ||
+              (l.otp_id && (col.sessionIds.has(l.otp_id) || col.sessionIds.has(Number(l.otp_id)) || col.sessionIds.has(`otp_${l.otp_id}`))) ||
+              (l.id && (col.sessionIds.has(l.id) || col.sessionIds.has(Number(l.id)) || col.sessionIds.has(`log_${l.id}`)))
+            );
+          }
+
           const lSub = cleanSubjectTitle(l.subject || '');
           const matchSub = !lSub || !col.subject || lSub.toLowerCase() === col.subject.toLowerCase();
-          const matchSession = col.sessionIds && (col.sessionIds.has(l.qr_session_id) || col.sessionIds.has(l.otp_id) || col.sessionIds.has(l.id));
-          return matchStudent && lDate === col.date && (matchSession || matchSub);
+          return matchSub;
         });
 
         if (hasLog) {
-          attendanceMatrix[String(st.id)][col.columnKey] = { status: 'P', time: col.time, method: col.type };
+          attendanceMatrix[String(st.id)][col.columnKey] = { status: 'P', time: col.displayTime || col.time, method: col.type };
         } else if (isApplicable) {
-          attendanceMatrix[String(st.id)][col.columnKey] = { status: 'A', time: col.time, method: col.type };
+          attendanceMatrix[String(st.id)][col.columnKey] = { status: 'A', time: col.displayTime || col.time, method: col.type };
         } else {
-          attendanceMatrix[String(st.id)][col.columnKey] = { status: 'NA', time: col.time, method: col.type, targetDivision: col.division };
+          attendanceMatrix[String(st.id)][col.columnKey] = { status: 'NA', time: col.displayTime || col.time, method: col.type, targetDivision: col.division };
         }
       });
     });
@@ -357,11 +417,12 @@ export default function SemesterAttendanceMatrix({
     }
   }, [allSemestersList, selectedSem]);
 
-  // Dynamic list of available subjects for subject filter dropdown (Strictly assigned subjects for this faculty)
+  // Dynamic list of available subjects for subject filter dropdown
   const availableFilterSubjects = useMemo(() => {
-    if (assignedSubjects && Array.isArray(assignedSubjects) && assignedSubjects.length > 0) {
-      const targetSem = (selectedSem && selectedSem !== 'ALL') ? String(selectedSem).replace(/\D/g, '').trim() : null;
+    const subSet = new Set();
+    const targetSem = (selectedSem && selectedSem !== 'ALL') ? String(selectedSem).replace(/\D/g, '').trim() : null;
 
+    if (assignedSubjects && Array.isArray(assignedSubjects) && assignedSubjects.length > 0) {
       // Filter assigned subjects by selected semester if a specific semester is picked
       const matchingAssigned = assignedSubjects.filter(sub => {
         if (!sub) return false;
@@ -370,7 +431,6 @@ export default function SemesterAttendanceMatrix({
         return !subSem || subSem === targetSem;
       });
 
-      const subSet = new Set();
       matchingAssigned.forEach(sub => {
         const rawName = sub.subjectName || sub.name || (typeof sub === 'string' ? sub : '');
         const clean = cleanSubjectTitle(rawName);
@@ -378,16 +438,20 @@ export default function SemesterAttendanceMatrix({
           subSet.add(clean);
         }
       });
-
-      const list = Array.from(subSet).sort();
-      if (list.length > 0) {
-        return list;
-      }
     }
 
-    // Fallback: use uniqueSubjects from matrixData (e.g. for Admin Dashboard)
-    return (matrixData?.uniqueSubjects || []).map(s => cleanSubjectTitle(s)).filter(Boolean);
-  }, [assignedSubjects, selectedSem, matrixData?.uniqueSubjects]);
+    // Always include subjects from conducted sessions so faculty can filter by any session they took
+    (matrixData?.columns || []).forEach(col => {
+      const clean = cleanSubjectTitle(col.subject);
+      if (clean && clean !== 'Subject') subSet.add(clean);
+    });
+    (matrixData?.uniqueSubjects || []).forEach(s => {
+      const clean = cleanSubjectTitle(s);
+      if (clean && clean !== 'Subject') subSet.add(clean);
+    });
+
+    return Array.from(subSet).sort();
+  }, [assignedSubjects, selectedSem, matrixData?.columns, matrixData?.uniqueSubjects]);
 
   // Reset subject filter if current value is invalid
   useEffect(() => {
@@ -396,49 +460,11 @@ export default function SemesterAttendanceMatrix({
     }
   }, [availableFilterSubjects, matrixSubjectFilter]);
 
-  // Filtered Matrix Data based on faculty assigned subjects and selected subject filter
+  // Filtered Matrix Data based on selected subject filter
   const displayMatrixData = useMemo(() => {
     if (!matrixData) return null;
 
     let filteredColumns = matrixData.columns || [];
-
-    // If faculty assigned subjects provided, filter by assigned subjects flexibly
-    if (assignedSubjects && Array.isArray(assignedSubjects) && assignedSubjects.length > 0) {
-      const allowedSubs = new Set();
-      const targetSem = (selectedSem && selectedSem !== 'ALL') ? String(selectedSem).replace(/\D/g, '').trim() : null;
-
-      assignedSubjects.forEach(s => {
-        if (!s) return;
-        const subSem = String(s.semester || '').replace(/\D/g, '').trim();
-        if (!targetSem || !subSem || subSem === targetSem) {
-          const name = cleanSubjectTitle(s.subjectName || s.name || (typeof s === 'string' ? s : '')).toLowerCase();
-          if (name && name !== 'subject') allowedSubs.add(name);
-        }
-      });
-
-      // Fallback: if no subject matched target sem, include all assigned subject names
-      if (allowedSubs.size === 0) {
-        assignedSubjects.forEach(s => {
-          if (!s) return;
-          const name = cleanSubjectTitle(s.subjectName || s.name || (typeof s === 'string' ? s : '')).toLowerCase();
-          if (name && name !== 'subject') allowedSubs.add(name);
-        });
-      }
-
-      if (allowedSubs.size > 0) {
-        const strictFiltered = filteredColumns.filter(col => {
-          const colSub = cleanSubjectTitle(col.subject).toLowerCase();
-          return Array.from(allowedSubs).some(sub =>
-            colSub === sub || colSub.includes(sub) || sub.includes(colSub)
-          );
-        });
-
-        // Only apply strict filtering if it doesn't wipe out all conducted sessions
-        if (strictFiltered.length > 0) {
-          filteredColumns = strictFiltered;
-        }
-      }
-    }
 
     // If user selected a specific subject filter from dropdown
     if (matrixSubjectFilter && matrixSubjectFilter !== 'ALL') {
@@ -471,7 +497,7 @@ export default function SemesterAttendanceMatrix({
       columns: filteredColumns,
       dateGroups: Array.from(dateGroupsMap.values())
     };
-  }, [matrixData, assignedSubjects, selectedSem, matrixSubjectFilter]);
+  }, [matrixData, matrixSubjectFilter]);
 
   // Process and sort students for the matrix table
   const processedMatrixStudents = useMemo(() => {
@@ -846,38 +872,7 @@ export default function SemesterAttendanceMatrix({
                 <option value="defaulter">Defaulters (&lt; 75%)</option>
               </select>
             </div>
-
           </div>
-
-          {/* Reset Filters Button */}
-          <button
-            type="button"
-            onClick={handleResetFilters}
-            title="Reset all search & filter values"
-            style={{
-              height: '36px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              padding: '0 14px',
-              borderRadius: '8px',
-              border: '1.5px solid #cbd5e1',
-              background: '#f8fafc',
-              color: '#475569',
-              fontSize: '0.82rem',
-              fontWeight: '700',
-              cursor: 'pointer',
-              whiteSpace: 'nowrap',
-              transition: 'all 0.15s ease',
-              marginLeft: 'auto',
-              boxSizing: 'border-box'
-            }}
-            onMouseEnter={e => { e.currentTarget.style.background = '#fee2e2'; e.currentTarget.style.color = '#dc2626'; e.currentTarget.style.borderColor = '#f87171'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = '#f8fafc'; e.currentTarget.style.color = '#475569'; e.currentTarget.style.borderColor = '#cbd5e1'; }}
-          >
-            <RotateCcw size={14} />
-            Reset Filters
-          </button>
         </div>
       </div>
 

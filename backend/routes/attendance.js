@@ -25,6 +25,30 @@ function getLocalSessionMetaMap() {
   return {};
 }
 
+// Helper to resolve all valid faculty table IDs for a user to prevent session/log mismatch
+async function getAllFacultyIdsForUser(user) {
+  if (!user) return new Set();
+  const ids = new Set();
+  if (user.id) ids.add(String(user.id));
+  if (user.faculty_id) ids.add(String(user.faculty_id));
+
+  try {
+    const email = (user.email || '').toLowerCase().trim();
+    const username = (user.username || '').toLowerCase().trim();
+    if (email) {
+      const { data: byEmail } = await supabase.from('faculty').select('id').eq('email', email);
+      (byEmail || []).forEach(f => ids.add(String(f.id)));
+    }
+    if (username) {
+      const { data: byUser } = await supabase.from('faculty').select('id').eq('username', username);
+      (byUser || []).forEach(f => ids.add(String(f.id)));
+    }
+  } catch (e) {
+    console.error('Error resolving all faculty ids for user:', e);
+  }
+  return ids;
+}
+
 // Haversine formula to calculate distance in meters
 function calculateDistance(lat1, lon1, lat2, lon2) {
   const R = 6371e3; // Earth radius in meters
@@ -224,38 +248,50 @@ router.post('/submit', authenticateJWT, async (req, res) => {
     let qrSessionRecord = null;
     let attendanceLinkCol = 'otp_id';
     let attendanceLinkId = null;
+    let existingFailedId = null;
 
     if (sessionId !== undefined && tokenIndex !== undefined && tokenValue !== undefined) {
       // 1. QR Code Submission
       const { data: qrSession } = await supabase.from('qr_sessions').select('*').eq('id', sessionId).maybeSingle();
       qrSessionRecord = qrSession;
       if (!qrSessionRecord) {
-        return res.status(400).json({ error: 'Invalid QR session. Please scan a valid QR code.' });
+        return res.status(400).json({ error: 'Invalid QR session. Please scan a valid faculty attendance QR code.' });
       }
 
-      // Check semester & division match for QR
-      if (qrSessionRecord.semester && req.user.semester) {
-        if (parseInt(qrSessionRecord.semester, 10) !== parseInt(req.user.semester, 10)) {
-          return res.status(400).json({ error: `This QR session is for Semester ${qrSessionRecord.semester}, but your profile is Semester ${req.user.semester}.` });
+      // Fetch fresh student profile from DB to prevent stale JWT claims
+      let studentSem = req.user.semester ? parseInt(req.user.semester, 10) : null;
+      let studentDiv = req.user.division ? String(req.user.division).trim().toUpperCase() : '';
+
+      try {
+        const { data: dbStudent } = await supabase.from('students')
+          .select('id, name, semester, division, course')
+          .eq('id', req.user.id)
+          .maybeSingle();
+        if (dbStudent) {
+          if (dbStudent.semester) studentSem = parseInt(dbStudent.semester, 10);
+          if (dbStudent.division) studentDiv = String(dbStudent.division).trim().toUpperCase();
+        }
+      } catch (e) {}
+
+      // Check semester match for QR
+      if (qrSessionRecord.semester && studentSem) {
+        if (parseInt(qrSessionRecord.semester, 10) !== studentSem) {
+          return res.status(400).json({ error: `Attendance Rejected. This QR session is for Semester ${qrSessionRecord.semester}, but your profile is Semester ${studentSem}.` });
         }
       }
+
+      // Check division match for QR
       if (qrSessionRecord.division && String(qrSessionRecord.division).trim().toUpperCase() !== 'ALL') {
         const sessDiv = String(qrSessionRecord.division).trim().toUpperCase();
-        const stuDiv = String(req.user.division || '').trim().toUpperCase();
-        if (sessDiv !== stuDiv) {
-          return res.status(400).json({ error: `This QR session is for Division ${sessDiv}, but your profile is Division ${stuDiv || 'None'}.` });
+        if (studentDiv && sessDiv !== studentDiv) {
+          return res.status(400).json({ error: `Attendance Rejected. This QR session is for Division ${sessDiv}, but your profile is Division ${studentDiv}.` });
         }
       }
 
-      // Check if session has expired (allow 60s grace period for last-second scans)
+      // Check if session has expired (allow 30s grace period for scan transmission)
       const expiresTime = new Date(qrSessionRecord.expires_at).getTime();
-      if (nowMs > expiresTime + 60000) {
-        return res.status(400).json({ error: 'This QR attendance session has expired.' });
-      }
-
-      // Check token index range
-      if (tokenIndex < 0 || tokenIndex >= 8) {
-        return res.status(400).json({ error: 'Invalid QR token index.' });
+      if (nowMs > expiresTime + 30000) {
+        return res.status(400).json({ error: 'This QR attendance session has expired. Please ask faculty to start a new session.' });
       }
 
       // Parse tokens
@@ -266,29 +302,38 @@ router.post('/submit', authenticateJWT, async (req, res) => {
         return res.status(500).json({ error: 'Failed to parse QR session tokens.' });
       }
 
-      // Verify token matches generated session tokens or current index window
-      const isValidToken = Array.isArray(tokens) && (
-        tokens.includes(tokenValue) ||
-        tokens[tokenIndex] === tokenValue ||
-        (tokens[tokenIndex - 1] && tokens[tokenIndex - 1] === tokenValue) ||
-        (tokens[tokenIndex + 1] && tokens[tokenIndex + 1] === tokenValue)
-      );
+      const cleanToken = String(tokenValue || '').trim().toLowerCase();
+      const cleanTokens = Array.isArray(tokens) ? tokens.map(t => String(t || '').trim().toLowerCase()) : [];
 
-      if (!isValidToken) {
-        return res.status(400).json({ error: 'Invalid QR code. Please scan the currently active QR code.' });
+      const scannedTokenIndex = cleanTokens.indexOf(cleanToken);
+      if (scannedTokenIndex === -1) {
+        return res.status(400).json({ error: 'Invalid QR code. Scanned QR code does not match this attendance session.' });
       }
 
-      // Verify token timing window (allow 5 seconds clock drift and full session + 60s grace period)
+      // Verify dynamic rotation: Fetch configured rotation time (default 10s)
+      let qrTime = 10;
+      try {
+        const { data: timeSetting } = await supabase.from('settings').select('value').eq('key', 'qr_code_time').maybeSingle();
+        if (timeSetting && timeSetting.value) qrTime = parseInt(timeSetting.value, 10) || 10;
+      } catch (e) {}
+
       const sessionStartMs = new Date(qrSessionRecord.created_at).getTime();
+      const elapsedSeconds = Math.max(0, Math.floor((nowMs - sessionStartMs) / 1000));
+      const currentExpectedIndex = Math.min(cleanTokens.length - 1, Math.floor(elapsedSeconds / qrTime));
 
-      if (nowMs < sessionStartMs - 5000) { // allow 5 seconds clock drift
-        return res.status(400).json({ error: 'QR session clock drift. Please wait.' });
-      }
-      if (nowMs > expiresTime + 60000) {
-        return res.status(400).json({ error: 'This QR code has expired. Please scan the active QR code.' });
+      // Tight rotation check: allow current token or ±1 window for camera focus & network latency
+      const minValidIndex = Math.max(0, currentExpectedIndex - 1);
+      const maxValidIndex = Math.min(cleanTokens.length - 1, currentExpectedIndex + 1);
+
+      if (scannedTokenIndex < minValidIndex) {
+        return res.status(400).json({ error: 'Invalid QR code. This QR has already refreshed and expired. Please scan the current live QR code on screen.' });
       }
 
-      // Check duplicate submission
+      if (scannedTokenIndex > maxValidIndex + 1) {
+        return res.status(400).json({ error: 'Invalid QR code. Please scan the current live QR code on screen.' });
+      }
+
+      // Check duplicate submission for student in this QR session
       const { data: duplicate } = await supabase.from('attendance')
         .select('id, status')
         .eq('student_id', req.user.id)
@@ -298,16 +343,21 @@ router.post('/submit', authenticateJWT, async (req, res) => {
 
       if (duplicate) {
         if (duplicate.status === 'Success') {
-          return res.status(400).json({ error: 'You have already marked attendance successfully for this session.' });
+          return res.json({
+            success: true,
+            alreadyMarked: true,
+            message: 'You have already marked attendance successfully for this session.'
+          });
         } else {
-          return res.status(400).json({ error: 'You already have a failed submission for this session.' });
+          // If previously failed, do NOT block: allow retry and update this record!
+          existingFailedId = duplicate.id;
         }
       }
 
       // Check duplicate device submission for THIS QR session
       if (deviceId && deviceId !== 'Manual') {
         const { data: deviceDup } = await supabase.from('attendance')
-          .select('id')
+          .select('id, student_id')
           .eq('device_id', deviceId)
           .eq('qr_session_id', sessionId)
           .eq('status', 'Success')
@@ -315,7 +365,15 @@ router.post('/submit', authenticateJWT, async (req, res) => {
           .maybeSingle();
 
         if (deviceDup) {
-          return res.status(400).json({ error: 'This device has already been used to mark attendance for this QR session.' });
+          if (String(deviceDup.student_id) === String(req.user.id)) {
+            return res.json({
+              success: true,
+              alreadyMarked: true,
+              message: 'Attendance already recorded successfully from this device.'
+            });
+          } else {
+            return res.status(400).json({ error: 'This device has already been used by another student for this QR session.' });
+          }
         }
       }
 
@@ -343,13 +401,13 @@ router.post('/submit', authenticateJWT, async (req, res) => {
         }
       }
 
-      // Check if OTP is expired
+      // Check if OTP is expired (allow 60s grace period)
       const expireTime = new Date(otpRecord.expire_time).getTime();
-      if (nowMs > expireTime) {
+      if (nowMs > expireTime + 60000) {
         return res.status(400).json({ error: 'This OTP has expired. Please request a new one.' });
       }
 
-      // Check duplicate submission
+      // Check duplicate submission for student in this OTP session
       const { data: duplicate } = await supabase.from('attendance')
         .select('id, status')
         .eq('student_id', req.user.id)
@@ -359,16 +417,20 @@ router.post('/submit', authenticateJWT, async (req, res) => {
 
       if (duplicate) {
         if (duplicate.status === 'Success') {
-          return res.status(400).json({ error: 'You have already marked attendance successfully for this OTP.' });
+          return res.json({
+            success: true,
+            alreadyMarked: true,
+            message: 'You have already marked attendance successfully for this OTP.'
+          });
         } else {
-          return res.status(400).json({ error: 'You already have a failed submission for this OTP.' });
+          existingFailedId = duplicate.id;
         }
       }
 
       // Check duplicate device submission for THIS OTP session
       if (deviceId && deviceId !== 'Manual') {
         const { data: deviceDup } = await supabase.from('attendance')
-          .select('id')
+          .select('id, student_id')
           .eq('device_id', deviceId)
           .eq('otp_id', otpRecord.id)
           .eq('status', 'Success')
@@ -376,7 +438,15 @@ router.post('/submit', authenticateJWT, async (req, res) => {
           .maybeSingle();
 
         if (deviceDup) {
-          return res.status(400).json({ error: 'This device has already been used to mark attendance for this OTP session.' });
+          if (String(deviceDup.student_id) === String(req.user.id)) {
+            return res.json({
+              success: true,
+              alreadyMarked: true,
+              message: 'Attendance already recorded successfully from this device.'
+            });
+          } else {
+            return res.status(400).json({ error: 'This device has already been used by another student for this OTP session.' });
+          }
         }
       }
 
@@ -409,7 +479,6 @@ router.post('/submit', authenticateJWT, async (req, res) => {
 
     const insertPayload = {
       student_id: req.user.id,
-      enrollment_no: req.user.enrollment_no || (dbStudent ? dbStudent.enrollment_no : null),
       date: localDateStr,
       time: localTimeStr,
       latitude,
@@ -421,20 +490,32 @@ router.post('/submit', authenticateJWT, async (req, res) => {
     };
     insertPayload[attendanceLinkCol] = attendanceLinkId;
 
-    await supabase.from('attendance').insert([insertPayload]);
+    if (existingFailedId) {
+      const { error: updateErr } = await supabase.from('attendance').update(insertPayload).eq('id', existingFailedId);
+      if (updateErr) {
+        console.error('Attendance update error:', updateErr);
+        throw updateErr;
+      }
+    } else {
+      const { error: insertErr } = await supabase.from('attendance').insert([insertPayload]);
+      if (insertErr) {
+        console.error('Attendance insert error:', insertErr);
+        throw insertErr;
+      }
+    }
     invalidateMatrixCache();
     notifyChange('DATA_CHANGED', { entity: 'attendance', action: 'submit', studentId: req.user.id });
 
     if (status === 'Success') {
       res.json({
         success: true,
-        message: 'Attendance submitted successfully.',
-        details: { distance: parseFloat(dist.toFixed(2)), status }
+        message: `Attendance marked successfully! Present for ${activeSub || 'Class'}.`,
+        details: { distance: parseFloat(dist.toFixed(2)), status, subject: activeSub }
       });
     } else {
       res.status(400).json({
         success: false,
-        error: `Attendance Rejected. You are outside the required radius. Distance: ${dist.toFixed(0)}m.`,
+        error: `Attendance Rejected. You are outside the allowed campus location. Distance: ${Math.round(dist)}m (Allowed radius: ${Math.round(radius)}m).`,
         details: { distance: parseFloat(dist.toFixed(2)), status }
       });
     }
@@ -810,7 +891,7 @@ router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
       supabase.from('otp').select('id, generated_by, otp, semester, division'),
       supabase.from('attendance')
         .select(`
-          id, time, distance, status, date, qr_session_id, otp_id, device_id,
+          id, student_id, time, distance, status, date, qr_session_id, otp_id, device_id,
           student:student_id (*)
         `)
         .eq('date', today)
@@ -824,17 +905,14 @@ router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
     let filteredLogs = logs || [];
     const isFacultyUser = req.query.view === 'faculty' || (req.user.role === 'faculty' || req.user.isFacultyUser || req.user.hasFacultyAccess) && req.query.view !== 'admin';
     if (isFacultyUser) {
-      const activeFacId = req.user.faculty_id || req.user.id;
-      const allowedFacIds = new Set([
-        String(req.user.id),
-        String(activeFacId)
-      ].filter(Boolean));
+      const allowedFacIds = await getAllFacultyIdsForUser(req.user);
 
       filteredLogs = filteredLogs.filter(log => {
         const qrSess = log.qr_session_id ? qrMap.get(String(log.qr_session_id)) : null;
         const otpSess = log.otp_id ? otpMap.get(String(log.otp_id)) : null;
         const isQrMatch = qrSess && allowedFacIds.has(String(qrSess.created_by_faculty_id));
         const isOtpMatch = otpSess && allowedFacIds.has(String(otpSess.generated_by));
+        if (!qrSess && !otpSess && log.device_id === 'Manual') return true;
         return isQrMatch || isOtpMatch;
       });
     }
@@ -856,6 +934,7 @@ router.get('/monitor', authenticateJWT, requireAdmin, async (req, res) => {
 
       return {
         id: log.id,
+        student_id: log.student_id || log.student?.id,
         enrollment_no: log.student?.enrollment_no,
         roll_no: log.student?.roll_no,
         division: log.student?.division,
@@ -890,10 +969,10 @@ const getReportsHandler = async (req, res) => {
 
   try {
     let reqQuery = supabase.from('attendance').select(`
-      id, time, distance, status, date, qr_session_id, otp_id, device_id,
+      id, student_id, time, distance, status, date, qr_session_id, otp_id, device_id, subject,
       student:student_id (id, name, enrollment_no, roll_no, division, semester, course, mobile),
-      otp:otp_id (otp, generated_by, faculty:generated_by(name)),
-      qr_session:qr_session_id (created_by_faculty_id, faculty:created_by_faculty_id(name))
+      otp:otp_id (otp, generated_by, faculty:generated_by(name), subject, semester, division, generated_time),
+      qr_session:qr_session_id (created_by_faculty_id, faculty:created_by_faculty_id(name), subject, semester, division, created_at)
     `);
 
     const todayStr = getLocalDateString();
@@ -927,43 +1006,55 @@ const getReportsHandler = async (req, res) => {
     if (error) throw error;
 
     let filteredReports = reports || [];
-    const isFacultyView = req.query.view === 'faculty' || (req.user.role === 'faculty' || req.user.isFacultyUser || req.user.hasFacultyAccess) && req.query.view !== 'admin';
+    const isFacultyView = req.query.view === 'faculty' || (req.user.role !== 'admin' && (req.user.role === 'faculty' || req.user.isFacultyUser || req.user.hasFacultyAccess) && req.query.view !== 'admin');
     if (isFacultyView) {
-      const activeFacId = req.user.faculty_id || req.user.id;
-      const allowedFacIds = new Set([
-        String(req.user.id),
-        String(activeFacId)
-      ].filter(Boolean));
+      const allowedFacIds = await getAllFacultyIdsForUser(req.user);
 
       filteredReports = filteredReports.filter(log => {
         const qrFacId = log.qr_session ? String(log.qr_session.created_by_faculty_id) : '';
         const otpFacId = log.otp ? String(log.otp.generated_by) : '';
         const isQrMatch = qrFacId && allowedFacIds.has(qrFacId);
         const isOtpMatch = otpFacId && allowedFacIds.has(otpFacId);
+        if (!qrFacId && !otpFacId && log.device_id === 'Manual') return true;
         return isQrMatch || isOtpMatch;
       });
     }
 
-    const flatReports = filteredReports.map(log => ({
-      id: log.id,
-      student_id: log.student_id || log.student?.id,
-      enrollment_no: log.student?.enrollment_no,
-      roll_no: log.student?.roll_no,
-      division: log.student?.division,
-      name: log.student?.name,
-      course: log.student?.course,
-      semester: log.student?.semester,
-      mobile: log.student?.mobile,
-      date: log.date,
-      time: log.time,
-      distance: log.distance,
-      status: log.status,
-      device_id: log.device_id,
-      otp_id: log.otp_id,
-      otp: log.otp?.otp,
-      qr_session_id: log.qr_session_id,
-      faculty_name: log.qr_session?.faculty?.name || log.otp?.faculty?.name || (log.device_id === 'Manual' ? 'Faculty (Manual)' : 'Admin')
-    }));
+    const localMeta = getLocalSessionMetaMap();
+
+    const flatReports = filteredReports.map(log => {
+      const qrMeta = localMeta[`qr_${log.qr_session_id}`] || {};
+      const otpMeta = localMeta[`otp_${log.otp_id}`] || {};
+      const resolvedSub = log.subject || log.qr_session?.subject || log.otp?.subject || qrMeta.subject || otpMeta.subject || null;
+      const resolvedCreatedAt = log.qr_session?.created_at || log.otp?.generated_time || (log.date && log.time ? `${log.date}T${log.time}` : null) || (log.date ? `${log.date}T00:00:00` : null);
+      const resolvedDiv = log.qr_session?.division || log.otp?.division || qrMeta.division || otpMeta.division || log.student?.division || null;
+      const resolvedSem = log.qr_session?.semester || log.otp?.semester || qrMeta.semester || otpMeta.semester || log.student?.semester || null;
+
+      return {
+        id: log.id,
+        student_id: log.student_id || log.student?.id,
+        enrollment_no: log.student?.enrollment_no,
+        roll_no: log.student?.roll_no,
+        division: log.student?.division,
+        name: log.student?.name,
+        course: log.student?.course,
+        semester: log.student?.semester,
+        mobile: log.student?.mobile,
+        date: log.date,
+        time: log.time,
+        created_at: resolvedCreatedAt,
+        distance: log.distance,
+        status: log.status,
+        device_id: log.device_id,
+        otp_id: log.otp_id,
+        otp: log.otp?.otp,
+        qr_session_id: log.qr_session_id,
+        subject: resolvedSub,
+        session_division: resolvedDiv,
+        session_semester: resolvedSem,
+        faculty_name: log.qr_session?.faculty?.name || log.otp?.faculty?.name || (log.device_id === 'Manual' ? 'Faculty (Manual)' : 'Admin')
+      };
+    });
 
     res.json(flatReports);
   } catch (err) {
@@ -979,20 +1070,43 @@ router.get('/report', authenticateJWT, getReportsHandler);
 router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
   const today = getLocalDateString();
   try {
-    const isFacultyUser = req.user.role === 'faculty' || req.user.isFacultyUser || req.user.hasFacultyAccess || req.query.view === 'faculty';
-    const facIds = Array.from(new Set([req.user.id, req.user.faculty_id].filter(Boolean)));
+    const isFacultyUser = req.query.view === 'faculty' || (req.user.role === 'faculty' && !req.user.hasAdminAccess);
+    
+    // Resolve all possible faculty IDs for this user (user.id, user.faculty_id, or DB lookup by email/username)
+    let facIds = [];
+    if (req.user.faculty_id) facIds.push(req.user.faculty_id);
+    if (req.user.id) facIds.push(req.user.id);
+
+    if (isFacultyUser) {
+      try {
+        const email = (req.user.email || '').toLowerCase().trim();
+        const username = (req.user.username || '').toLowerCase().trim();
+        if (email) {
+          const { data: byEmail } = await supabase.from('faculty').select('id').eq('email', email);
+          (byEmail || []).forEach(f => facIds.push(f.id));
+        }
+        if (username) {
+          const { data: byUser } = await supabase.from('faculty').select('id').eq('username', username);
+          (byUser || []).forEach(f => facIds.push(f.id));
+        }
+      } catch(e) {
+        console.error('Error resolving faculty IDs in stats:', e);
+      }
+    }
+    const facIdSet = new Set(facIds.map(id => String(id).trim()).filter(Boolean));
+    const normalizedFacIds = Array.from(facIdSet).map(id => isNaN(parseInt(id, 10)) ? id : parseInt(id, 10));
 
     let otpsQuery = supabase.from('otp').select('*', { count: 'exact', head: true }).eq('date', today);
-    if (isFacultyUser && facIds.length > 0) otpsQuery = otpsQuery.in('generated_by', facIds);
+    if (isFacultyUser && normalizedFacIds.length > 0) otpsQuery = otpsQuery.in('generated_by', normalizedFacIds);
 
     let latestOtpQuery = supabase.from('otp').select('*').order('id', { ascending: false }).limit(1);
-    if (isFacultyUser && facIds.length > 0) latestOtpQuery = latestOtpQuery.in('generated_by', facIds);
+    if (isFacultyUser && normalizedFacIds.length > 0) latestOtpQuery = latestOtpQuery.in('generated_by', normalizedFacIds);
 
     let qrCountQuery = supabase.from('qr_sessions').select('*', { count: 'exact', head: true }).eq('date', today);
-    if (isFacultyUser && facIds.length > 0) qrCountQuery = qrCountQuery.in('created_by_faculty_id', facIds);
+    if (isFacultyUser && normalizedFacIds.length > 0) qrCountQuery = qrCountQuery.in('created_by_faculty_id', normalizedFacIds);
 
     let latestQrQuery = supabase.from('qr_sessions').select('*').order('id', { ascending: false }).limit(1);
-    if (isFacultyUser && facIds.length > 0) latestQrQuery = latestQrQuery.in('created_by_faculty_id', facIds);
+    if (isFacultyUser && normalizedFacIds.length > 0) latestQrQuery = latestQrQuery.in('created_by_faculty_id', normalizedFacIds);
 
     const [
       resStudents,
@@ -1001,7 +1115,8 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
       resOtpsGenerated,
       resLatestOtp,
       resQrCount,
-      resLatestQr
+      resLatestQr,
+      resDailyLimit
     ] = await Promise.all([
       supabase.from('students').select('*', { count: 'exact', head: true }),
       supabase.from('faculty').select('*', { count: 'exact', head: true }),
@@ -1009,7 +1124,8 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
       otpsQuery,
       latestOtpQuery.maybeSingle(),
       qrCountQuery,
-      latestQrQuery.maybeSingle()
+      latestQrQuery.maybeSingle(),
+      supabase.from('settings').select('value').eq('key', 'qr_daily_limit').maybeSingle()
     ]);
 
     const totalStudents = resStudents.count || 0;
@@ -1019,12 +1135,14 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
     const latestOtp = resLatestOtp.data || null;
     const qrSessionsGenerated = resQrCount.count || 0;
     const latestQr = resLatestQr.data || null;
+    const qrDailyLimit = resDailyLimit.data?.value ? (parseInt(resDailyLimit.data.value) || 5) : 5;
 
     let filteredPresent = presentRows;
-    if (isFacultyUser && facIds.length > 0) {
+    if (isFacultyUser && normalizedFacIds.length > 0) {
+      const matchSet = new Set(normalizedFacIds.map(String));
       filteredPresent = filteredPresent.filter(r =>
-        (r.qr_session && facIds.map(String).includes(String(r.qr_session.created_by_faculty_id))) ||
-        (r.otp && facIds.map(String).includes(String(r.otp.generated_by)))
+        (r.qr_session && matchSet.has(String(r.qr_session.created_by_faculty_id))) ||
+        (r.otp && matchSet.has(String(r.otp.generated_by)))
       );
     }
     const presentToday = new Set(filteredPresent.map(r => r.student_id)).size;
@@ -1067,10 +1185,11 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
         .eq('date', dateStr)
         .eq('status', 'Success');
       let filteredAtt = att || [];
-      if (req.user.role === 'faculty') {
+      if (isFacultyUser && normalizedFacIds.length > 0) {
+        const matchSet = new Set(normalizedFacIds.map(String));
         filteredAtt = filteredAtt.filter(r =>
-          (r.qr_session && String(r.qr_session.created_by_faculty_id) === String(req.user.id)) ||
-          (r.otp && String(r.otp.generated_by) === String(req.user.id))
+          (r.qr_session && matchSet.has(String(r.qr_session.created_by_faculty_id))) ||
+          (r.otp && matchSet.has(String(r.otp.generated_by)))
         );
       }
 
@@ -1087,6 +1206,7 @@ router.get('/stats', authenticateJWT, requireAdmin, async (req, res) => {
       otpsRemaining,
       activeOtp,
       qrSessionsGenerated,
+      qrDailyLimit,
       activeQrSession,
       trend
     });
@@ -1807,31 +1927,22 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
     let qrQuery = supabase.from('qr_sessions').select('id, created_at, created_by_faculty_id, semester, division, subject, date');
     let otpQuery = supabase.from('otp').select('id, generated_time, generated_by, semester, division, subject, date');
 
-    if (!isAllSem) {
-      qrQuery = qrQuery.or(`semester.eq.${semNum},semester.eq.Sem ${semNum},semester.eq.Semester ${semNum}`);
-      otpQuery = otpQuery.or(`semester.eq.${semNum},semester.eq.Sem ${semNum},semester.eq.Semester ${semNum}`);
+    const semInt = parseInt(semNum, 10);
+    if (!isAllSem && !isNaN(semInt)) {
+      qrQuery = qrQuery.eq('semester', semInt);
+      otpQuery = otpQuery.eq('semester', semInt);
     }
 
     const isFacultyMode = mode === 'faculty' || req.query.view === 'faculty' || ((req.user.role === 'faculty' || req.user.isFacultyUser || req.user.hasFacultyAccess) && mode !== 'admin' && all !== 'true');
     const isAdminView = (mode === 'admin' || all === 'true') && mode !== 'faculty' && req.query.view !== 'faculty';
 
     if (isFacultyMode && !isAdminView) {
-      const activeFacId = req.user.faculty_id || req.user.id;
-      let resolvedFacId = activeFacId;
-      try {
-        const { data: facRow } = await supabase.from('faculty')
-          .select('id')
-          .or(`id.eq.${activeFacId},email.eq.${req.user.email || ''},username.eq.${req.user.email || ''}`)
-          .maybeSingle();
-        if (facRow && facRow.id) resolvedFacId = facRow.id;
-      } catch(e) {}
-
-      const facIdSet = new Set([String(req.user.id), String(activeFacId), String(resolvedFacId)].filter(Boolean));
-      const qrClause = Array.from(facIdSet).map(id => `created_by_faculty_id.eq.${id}`).join(',');
-      const otpClause = Array.from(facIdSet).map(id => `generated_by.eq.${id}`).join(',');
-
-      if (qrClause) qrQuery = qrQuery.or(qrClause);
-      if (otpClause) otpQuery = otpQuery.or(otpClause);
+      const allUserFacIds = await getAllFacultyIdsForUser(req.user);
+      const facIdNumbers = Array.from(allUserFacIds).map(n => parseInt(n, 10)).filter(n => !isNaN(n));
+      if (facIdNumbers.length > 0) {
+        qrQuery = qrQuery.in('created_by_faculty_id', facIdNumbers);
+        otpQuery = otpQuery.in('generated_by', facIdNumbers);
+      }
     }
 
     if (date) {
@@ -1843,14 +1954,25 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
     }
 
     const [
-      { data: faculties },
-      { data: qrSessions },
-      { data: otpSessions }
+      facultiesRes,
+      qrSessionsRes,
+      otpSessionsRes
     ] = await Promise.all([
       supabase.from('faculty').select('id, name'),
       qrQuery,
       otpQuery
     ]);
+
+    if (qrSessionsRes?.error) {
+      console.error('[semester-matrix] qrSessions query error:', qrSessionsRes.error);
+    }
+    if (otpSessionsRes?.error) {
+      console.error('[semester-matrix] otpSessions query error:', otpSessionsRes.error);
+    }
+
+    const faculties = facultiesRes?.data || [];
+    const qrSessions = qrSessionsRes?.data || [];
+    const otpSessions = otpSessionsRes?.data || [];
 
     // Targeted attendance fetch only for the target students in this semester (sub-20ms execution)
     let allAttendance = [];
@@ -1898,7 +2020,11 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
 
     const cleanSubjectName = (sub) => {
       if (!sub) return 'Lecture';
-      return String(sub).replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim() || String(sub).trim();
+      let s = String(sub).trim();
+      s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+      s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+      s = s.replace(/\s*\(\s*\)/g, '').replace(/\s*\[\s*\]/g, '').trim();
+      return s || String(sub).trim() || 'Lecture';
     };
 
     // 3. Identify and collect all sessions conducted for this semester (grouped by Date, Subject, Division & TimeSlot)
@@ -1928,8 +2054,7 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
           } catch(e) {}
         }
 
-        const divKey = (q.division && String(q.division).toUpperCase() !== 'ALL') ? String(q.division).toUpperCase() : 'ALL';
-        const slotKey = `${sessDate}_${sub.toLowerCase().replace(/\s+/g, '_')}_${divKey}_${formattedTime}`;
+        const slotKey = `qr_${q.id}`;
 
         if (!sessionMap.has(slotKey)) {
           sessionMap.set(slotKey, {
@@ -1981,8 +2106,7 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
           } catch(e) {}
         }
 
-        const divKey = (o.division && String(o.division).toUpperCase() !== 'ALL') ? String(o.division).toUpperCase() : 'ALL';
-        const slotKey = `${sessDate}_${sub.toLowerCase().replace(/\s+/g, '_')}_${divKey}_${formattedTime}`;
+        const slotKey = `otp_${o.id}`;
 
         if (!sessionMap.has(slotKey)) {
           sessionMap.set(slotKey, {
@@ -2046,7 +2170,7 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
       const manSub = cleanSubjectName(rawSub);
       if (subject && subject !== 'ALL' && String(manSub).toLowerCase() !== String(subject).toLowerCase() && String(rawSub).toLowerCase() !== String(subject).toLowerCase()) return;
 
-      const manKey = `manual_${attDate}_${manSub.replace(/\s+/g, '_')}`;
+      const manKey = `manual_${attDate}_${manSub.replace(/\s+/g, '_')}_${(att.time || 'class').replace(/:/g, '')}_${att.id}`;
       if (!sessionMap.has(manKey)) {
         sessionMap.set(manKey, {
           key: manKey,
@@ -2054,7 +2178,7 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
           type: 'Manual',
           date: attDate,
           time: att.time || 'Class',
-          created_at: attDate,
+          created_at: att.date ? `${att.date}T${att.time || '00:00:00'}` : attDate,
           subject: manSub,
           faculty_name: 'Faculty (Manual)',
           division: 'ALL',
@@ -2064,10 +2188,37 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
       sessionMap.get(manKey).logs.push(att);
     });
 
-    // 4. Sort sessions chronologically (Date Ascending -> Time Ascending)
+    // 4. Sort sessions strictly chronologically (Date Ascending -> Created_at Ascending)
     const sessionsList = Array.from(sessionMap.values()).sort((a, b) => {
-      if (a.date !== b.date) return a.date.localeCompare(b.date);
-      return String(a.time || '').localeCompare(String(b.time || ''));
+      const tA = new Date(a.created_at || (a.date + 'T' + (a.rawTime || '00:00:00'))).getTime() || 0;
+      const tB = new Date(b.created_at || (b.date + 'T' + (b.rawTime || '00:00:00'))).getTime() || 0;
+      if (tA !== tB) return tA - tB;
+      const idA = parseInt(String(a.id || 0).replace(/\D/g, ''), 10) || 0;
+      const idB = parseInt(String(b.id || 0).replace(/\D/g, ''), 10) || 0;
+      return idA - idB;
+    });
+
+    // Detect multiple sessions on same date for same subject to distinguish display labels
+    const subDateCounts = {};
+    sessionsList.forEach(s => {
+      const k = `${s.date}_${cleanSubjectName(s.subject)}`;
+      subDateCounts[k] = (subDateCounts[k] || 0) + 1;
+    });
+
+    const subDateCurrentIdx = {};
+    sessionsList.forEach(sess => {
+      const k = `${sess.date}_${cleanSubjectName(sess.subject)}`;
+      const totalCount = subDateCounts[k] || 1;
+      const currentIdx = (subDateCurrentIdx[k] || 0) + 1;
+      subDateCurrentIdx[k] = currentIdx;
+
+      if (totalCount > 1) {
+        sess.displayTime = `${sess.time} (S${currentIdx})`;
+        sess.sessionLabel = `${sess.subject} (Session ${currentIdx})`;
+      } else {
+        sess.displayTime = sess.time;
+        sess.sessionLabel = sess.subject;
+      }
     });
 
     // 5. Build Grouped Date structure (Date -> [Subjects/Sessions])
@@ -2087,7 +2238,8 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
       dateGroupsMap.get(sess.date).sessions.push({
         columnKey: sess.key,
         subject: sess.subject,
-        time: sess.time,
+        time: sess.displayTime || sess.time,
+        sessionLabel: sess.sessionLabel,
         type: sess.type,
         faculty_name: sess.faculty_name,
         division: sess.division
@@ -2107,7 +2259,8 @@ router.get('/semester-matrix', authenticateJWT, requireAdmin, async (req, res) =
         date: s.date,
         formattedDate: fDate,
         subject: s.subject,
-        time: s.time,
+        time: s.displayTime || s.time,
+        sessionLabel: s.sessionLabel,
         type: s.type,
         faculty_name: s.faculty_name,
         division: s.division

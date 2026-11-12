@@ -1,8 +1,29 @@
 const express = require('express');
 const router = express.Router();
+const fs = require('fs');
+const path = require('path');
 const { supabase } = require('../db');
 const { authenticateJWT } = require('./auth');
 const { notifyChange } = require('../syncEmitter');
+
+const semDeptFilePath = path.join(__dirname, '../data/semester_departments.json');
+
+const loadSemDeptMap = () => {
+  try {
+    if (fs.existsSync(semDeptFilePath)) {
+      return JSON.parse(fs.readFileSync(semDeptFilePath, 'utf8'));
+    }
+  } catch (e) {}
+  return {};
+};
+
+const saveSemDeptMap = (map) => {
+  try {
+    const dir = path.dirname(semDeptFilePath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(semDeptFilePath, JSON.stringify(map, null, 2), 'utf8');
+  } catch (e) {}
+};
 
 // Admin check middleware
 const requireAdmin = (req, res, next) => {
@@ -37,7 +58,14 @@ router.get('/', async (req, res) => {
       }
       return semNumA.localeCompare(semNumB, undefined, { numeric: true, sensitivity: 'base' });
     });
-    res.json(list);
+
+    const deptMap = loadSemDeptMap();
+    const enrichedList = list.map(item => ({
+      ...item,
+      department: deptMap[item.id] || deptMap[item.semester_number] || deptMap[String(item.semester_number)] || ''
+    }));
+
+    res.json(enrichedList);
   } catch (err) {
     console.error('Server error fetching semesters:', err);
     res.status(500).json({ error: 'Failed to fetch semesters from database' });
@@ -54,11 +82,12 @@ const normalizeAndValidateTermType = (rawTerm) => {
 
 // POST /api/semesters - Add new semester to Supabase DB
 router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
-  const { semester_number, semNumber, semester_display_name, name, term_type, term } = req.body;
+  const { semester_number, semNumber, semester_display_name, name, term_type, term, department, program } = req.body;
 
   const numVal = parseInt(String(semester_number || semNumber || '1').replace(/\D/g, ''), 10) || 1;
   const nameVal = String(semester_display_name || name || `Semester ${numVal}`).trim();
   const termVal = normalizeAndValidateTermType(term_type || term);
+  const deptVal = String(department || program || '').trim();
 
   if (!termVal) {
     return res.status(400).json({ error: `Invalid Term Type '${term_type || term}'. Allowed values are 'Odd', 'Even', 'Odd Term', or 'Even Term'.` });
@@ -91,6 +120,14 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: error.message });
     }
 
+    if (deptVal) {
+      const deptMap = loadSemDeptMap();
+      deptMap[data.id] = deptVal;
+      deptMap[numVal] = deptVal;
+      saveSemDeptMap(deptMap);
+      data.department = deptVal;
+    }
+
     notifyChange('SEMESTERS_CHANGED', { action: 'add', semester: data });
     res.status(201).json({ message: 'Semester added to Supabase DB successfully', semester: data });
   } catch (err) {
@@ -102,7 +139,7 @@ router.post('/', authenticateJWT, requireAdmin, async (req, res) => {
 // PUT /api/semesters/:id - Update semester in Supabase DB
 router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { semester_number, semNumber, semester_display_name, name, term_type, term } = req.body;
+  const { semester_number, semNumber, semester_display_name, name, term_type, term, department, program } = req.body;
 
   const updateObj = {};
   if (semester_number !== undefined || semNumber !== undefined) {
@@ -144,6 +181,15 @@ router.put('/:id', authenticateJWT, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: error.message });
     }
 
+    if (department !== undefined || program !== undefined) {
+      const deptVal = String(department || program || '').trim();
+      const deptMap = loadSemDeptMap();
+      deptMap[id] = deptVal;
+      if (updateObj.semester_number) deptMap[updateObj.semester_number] = deptVal;
+      saveSemDeptMap(deptMap);
+      if (data) data.department = deptVal;
+    }
+
     notifyChange('SEMESTERS_CHANGED', { action: 'update', semester: data });
     res.json({ message: 'Semester updated in Supabase DB successfully', semester: data });
   } catch (err) {
@@ -166,6 +212,10 @@ router.delete('/:id', authenticateJWT, requireAdmin, async (req, res) => {
       console.error('Supabase delete semester error:', error);
       return res.status(400).json({ error: error.message });
     }
+
+    const deptMap = loadSemDeptMap();
+    delete deptMap[id];
+    saveSemDeptMap(deptMap);
 
     notifyChange('SEMESTERS_CHANGED', { action: 'delete', id });
     res.json({ message: 'Semester deleted from Supabase DB successfully' });

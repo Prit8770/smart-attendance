@@ -71,7 +71,7 @@ const LandingPage = ({ onGetStarted }) => {
 
       {/* HERO SECTION */}
       <section style={s.hero}>
-        <div style={s.heroLayout} className="animate-fade-in-up">
+        <div style={s.heroLayout} className="animate-fade-in-up landing-hero-layout">
           
           {/* Left Hero Text Column */}
           <div style={s.heroTextCol}>
@@ -174,16 +174,16 @@ const LandingPage = ({ onGetStarted }) => {
         </div>
 
         {/* Stats Row */}
-        <div style={s.statsRow} className="animate-fade-in-up delay-3">
-          <div style={s.statCard} className="stat-box-hover">
+        <div style={s.statsRow} className="animate-fade-in-up delay-3 landing-stats-row">
+          <div style={s.statCard} className="stat-box-hover landing-stat-card">
             <div style={s.statNum} className="stat-num-glow">100%</div>
             <div style={s.statLabel}>Proxy Prevention</div>
           </div>
-          <div style={s.statCard} className="stat-box-hover">
+          <div style={s.statCard} className="stat-box-hover landing-stat-card">
             <div style={s.statNum} className="stat-num-glow">&#60;&nbsp;5s</div>
             <div style={s.statLabel}>Average Scan Time</div>
           </div>
-          <div style={s.statCard} className="stat-box-hover">
+          <div style={s.statCard} className="stat-box-hover landing-stat-card">
             <div style={s.statNum} className="stat-num-glow">NAAC</div>
             <div style={s.statLabel}>Compliant Reports</div>
           </div>
@@ -196,7 +196,7 @@ const LandingPage = ({ onGetStarted }) => {
           <h2 style={s.sectionTitle}>Everything You Need in One Platform</h2>
           <p style={s.sectionSub}>Powerful features designed for modern educational institutions</p>
         </div>
-        <div style={s.featuresGrid}>
+        <div style={s.featuresGrid} className="landing-features-grid">
           {features.map((f, i) => {
             const isAmber = f.variant === 'amber';
             const isDark  = f.variant === 'dark';
@@ -206,7 +206,7 @@ const LandingPage = ({ onGetStarted }) => {
             const titleCol = isAmber ? '#001b3d' : '#ffffff';
             const descCol  = isAmber ? 'rgba(0,27,61,0.85)' : 'rgba(255,255,255,0.85)';
             return (
-              <div key={i} style={{ ...s.featureCard, background: cardBg }} className={`feature-card-hover variant-${f.variant}`}>
+              <div key={i} style={{ ...s.featureCard, background: cardBg }} className={`feature-card-hover variant-${f.variant} landing-feature-card`}>
                 <div style={{ ...s.featureIconBox, background: iconBg }}>
                   <span style={{ color: iconCol, display: 'flex' }}>{f.icon}</span>
                 </div>
@@ -219,33 +219,33 @@ const LandingPage = ({ onGetStarted }) => {
       </section>
 
       {/* HOW IT WORKS & CTA (Combined in seamless dark background) */}
-      <section id="how-it-works" style={s.stepsSection}>
-        <div style={s.sectionHead}>
+      <section id="how-it-works" style={s.stepsSection} className="landing-steps-section">
+        <div style={s.sectionHead} className="landing-section-head">
           <h2 style={{ ...s.sectionTitle, color: '#ffffff' }}>3 Simple Steps</h2>
           <p style={{ ...s.sectionSub, color: 'rgba(147,197,253,0.85)' }}>No biometric scanners or ID cards required. Just your smartphone.</p>
         </div>
-        <div style={s.stepsGrid}>
+        <div style={s.stepsGrid} className="landing-steps-grid">
           {steps.map((st, i) => (
             <React.Fragment key={i}>
-              <div style={s.stepCard}>
-                <div style={{ ...s.stepCircle, animationDelay: `${i * 0.8}s` }} className="step-icon-glow">{st.num}</div>
-                <h3 style={s.stepTitle}>{st.title}</h3>
-                <p style={s.stepDesc}>{st.desc}</p>
+              <div style={s.stepCard} className="landing-step-card">
+                <div style={{ ...s.stepCircle, animationDelay: `${i * 0.8}s` }} className="step-icon-glow landing-step-circle">{st.num}</div>
+                <h3 style={s.stepTitle} className="landing-step-title">{st.title}</h3>
+                <p style={s.stepDesc} className="landing-step-desc">{st.desc}</p>
               </div>
-              {i < steps.length - 1 && <div style={s.stepConnector} />}
+              {i < steps.length - 1 && <div style={s.stepConnector} className="landing-step-connector" />}
             </React.Fragment>
           ))}
         </div>
 
         {/* CTA CARD (Seamlessly embedded) */}
-        <div style={s.ctaContainer}>
-          <div style={s.ctaCard} className="shimmer-wrapper">
+        <div style={s.ctaContainer} className="landing-cta-container">
+          <div style={s.ctaCard} className="shimmer-wrapper landing-cta-card">
             <div style={s.ctaBadgeIcon}>
               <GraduationCap size={24} color="#001b3d" />
             </div>
-            <h2 style={s.ctaTitle}>Ready to Transform Your Campus Attendance?</h2>
-            <p style={s.ctaDesc}>Join the portal now and experience seamless attendance tracking.</p>
-            <button style={s.btnPrimary} onClick={onGetStarted} id="landing-cta-btn">
+            <h2 style={s.ctaTitle} className="landing-cta-title">Ready to Transform Your Campus Attendance?</h2>
+            <p style={s.ctaDesc} className="landing-cta-desc">Join the portal now and experience seamless attendance tracking.</p>
+            <button style={s.btnPrimary} onClick={onGetStarted} id="landing-cta-btn" className="landing-cta-btn">
               Login to Portal &nbsp;<ChevronRight size={18} style={{ display: 'inline', verticalAlign: 'middle' }} />
             </button>
           </div>
@@ -266,7 +266,7 @@ const LandingPage = ({ onGetStarted }) => {
 };
 
 const s = {
-  page: { minHeight: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', fontFamily: "'Inter', system-ui, sans-serif", overflowX: 'hidden' },
+  page: { minHeight: '100vh', width: '100%', maxWidth: '100%', display: 'flex', flexDirection: 'column', fontFamily: "'Inter', system-ui, sans-serif", overflowX: 'hidden' },
   hero: {
     background: 'linear-gradient(180deg, #003366 0%, #004080 50%, #003366 100%)',
     display: 'flex',

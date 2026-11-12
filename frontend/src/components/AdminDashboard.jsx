@@ -3,7 +3,7 @@ import {
   Users, KeyRound, QrCode, MapPin, BarChart3, Download, Upload, TrendingUp, Plus, Search,
   Trash2, Edit, Check, CheckCircle, XCircle, Clock, Shield, ShieldAlert, LogOut, RefreshCw, Unlock,
   Sun, Moon, GraduationCap, User, Settings, Folder, FolderOpen, Calendar, Menu, RotateCcw, X,
-  LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileText, ClipboardList, AlertTriangle, UserPlus, BookOpen, FileSpreadsheet, Send, MessageSquare, ArrowLeft, Printer, Layers, SlidersHorizontal, Filter, Copy, Paperclip
+  LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, FileText, ClipboardList, AlertTriangle, UserPlus, BookOpen, FileSpreadsheet, Send, MessageSquare, ArrowLeft, Printer, Layers, SlidersHorizontal, Filter, Copy, Paperclip, Building2
 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -12,6 +12,7 @@ import Swal from 'sweetalert2';
 import QRCode from 'qrcode';
 import ToastContainer from './ToastContainer';
 import SearchableSemesterSelect from './SearchableSemesterSelect';
+import SearchableDepartmentSelect from './SearchableDepartmentSelect';
 import AdminModalCloseBtn from './AdminModalCloseBtn';
 
 // Bulletproof Helper to get local date string YYYY-MM-DD
@@ -165,12 +166,14 @@ export default function AdminDashboard({
   const [showFacultyMobileActions, setShowFacultyMobileActions] = useState(false);
   const [showSubjectMobileActions, setShowSubjectMobileActions] = useState(false);
   const [showSemesterMobileActions, setShowSemesterMobileActions] = useState(false);
+  const [showDepartmentMobileActions, setShowDepartmentMobileActions] = useState(false);
 
   useEffect(() => {
     setShowStudentMobileActions(false);
     setShowFacultyMobileActions(false);
     setShowSubjectMobileActions(false);
     setShowSemesterMobileActions(false);
+    setShowDepartmentMobileActions(false);
   }, [activeTab, mobileSidebarOpen]);
 
   useEffect(() => {
@@ -206,6 +209,7 @@ export default function AdminDashboard({
   const [selectedFacultyIds, setSelectedFacultyIds] = useState([]);
   const [selectedSubjectIds, setSelectedSubjectIds] = useState([]);
   const [selectedSemesterIds, setSelectedSemesterIds] = useState([]);
+  const [selectedDepartmentIds, setSelectedDepartmentIds] = useState([]);
 
   // Custom React Delete Confirmation Modal State (No Browser Thread Blocking)
   const [deleteConfirmState, setDeleteConfirmState] = useState({
@@ -245,6 +249,49 @@ export default function AdminDashboard({
   const [createdFacultyCredentials, setCreatedFacultyCredentials] = useState(null); // Save generated credentials
   const [facultyLoading, setFacultyLoading] = useState(false);
 
+  // Department CRUD / Management State
+  const [customDepartments, setCustomDepartments] = useState(() => {
+    try {
+      const saved = localStorage.getItem('admin_custom_departments');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {}
+    return [
+      { id: 'dept_1', code: 'BCA', name: 'Bachelor of Computer Applications', duration: 3 },
+      { id: 'dept_2', code: 'B.Tech CSE', name: 'Computer Science & Engineering', duration: 4 },
+      { id: 'dept_3', code: 'BBA', name: 'Bachelor of Business Administration', duration: 3 },
+      { id: 'dept_4', code: 'IT', name: 'Information Technology', duration: 3 }
+    ];
+  });
+  const [showAddDepartmentModal, setShowAddDepartmentModal] = useState(false);
+  const [isEditingDepartment, setIsEditingDepartment] = useState(false);
+  const [editingDeptId, setEditingDeptId] = useState(null);
+  const [departmentFormData, setDepartmentFormData] = useState({
+    code: '',
+    name: '',
+    duration: ''
+  });
+  const [departmentSearchQuery, setDepartmentSearchQuery] = useState('');
+  const departmentFileInputRef = useRef(null);
+  const firstDeptInputRef = useRef(null);
+  const addDeptCreateBtnRef = useRef(null);
+
+  const allDepartmentsList = useMemo(() => {
+    return (customDepartments || []).slice().sort((a, b) => {
+      return (a.name || '').localeCompare(b.name || '', undefined, { sensitivity: 'base' });
+    });
+  }, [customDepartments]);
+
+  const departmentSelectOptions = useMemo(() => {
+    return allDepartmentsList.map(d => ({
+      id: d.name,
+      code: d.code,
+      label: d.code ? `${d.name} (${d.code})` : d.name
+    }));
+  }, [allDepartmentsList]);
+
   // Semester CRUD / Management State
   const [customSemesters, setCustomSemesters] = useState(() => {
     try {
@@ -260,6 +307,7 @@ export default function AdminDashboard({
   const [semesterFormData, setSemesterFormData] = useState({
     semNumber: '',
     name: '',
+    department: '',
     program: "Bachelor's of Computer Applications",
     term: 'Odd'
   });
@@ -287,10 +335,12 @@ export default function AdminDashboard({
     setIsEditingSemester(false);
     setEditingSemId(null);
     const nextSemNum = String(allSemestersList.length + 1);
+    const firstDept = allDepartmentsList[0]?.name || "Bachelor of Computer Applications";
     setSemesterFormData({
       semNumber: nextSemNum,
       name: `Semester ${nextSemNum}`,
-      program: "Bachelor's of Computer Applications",
+      department: firstDept,
+      program: firstDept,
       term: (allSemestersList.length + 1) % 2 === 1 ? 'Odd' : 'Even'
     });
     setShowAddSemesterModal(true);
@@ -299,10 +349,12 @@ export default function AdminDashboard({
   const handleOpenEditSemesterModal = (sem) => {
     setIsEditingSemester(true);
     setEditingSemId(sem.id);
+    const semDept = sem.department || sem.program || (allDepartmentsList[0]?.name || '');
     setSemesterFormData({
       semNumber: sem.semNumber || sem.id,
       name: sem.name || `Semester ${sem.id}`,
-      program: sem.program || sem.department || "Bachelor's of Computer Applications",
+      department: semDept,
+      program: sem.program || sem.department || semDept || "Bachelor's of Computer Applications",
       term: sem.term || 'Odd'
     });
     setShowAddSemesterModal(true);
@@ -346,6 +398,8 @@ export default function AdminDashboard({
     const payload = {
       semester_number: parseInt(cleanNum.replace(/\D/g, ''), 10) || 1,
       semester_display_name: cleanName,
+      department: semesterFormData.department || semesterFormData.program || '',
+      program: semesterFormData.department || semesterFormData.program || '',
       term_type: semesterFormData.term || 'Odd'
     };
 
@@ -373,6 +427,8 @@ export default function AdminDashboard({
               id: updatedDbSem.id,
               semNumber: String(updatedDbSem.semester_number || cleanNum),
               name: updatedDbSem.semester_display_name || cleanName,
+              department: updatedDbSem.department || payload.department,
+              program: updatedDbSem.program || payload.program,
               term: updatedDbSem.term_type || semesterFormData.term
             };
           }
@@ -401,7 +457,8 @@ export default function AdminDashboard({
           id: newDbSem.id || `sem_${Date.now()}`,
           semNumber: String(newDbSem.semester_number || cleanNum),
           name: newDbSem.semester_display_name || cleanName,
-          program: semesterFormData.program || "Bachelor's of Computer Applications",
+          department: newDbSem.department || payload.department,
+          program: newDbSem.program || payload.program,
           term: newDbSem.term_type || semesterFormData.term || 'Odd',
           isDefault: false,
           createdAt: new Date().toISOString()
@@ -416,6 +473,253 @@ export default function AdminDashboard({
       showToast(err.message || 'Error saving semester to database', 'error');
     }
     setShowAddSemesterModal(false);
+  };
+
+  const handleOpenAddDepartmentModal = () => {
+    setIsEditingDepartment(false);
+    setEditingDeptId(null);
+    setDepartmentFormData({
+      code: '',
+      name: '',
+      duration: ''
+    });
+    setShowAddDepartmentModal(true);
+  };
+
+  const handleOpenEditDepartmentModal = (dept) => {
+    setIsEditingDepartment(true);
+    setEditingDeptId(dept.id);
+    setDepartmentFormData({
+      code: dept.code || '',
+      name: dept.name || '',
+      duration: dept.duration !== undefined && dept.duration !== null ? String(dept.duration) : ''
+    });
+    setShowAddDepartmentModal(true);
+  };
+
+  const handleSaveDepartment = async (e) => {
+    if (e) e.preventDefault();
+    const cleanCode = (departmentFormData.code || '').trim().toUpperCase();
+    const cleanName = (departmentFormData.name || '').trim();
+    const cleanDuration = Number(departmentFormData.duration);
+
+    if (!cleanCode) {
+      showToast('Please enter Department Code (e.g. BCA, CSE)', 'error');
+      return;
+    }
+    if (!cleanName) {
+      showToast('Please enter Department Full Name', 'error');
+      return;
+    }
+    if (!departmentFormData.duration || isNaN(cleanDuration) || cleanDuration <= 0 || cleanDuration > 10) {
+      showToast('Please enter a valid Duration in Years (1 - 10)', 'error');
+      return;
+    }
+
+    const dup = allDepartmentsList.find(d => {
+      if (isEditingDepartment && String(d.id) === String(editingDeptId)) return false;
+      return (d.code || '').toUpperCase() === cleanCode || (d.name || '').toLowerCase() === cleanName.toLowerCase();
+    });
+
+    if (dup) {
+      if ((dup.code || '').toUpperCase() === cleanCode) {
+        showToast(`Department with code '${cleanCode}' already exists!`, 'error');
+      } else {
+        showToast(`Department with name '${cleanName}' already exists!`, 'error');
+      }
+      return;
+    }
+
+    const payload = {
+      code: cleanCode,
+      name: cleanName,
+      duration: cleanDuration
+    };
+
+    try {
+      if (isEditingDepartment) {
+        const res = await fetch(`/api/departments/${editingDeptId}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify(payload)
+        });
+        const resData = await res.json();
+        if (!res.ok) throw new Error(resData.error || 'Failed to update department');
+
+        const updated = customDepartments.map(d => {
+          if (String(d.id) === String(editingDeptId)) {
+            return { ...d, ...payload, id: editingDeptId };
+          }
+          return d;
+        });
+        setCustomDepartments(updated);
+        try { localStorage.setItem('admin_custom_departments', JSON.stringify(updated)); } catch (err) {}
+        showToast(`Department '${cleanName}' updated successfully!`, 'success');
+      } else {
+        const res = await fetch('/api/departments', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify(payload)
+        });
+        const resData = await res.json();
+        if (!res.ok) throw new Error(resData.error || 'Failed to save department');
+
+        const newDept = resData.department || {
+          id: `dept_${Date.now()}`,
+          ...payload,
+          createdAt: new Date().toISOString()
+        };
+        const updated = [...customDepartments, newDept];
+        setCustomDepartments(updated);
+        try { localStorage.setItem('admin_custom_departments', JSON.stringify(updated)); } catch (err) {}
+        showToast(`Department '${cleanName}' added successfully!`, 'success');
+      }
+    } catch (err) {
+      console.error('Save department error:', err);
+      if (isEditingDepartment) {
+        const updated = customDepartments.map(d => String(d.id) === String(editingDeptId) ? { ...d, ...payload } : d);
+        setCustomDepartments(updated);
+        try { localStorage.setItem('admin_custom_departments', JSON.stringify(updated)); } catch (e) {}
+        showToast(`Department '${cleanName}' updated!`, 'success');
+      } else {
+        const newDept = { id: `dept_${Date.now()}`, ...payload, createdAt: new Date().toISOString() };
+        const updated = [...customDepartments, newDept];
+        setCustomDepartments(updated);
+        try { localStorage.setItem('admin_custom_departments', JSON.stringify(updated)); } catch (e) {}
+        showToast(`Department '${cleanName}' added!`, 'success');
+      }
+    }
+    setShowAddDepartmentModal(false);
+  };
+
+  const handleDeleteDepartment = (deptId, deptName) => {
+    setDeleteConfirmState({
+      isOpen: true,
+      type: 'single',
+      entityType: 'department',
+      studentId: deptId,
+      studentName: deptName || 'this department',
+      targetIds: [deptId]
+    });
+  };
+
+  const handleBulkDeleteDepartments = (ids) => {
+    setDeleteConfirmState({
+      isOpen: true,
+      type: 'bulk',
+      entityType: 'department',
+      studentId: null,
+      studentName: `${ids.length} selected department(s)`,
+      targetIds: ids
+    });
+  };
+
+  const toggleSelectDepartment = (deptId) => {
+    setSelectedDepartmentIds(prev =>
+      prev.includes(deptId) ? prev.filter(id => id !== deptId) : [...prev, deptId]
+    );
+  };
+
+  const toggleSelectAllDepartments = () => {
+    const filtered = allDepartmentsList.filter(d => {
+      if (!departmentSearchQuery) return true;
+      const q = departmentSearchQuery.toLowerCase();
+      return (d.name || '').toLowerCase().includes(q) || (d.code || '').toLowerCase().includes(q);
+    });
+    if (filtered.length > 0 && filtered.every(d => selectedDepartmentIds.includes(d.id))) {
+      setSelectedDepartmentIds(prev => prev.filter(id => !filtered.some(d => d.id === id)));
+    } else {
+      setSelectedDepartmentIds(Array.from(new Set([...selectedDepartmentIds, ...filtered.map(d => d.id)])));
+    }
+  };
+
+  const handleDownloadDepartmentSampleTemplate = () => {
+    const headers = [['Department Code', 'Department Name', 'Duration (Years)']];
+    const worksheet = XLSX.utils.aoa_to_sheet(headers);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Department Sample');
+    XLSX.writeFile(workbook, 'Department_Bulk_Upload_Sample.xlsx');
+    showToast('Downloaded Department import sample format template!', 'success');
+  };
+
+  const handleExportDepartmentData = () => {
+    if (allDepartmentsList.length === 0) {
+      showToast('No departments to export!', 'warning');
+      return;
+    }
+    const exportData = allDepartmentsList.map((d, idx) => ({
+      'Sr. No': idx + 1,
+      'Department Code': d.code || '',
+      'Department Name': d.name || '',
+      'Duration (Years)': d.duration ? `${d.duration} Years` : '-'
+    }));
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Departments');
+    XLSX.writeFile(workbook, `College_Departments_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    showToast('Departments exported to Excel successfully!', 'success');
+  };
+
+  const handleDepartmentImportFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const fileType = file.name.split('.').pop().toLowerCase();
+    if (fileType !== 'csv' && fileType !== 'xlsx' && fileType !== 'xls') {
+      showToast('Invalid file format! Please upload only .csv or .xlsx excel files.', 'error');
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target.result;
+        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wsName = wb.SheetNames[0];
+        const data = XLSX.utils.sheet_to_json(wb.Sheets[wsName]);
+        if (!data || data.length === 0) {
+          showToast('The uploaded file contains no data rows.', 'warning');
+          return;
+        }
+        let addedCount = 0;
+        const newDepts = [...customDepartments];
+        for (const row of data) {
+          const c = String(row['Department Code'] || row['Code'] || row['code'] || '').trim().toUpperCase();
+          const n = String(row['Department Name'] || row['Name'] || row['name'] || '').trim();
+          const rawDur = row['Duration (Years)'] || row['Duration'] || row['duration'] || '3';
+          const dur = parseInt(String(rawDur).replace(/\D/g, ''), 10) || 3;
+          if (!c || !n) continue;
+          if (newDepts.some(d => (d.code || '').toUpperCase() === c || (d.name || '').toLowerCase() === n.toLowerCase())) continue;
+          const deptObj = {
+            id: `dept_${Date.now()}_${Math.floor(100 + Math.random() * 900)}`,
+            code: c,
+            name: n,
+            duration: dur,
+            createdAt: new Date().toISOString()
+          };
+          newDepts.push(deptObj);
+          addedCount++;
+          fetch('/api/departments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify(deptObj)
+          }).catch(() => {});
+        }
+        setCustomDepartments(newDepts);
+        try { localStorage.setItem('admin_custom_departments', JSON.stringify(newDepts)); } catch (err) {}
+        showToast(`Imported ${addedCount} department(s) successfully!`, 'success');
+      } catch (err) {
+        showToast('Error parsing file: ' + err.message, 'error');
+      } finally {
+        e.target.value = '';
+      }
+    };
+    reader.readAsBinaryString(file);
   };
 
   const handleDeleteSemester = (semId, semName) => {
@@ -769,7 +1073,11 @@ export default function AdminDashboard({
   // Helper to remove subject codes like (101), (104), [102], etc.
   const cleanSubjectTitle = (sub) => {
     if (!sub) return 'Subject';
-    return String(sub).replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim() || sub;
+    let s = String(sub).trim();
+    s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+    s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+    s = s.replace(/\s*\(\s*\)/g, '').replace(/\s*\[\s*\]/g, '').trim();
+    return s || String(sub).trim() || 'Subject';
   };
 
   // Fetch Semester Matrix Data from Backend API with client-side fallback
@@ -850,27 +1158,42 @@ export default function AdminDashboard({
       const sSem = String(sess.semester || '').replace(/\D/g, '');
       if (isAll || sSem === targetSem) {
         const dateStr = getLocalDateStr(sess.date || sess.created_at);
-        const colKey = `${dateStr}_${sess.id || sess.qr_session_id || sess.otp_id}`;
+        const sid = sess.id || sess.qr_session_id || sess.otp_id;
+        const colKey = `${dateStr}_${sid}`;
         sessionMap.set(colKey, {
           columnKey: colKey,
+          sessionId: sid ? String(sid) : null,
           date: dateStr,
           subject: cleanSubjectTitle(sess.subject || 'Subject'),
           faculty_name: sess.faculty_name || 'Faculty',
           time: sess.created_at ? new Date(sess.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Session',
           type: sess.qr_session_id ? 'QR' : 'OTP',
-          division: sess.division || 'ALL'
+          division: sess.division || 'ALL',
+          created_at: sess.created_at
         });
       }
     });
 
-    const columns = Array.from(sessionMap.values()).sort((a, b) => a.date.localeCompare(b.date));
+    const columns = Array.from(sessionMap.values()).sort((a, b) => {
+      const tA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      if (tA && tB && tA !== tB) return tA - tB;
+      return a.date.localeCompare(b.date);
+    });
     const attendanceMatrix = {};
 
     const logSet = new Set();
     (semLogs || []).forEach(l => {
       const lDate = getLocalDateStr(l.date || l.timestamp || l.created_at);
-      if (l.student_id) logSet.add(`${String(l.student_id)}_${lDate}`);
-      if (l.enrollment_no) logSet.add(`${String(l.enrollment_no).toLowerCase()}_${lDate}`);
+      const sessId = l.qr_session_id || l.otp_id;
+      if (l.student_id) {
+        if (sessId) logSet.add(`${String(l.student_id)}_sess_${sessId}`);
+        logSet.add(`${String(l.student_id)}_${lDate}`);
+      }
+      if (l.enrollment_no) {
+        if (sessId) logSet.add(`${String(l.enrollment_no).toLowerCase()}_sess_${sessId}`);
+        logSet.add(`${String(l.enrollment_no).toLowerCase()}_${lDate}`);
+      }
     });
 
     semStudents.forEach(st => {
@@ -881,8 +1204,12 @@ export default function AdminDashboard({
         const sessDiv = String(col.division || 'ALL').trim().toUpperCase();
         const isApplicable = sessDiv === 'ALL' || sessDiv === '' || studentDiv === sessDiv;
 
-        const hasLog = logSet.has(`${String(st.id)}_${col.date}`) ||
+        const sid = col.sessionId;
+        const hasSessionLog = sid ? (logSet.has(`${String(st.id)}_sess_${sid}`) ||
+          (st.enrollment_no ? logSet.has(`${String(st.enrollment_no).toLowerCase()}_sess_${sid}`) : false)) : false;
+        const hasDateLog = logSet.has(`${String(st.id)}_${col.date}`) ||
           (st.enrollment_no ? logSet.has(`${String(st.enrollment_no).toLowerCase()}_${col.date}`) : false);
+        const hasLog = sid ? hasSessionLog : hasDateLog;
 
         if (hasLog) {
           attendanceMatrix[String(st.id)][col.columnKey] = {
@@ -1339,7 +1666,8 @@ export default function AdminDashboard({
               id: s.id,
               semNumber: String(s.semester_number || s.id),
               name: s.semester_display_name || `Semester ${s.semester_number || s.id}`,
-              program: "Bachelor's of Computer Applications",
+              department: s.department || s.program || '',
+              program: s.program || s.department || "Bachelor's of Computer Applications",
               academicYear: s.academic_year || '2025-2026',
               term: s.term_type || 'Odd',
               description: s.description || ''
@@ -1354,7 +1682,26 @@ export default function AdminDashboard({
         console.warn('Error fetching semesters from Supabase server:', err);
       }
     };
+
+    const fetchDbDepartments = async () => {
+      try {
+        const res = await fetch('/api/departments');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            setCustomDepartments(data);
+            try {
+              localStorage.setItem('admin_custom_departments', JSON.stringify(data));
+            } catch (e) {}
+          }
+        }
+      } catch (err) {
+        console.warn('Error fetching departments from server:', err);
+      }
+    };
+
     fetchDbSemesters();
+    fetchDbDepartments();
   }, [token]);
 
   const handleOpenAddRuleModal = () => {
@@ -1524,6 +1871,7 @@ export default function AdminDashboard({
     showFacultyModal ||
     showAddSubjectModal ||
     showAddSemesterModal ||
+    showAddDepartmentModal ||
     showAssignFacultyModal ||
     showAddRuleModal ||
     (typeof promoteStep === 'number' && promoteStep > 0)
@@ -2152,89 +2500,162 @@ export default function AdminDashboard({
       return s.trim();
     };
 
-    const getSemNum = (val) => {
-      if (!val) return '';
-      return String(val).replace(/\D/g, '').trim();
+    const cleanSubTitle = (sub) => {
+      if (!sub) return 'Subject';
+      let s = String(sub).trim();
+      s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+      s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+      s = s.replace(/\s*\(\s*\)/g, '').replace(/\s*\[\s*\]/g, '').trim();
+      return s || String(sub).trim() || 'Subject';
     };
 
     const allSystemLogs = [...(liveLogs || []), ...(dateLogs || []), ...(reportData || [])];
 
-    const sessionCols = [];
+    // Build unique sessions list from conducted sessions + reports logs from ALL faculties
+    const sessionMap = new Map();
 
-    dates.forEach(dStr => {
-      const conductedForDate = (qrSessionHistory || []).filter(s => {
-        if (!s) return false;
-        if (normDateStr(s.date || s.created_at) !== dStr) return false;
-        if (targetSem) {
-          const sSem = getSemNum(s.semester || '1');
-          if (sSem && sSem !== targetSem) return false;
-        }
-        if (targetSubName) {
-          const sName = (s.subject_name || s.subject || '').trim().toLowerCase();
-          if (sName && sName !== targetSubName) return false;
-        }
-        return true;
-      });
+    (qrSessionHistory || []).forEach(sess => {
+      if (!sess) return;
+      const sDate = normDateStr(sess.date || sess.created_at);
+      const qId = sess.qr_session_id || (String(sess.id).startsWith('qr_') ? String(sess.id).replace('qr_', '') : (sess.id && !sess.otp_id ? sess.id : null));
+      const oId = sess.otp_id || (String(sess.id).startsWith('otp_') ? String(sess.id).replace('otp_', '') : null);
+      const sId = qId ? `qr_${qId}` : (oId ? `otp_${oId}` : (sess.id ? `sess_${sess.id}` : `sess_${sDate}_${sessionMap.size}`));
 
-      let finalSesses = [...conductedForDate];
-      if (finalSesses.length === 0) {
-        const dateLogsSub = (allSystemLogs || []).filter(l => {
-          if (!l) return false;
-          if (normDateStr(l.date || l.created_at) !== dStr) return false;
-          if (targetSem) {
-            const lSem = getSemNum(l.semester);
-            if (lSem && lSem !== targetSem) return false;
-          }
-          if (targetSubName) {
-            const lSub = (l.subject || '').trim().toLowerCase();
-            if (lSub && lSub !== targetSubName) return false;
-          }
-          return true;
+      if (!sessionMap.has(sId)) {
+        sessionMap.set(sId, {
+          id: sId,
+          qr_session_id: qId ? String(qId) : null,
+          otp_id: oId ? String(oId) : null,
+          date: sDate,
+          created_at: sess.created_at || (sess.date ? `${sess.date}T${sess.time || '00:00:00'}` : null),
+          semester: sess.semester,
+          division: sess.division || 'ALL',
+          subject: sess.subject,
+          faculty_name: sess.faculty_name,
+          time: sess.time
         });
+      }
+    });
 
-        const sessGroupMap = new Map();
-        dateLogsSub.forEach(l => {
-          const key = l.qr_session_id ? `qr_${l.qr_session_id}` : l.otp_id ? `otp_${l.otp_id}` : (l.subject || 'default');
-          if (!sessGroupMap.has(key)) {
-            sessGroupMap.set(key, {
-              id: key,
-              date: dStr,
-              semester: l.semester || targetSem || '1',
-              division: l.division || 'ALL',
-              subject: l.subject || targetSubName || 'Subject'
-            });
+    allSystemLogs.forEach(l => {
+      if (!l) return;
+      const sDate = normDateStr(l.date || l.created_at);
+      const qId = l.qr_session_id ? String(l.qr_session_id) : null;
+      const oId = l.otp_id ? String(l.otp_id) : null;
+      const sId = qId ? `qr_${qId}` : (oId ? `otp_${oId}` : (l.session_id ? `sess_${l.session_id}` : null));
+
+      if (sId) {
+        if (!sessionMap.has(sId)) {
+          sessionMap.set(sId, {
+            id: sId,
+            qr_session_id: qId,
+            otp_id: oId,
+            date: sDate,
+            created_at: l.created_at || (l.date && l.time ? `${l.date}T${l.time}` : null) || sDate,
+            semester: l.semester || l.session_semester,
+            division: l.division || l.session_division || 'ALL',
+            subject: l.subject,
+            faculty_name: l.faculty_name,
+            time: l.time
+          });
+        } else {
+          const existing = sessionMap.get(sId);
+          if ((!existing.subject || existing.subject === 'Subject') && l.subject) {
+            existing.subject = l.subject;
           }
-        });
-        if (sessGroupMap.size > 0) {
-          finalSesses = Array.from(sessGroupMap.values());
+          if ((!existing.division || existing.division === 'ALL') && (l.division || l.session_division)) {
+            existing.division = l.division || l.session_division;
+          }
+          if (!existing.semester && (l.semester || l.session_semester)) {
+            existing.semester = l.semester || l.session_semester;
+          }
+          if (!existing.created_at && (l.created_at || l.time)) {
+            existing.created_at = l.created_at || `${sDate}T${l.time}`;
+          }
+          if (!existing.faculty_name && l.faculty_name) {
+            existing.faculty_name = l.faculty_name;
+          }
+        }
+      } else if (l.device_id === 'Manual') {
+        const manKey = `manual_${sDate}_${cleanSubTitle(l.subject || 'class').replace(/\s+/g, '_')}_${(l.time || '00').replace(/:/g, '')}_${l.id}`;
+        if (!sessionMap.has(manKey)) {
+          sessionMap.set(manKey, {
+            id: manKey,
+            qr_session_id: null,
+            otp_id: null,
+            date: sDate,
+            created_at: l.created_at || (l.date && l.time ? `${l.date}T${l.time}` : null) || sDate,
+            semester: l.semester,
+            division: l.division || 'ALL',
+            subject: l.subject,
+            faculty_name: l.faculty_name,
+            time: l.time
+          });
         }
       }
+    });
 
-      if (finalSesses.length === 0) return;
+    const activeSessions = Array.from(sessionMap.values()).filter(sess => {
+      if (!sess) return false;
+      if (!dates.includes(sess.date)) return false;
+      if (targetSem) {
+        const sSem = String(sess.semester || '').replace(/\D/g, '').trim();
+        if (sSem && sSem !== targetSem) return false;
+      }
+      if (targetDiv) {
+        const sDiv = String(sess.division || 'ALL').trim().toUpperCase();
+        if (sDiv !== 'ALL' && sDiv !== targetDiv) return false;
+      }
+      if (targetSubName) {
+        const sClean = cleanSubTitle(sess.subject).toLowerCase();
+        if (sClean !== targetSubName && !sClean.includes(targetSubName) && !targetSubName.includes(sClean)) return false;
+      }
+      return true;
+    });
 
-      finalSesses.sort((a, b) => {
-        const tA = new Date(a.created_at || a.date || 0).getTime();
-        const tB = new Date(b.created_at || b.date || 0).getTime();
-        return tA - tB;
-      });
+    activeSessions.sort((a, b) => {
+      const tA = new Date(a.created_at || `${a.date}T${a.time || '00:00:00'}`).getTime() || 0;
+      const tB = new Date(b.created_at || `${b.date}T${b.time || '00:00:00'}`).getTime() || 0;
+      if (tA !== tB) return tA - tB;
+      const idA = parseInt(String(a.qr_session_id || a.otp_id || a.id || 0).replace(/\D/g, ''), 10) || 0;
+      const idB = parseInt(String(b.qr_session_id || b.otp_id || b.id || 0).replace(/\D/g, ''), 10) || 0;
+      return idA - idB;
+    });
 
-      const dParts = dStr.split('-');
-      const formattedDate = dParts.length === 3 ? `${dParts[2]}-${dParts[1]}-${dParts[0]}` : dStr;
+    const subDateCounts = {};
+    activeSessions.forEach(s => {
+      const subClean = cleanSubTitle(s.subject);
+      const k = `${s.date}_${subClean}`;
+      subDateCounts[k] = (subDateCounts[k] || 0) + 1;
+    });
 
-      finalSesses.forEach((sess, sIdx) => {
-        const sessId = sess.id || sess.qr_session_id || `${dStr}_${sessionCols.length}`;
-        const sessDiv = String(sess.division || 'ALL').trim().toUpperCase();
-        const colKey = finalSesses.length > 1 ? `${formattedDate} (L${sIdx + 1})` : formattedDate;
+    const subDateCurrentIdx = {};
+    const sessionCols = activeSessions.map((sess) => {
+      const subClean = cleanSubTitle(sess.subject);
+      const k = `${sess.date}_${subClean}`;
+      const totalCountForSubDate = subDateCounts[k] || 1;
+      const currentSubIdx = (subDateCurrentIdx[k] || 0) + 1;
+      subDateCurrentIdx[k] = currentSubIdx;
 
-        sessionCols.push({
-          colKey,
-          dateStr: formattedDate,
-          rawDate: dStr,
-          sessId,
-          sessDiv,
-          subject: sess.subject || targetSubName
-        });
-      });
+      const dParts = sess.date.split('-');
+      const formattedDate = dParts.length === 3 ? `${dParts[2]}-${dParts[1]}-${dParts[0]}` : sess.date;
+
+      let colKey = formattedDate;
+      if (totalCountForSubDate > 1) {
+        colKey = `${formattedDate} (L${currentSubIdx})`;
+      }
+
+      return {
+        colKey,
+        dateStr: formattedDate,
+        rawDate: sess.date,
+        sessId: sess.id,
+        qr_session_id: sess.qr_session_id,
+        otp_id: sess.otp_id,
+        sessDiv: String(sess.division || 'ALL').trim().toUpperCase(),
+        subject: sess.subject || targetSubName,
+        faculty_name: sess.faculty_name
+      };
     });
 
     const columns = [
@@ -2248,14 +2669,19 @@ export default function AdminDashboard({
       if (!log) return;
       const status = String(log.status || '').toLowerCase();
       if (status === 'success' || status === 'present') {
-        const d = normDateStr(log.date || log.created_at);
-        const sId = log.qr_session_id ? `qr_${log.qr_session_id}` : log.otp_id ? `otp_${log.otp_id}` : null;
-        const enrolls = [log.enrollment_no, log.student_id, log.roll_no].filter(Boolean).map(x => String(x).trim().toLowerCase());
+        const enrolls = [log.enrollment_no, log.student_id, log.roll_no, log.id].filter(Boolean).map(x => String(x).trim().toLowerCase());
         enrolls.forEach(en => {
-          if (d) presentMap.add(`${en}_${d}`);
-          if (sId) presentMap.add(`${en}_${sId}`);
-          if (log.qr_session_id) presentMap.add(`${en}_${log.qr_session_id}`);
-          if (log.otp_id) presentMap.add(`${en}_${log.otp_id}`);
+          if (log.qr_session_id) {
+            presentMap.add(`${en}_qr_${log.qr_session_id}`);
+            presentMap.add(`${en}_${log.qr_session_id}`);
+          }
+          if (log.otp_id) {
+            presentMap.add(`${en}_otp_${log.otp_id}`);
+            presentMap.add(`${en}_${log.otp_id}`);
+          }
+          if (log.id) {
+            presentMap.add(`${en}_${log.id}`);
+          }
         });
       }
     });
@@ -2284,7 +2710,6 @@ export default function AdminDashboard({
       };
 
       sessionCols.forEach(colObj => {
-        const rawD = colObj.rawDate;
         const colDiv = colObj.sessDiv;
         const isApplicableForStudentDiv = (colDiv === 'ALL' || colDiv === divCode);
 
@@ -2292,12 +2717,16 @@ export default function AdminDashboard({
           rowObj[colObj.colKey] = '-';
         } else {
           conductedForStudentCount++;
-          const isPresent = studentKeys.some(k =>
-            presentMap.has(`${k}_${colObj.sessId}`) ||
-            presentMap.has(`${k}_${rawD}`) ||
-            (colObj.qr_session_id && presentMap.has(`${k}_${colObj.qr_session_id}`)) ||
-            (colObj.otp_id && presentMap.has(`${k}_${colObj.otp_id}`))
-          );
+          const qId = colObj.qr_session_id;
+          const oId = colObj.otp_id;
+          const sId = colObj.sessId;
+
+          const isPresent = studentKeys.some(enroll => {
+            if (qId && (presentMap.has(`${enroll}_qr_${qId}`) || presentMap.has(`${enroll}_${qId}`))) return true;
+            if (oId && (presentMap.has(`${enroll}_otp_${oId}`) || presentMap.has(`${enroll}_${oId}`))) return true;
+            if (sId && presentMap.has(`${enroll}_${sId}`)) return true;
+            return false;
+          });
 
           if (isPresent) {
             rowObj[colObj.colKey] = 'P';
@@ -2361,126 +2790,161 @@ export default function AdminDashboard({
       return s.trim();
     };
 
-    const allSystemLogs = [...(liveLogs || []), ...(dateLogs || []), ...(reportData || [])];
-
-    // Helper to resolve exact Subject Name / Short Name for a conducted session
-    const resolveSessionSubject = (sess, sessIdx, dStr, semVal) => {
-      let rawName = sess.subject || sess.subject_name || sess.subjectTitle || '';
-
-      if (!rawName || rawName.trim().toLowerCase() === 'subject' || rawName.trim().toLowerCase() === 'all subjects') {
-        const sId = sess.id || sess.qr_session_id || sess.otp_id;
-        const matchingLog = (allSystemLogs || []).find(l =>
-          l && (String(l.qr_session_id) === String(sId) || String(l.otp_id) === String(sId) || (normDateStr(l.date || l.created_at) === dStr && l.subject && l.subject.trim().toLowerCase() !== 'subject'))
-        );
-        if (matchingLog && matchingLog.subject) {
-          rawName = matchingLog.subject;
-        }
-      }
-
-      const semClean = String(semVal || targetSem || '1').replace(/\D/g, '').trim();
-      const semSubjects = (allFacultySubjects || []).filter(s => String(s.semester || '').replace(/\D/g, '').trim() === semClean);
-
-      if ((!rawName || rawName.trim().toLowerCase() === 'subject') && semSubjects.length > 0) {
-        const chosen = semSubjects[sessIdx % semSubjects.length];
-        rawName = chosen ? (chosen.subjectName || chosen.name || '') : '';
-      }
-
-      if (!rawName) rawName = `Lecture ${sessIdx + 1}`;
-
-      const nameClean = String(rawName).trim().toLowerCase();
-      const matched = (allFacultySubjects || []).find(s => {
-        const sName = String(s.subjectName || s.name || '').trim().toLowerCase();
-        return sName === nameClean && String(s.semester || '').replace(/\D/g, '').trim() === semClean;
-      }) || (allFacultySubjects || []).find(s => String(s.subjectName || s.name || '').trim().toLowerCase() === nameClean);
-
-      if (matched) {
-        const short = matched.shortName || matched.shortCode || matched.short;
-        if (short && String(short).trim() !== '' && String(short).trim() !== '-' && isNaN(String(short).trim())) {
-          return String(short).trim();
-        }
-        if (matched.subjectName || matched.name) {
-          return String(matched.subjectName || matched.name).trim();
-        }
-      }
-
-      return String(rawName).trim();
+    const cleanSubTitle = (sub) => {
+      if (!sub) return 'Subject';
+      let s = String(sub).trim();
+      s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+      s = s.replace(/\s*[\(\[][^()\[\]]*[\)\]]/g, '').trim();
+      s = s.replace(/\s*\(\s*\)/g, '').replace(/\s*\[\s*\]/g, '').trim();
+      return s || String(sub).trim() || 'Subject';
     };
 
-    const sessionCols = [];
+    const allSystemLogs = [...(liveLogs || []), ...(dateLogs || []), ...(reportData || [])];
 
-    dates.forEach(dStr => {
-      // Find conducted sessions in qrSessionHistory for targetSem on dStr
-      const conductedForDate = (qrSessionHistory || []).filter(s => {
-        if (!s) return false;
-        if (normDateStr(s.date || s.created_at) !== dStr) return false;
-        if (targetSem) {
-          const sSem = String(s.semester || '').replace(/\D/g, '').trim();
-          if (sSem && sSem !== targetSem) return false;
+    // Build unique sessions list from conducted sessions + reports logs from ALL faculties
+    const sessionMap = new Map();
+
+    (qrSessionHistory || []).forEach(sess => {
+      if (!sess) return;
+      const sDate = normDateStr(sess.date || sess.created_at);
+      const qId = sess.qr_session_id || (String(sess.id).startsWith('qr_') ? String(sess.id).replace('qr_', '') : (sess.id && !sess.otp_id ? sess.id : null));
+      const oId = sess.otp_id || (String(sess.id).startsWith('otp_') ? String(sess.id).replace('otp_', '') : null);
+      const sId = qId ? `qr_${qId}` : (oId ? `otp_${oId}` : (sess.id ? `sess_${sess.id}` : `sess_${sDate}_${sessionMap.size}`));
+
+      if (!sessionMap.has(sId)) {
+        sessionMap.set(sId, {
+          id: sId,
+          qr_session_id: qId ? String(qId) : null,
+          otp_id: oId ? String(oId) : null,
+          date: sDate,
+          created_at: sess.created_at || (sess.date ? `${sess.date}T${sess.time || '00:00:00'}` : null),
+          semester: sess.semester,
+          division: sess.division || 'ALL',
+          subject: sess.subject,
+          faculty_name: sess.faculty_name,
+          time: sess.time
+        });
+      }
+    });
+
+    allSystemLogs.forEach(l => {
+      if (!l) return;
+      const sDate = normDateStr(l.date || l.created_at);
+      const qId = l.qr_session_id ? String(l.qr_session_id) : null;
+      const oId = l.otp_id ? String(l.otp_id) : null;
+      const sId = qId ? `qr_${qId}` : (oId ? `otp_${oId}` : (l.session_id ? `sess_${l.session_id}` : null));
+
+      if (sId) {
+        if (!sessionMap.has(sId)) {
+          sessionMap.set(sId, {
+            id: sId,
+            qr_session_id: qId,
+            otp_id: oId,
+            date: sDate,
+            created_at: l.created_at || (l.date && l.time ? `${l.date}T${l.time}` : null) || sDate,
+            semester: l.semester || l.session_semester,
+            division: l.division || l.session_division || 'ALL',
+            subject: l.subject,
+            faculty_name: l.faculty_name,
+            time: l.time
+          });
+        } else {
+          const existing = sessionMap.get(sId);
+          if ((!existing.subject || existing.subject === 'Subject') && l.subject) {
+            existing.subject = l.subject;
+          }
+          if ((!existing.division || existing.division === 'ALL') && (l.division || l.session_division)) {
+            existing.division = l.division || l.session_division;
+          }
+          if (!existing.semester && (l.semester || l.session_semester)) {
+            existing.semester = l.semester || l.session_semester;
+          }
+          if (!existing.created_at && (l.created_at || l.time)) {
+            existing.created_at = l.created_at || `${sDate}T${l.time}`;
+          }
+          if (!existing.faculty_name && l.faculty_name) {
+            existing.faculty_name = l.faculty_name;
+          }
         }
-        return true;
-      });
-
-      let finalSesses = [...conductedForDate];
-      if (finalSesses.length === 0) {
-        const dateLogs = (allSystemLogs || []).filter(l => {
-          if (!l) return false;
-          if (normDateStr(l.date || l.created_at) !== dStr) return false;
-          if (targetSem) {
-            const lSem = String(l.semester || '').replace(/\D/g, '').trim();
-            if (lSem && lSem !== targetSem) return false;
-          }
-          return true;
-        });
-
-        const sessGroupMap = new Map();
-        dateLogs.forEach(l => {
-          const key = l.qr_session_id ? `qr_${l.qr_session_id}` : l.otp_id ? `otp_${l.otp_id}` : (l.subject || 'default');
-          if (!sessGroupMap.has(key)) {
-            sessGroupMap.set(key, {
-              id: key,
-              date: dStr,
-              semester: l.semester || targetSem || '1',
-              division: l.division || 'ALL',
-              subject: l.subject || 'Subject'
-            });
-          }
-        });
-        if (sessGroupMap.size > 0) {
-          finalSesses = Array.from(sessGroupMap.values());
+      } else if (l.device_id === 'Manual') {
+        const manKey = `manual_${sDate}_${cleanSubTitle(l.subject || 'class').replace(/\s+/g, '_')}_${(l.time || '00').replace(/:/g, '')}_${l.id}`;
+        if (!sessionMap.has(manKey)) {
+          sessionMap.set(manKey, {
+            id: manKey,
+            qr_session_id: null,
+            otp_id: null,
+            date: sDate,
+            created_at: l.created_at || (l.date && l.time ? `${l.date}T${l.time}` : null) || sDate,
+            semester: l.semester,
+            division: l.division || 'ALL',
+            subject: l.subject,
+            faculty_name: l.faculty_name,
+            time: l.time
+          });
         }
       }
+    });
 
-      if (finalSesses.length === 0) return;
+    const activeSessions = Array.from(sessionMap.values()).filter(sess => {
+      if (!sess) return false;
+      if (!dates.includes(sess.date)) return false;
+      if (targetSem) {
+        const sSem = String(sess.semester || '').replace(/\D/g, '').trim();
+        if (sSem && sSem !== targetSem) return false;
+      }
+      if (targetDiv) {
+        const sDiv = String(sess.division || 'ALL').trim().toUpperCase();
+        if (sDiv !== 'ALL' && sDiv !== targetDiv) return false;
+      }
+      return true;
+    });
 
-      finalSesses.sort((a, b) => {
-        const tA = new Date(a.created_at || a.date || 0).getTime();
-        const tB = new Date(b.created_at || b.date || 0).getTime();
-        return tA - tB;
-      });
+    activeSessions.sort((a, b) => {
+      const tA = new Date(a.created_at || `${a.date}T${a.time || '00:00:00'}`).getTime() || 0;
+      const tB = new Date(b.created_at || `${b.date}T${b.time || '00:00:00'}`).getTime() || 0;
+      if (tA !== tB) return tA - tB;
+      const idA = parseInt(String(a.qr_session_id || a.otp_id || a.id || 0).replace(/\D/g, ''), 10) || 0;
+      const idB = parseInt(String(b.qr_session_id || b.otp_id || b.id || 0).replace(/\D/g, ''), 10) || 0;
+      return idA - idB;
+    });
 
-      const dParts = dStr.split('-');
-      const formattedDate = dParts.length === 3 ? `${dParts[2]}-${dParts[1]}-${dParts[0]}` : dStr;
+    const subDateCounts = {};
+    activeSessions.forEach(s => {
+      const subClean = cleanSubTitle(s.subject);
+      const k = `${s.date}_${subClean}`;
+      subDateCounts[k] = (subDateCounts[k] || 0) + 1;
+    });
 
-      finalSesses.forEach((sess, sIdx) => {
-        const semVal = sess.semester || targetSem;
-        const resolvedSub = resolveSessionSubject(sess, sIdx, dStr, semVal);
+    const subDateCurrentIdx = {};
+    const sessionCols = activeSessions.map((sess) => {
+      const subClean = cleanSubTitle(sess.subject);
+      const k = `${sess.date}_${subClean}`;
+      const totalCountForSubDate = subDateCounts[k] || 1;
+      const currentSubIdx = (subDateCurrentIdx[k] || 0) + 1;
+      subDateCurrentIdx[k] = currentSubIdx;
 
-        const sessionLabel = resolvedSub;
+      let sessionLabel = subClean;
+      if (totalCountForSubDate > 1) {
+        sessionLabel = `${subClean} (Session ${currentSubIdx})`;
+      }
 
-        const sessId = sess.id || sess.qr_session_id || `${dStr}_${sessionCols.length}`;
-        const sessDiv = String(sess.division || 'ALL').trim().toUpperCase();
+      const dParts = sess.date.split('-');
+      const formattedDate = dParts.length === 3 ? `${dParts[2]}-${dParts[1]}-${dParts[0]}` : sess.date;
 
-        sessionCols.push({
-          key: `col_${sessionCols.length}_${sessId}`,
-          dateStr: formattedDate,
-          rawDate: dStr,
-          sessionLabel,
-          sessId,
-          sessDiv,
-          subject: resolvedSub,
-          semester: String(semVal)
-        });
-      });
+      return {
+        key: `col_${sess.id}`,
+        colKey: `col_${sess.id}`,
+        dateStr: formattedDate,
+        rawDate: sess.date,
+        sessionLabel,
+        sessId: sess.id,
+        qr_session_id: sess.qr_session_id,
+        otp_id: sess.otp_id,
+        sessDiv: String(sess.division || 'ALL').trim().toUpperCase(),
+        subject: sess.subject,
+        faculty_name: sess.faculty_name,
+        semester: String(sess.semester || targetSem || '1')
+      };
     });
 
     const presentMap = new Set();
@@ -2488,14 +2952,19 @@ export default function AdminDashboard({
       if (!log) return;
       const status = String(log.status || '').toLowerCase();
       if (status === 'success' || status === 'present') {
-        const d = normDateStr(log.date || log.created_at);
-        const sId = log.qr_session_id ? `qr_${log.qr_session_id}` : log.otp_id ? `otp_${log.otp_id}` : null;
-        const enrolls = [log.enrollment_no, log.student_id, log.roll_no].filter(Boolean).map(x => String(x).trim().toLowerCase());
+        const enrolls = [log.enrollment_no, log.student_id, log.roll_no, log.id].filter(Boolean).map(x => String(x).trim().toLowerCase());
         enrolls.forEach(en => {
-          if (d) presentMap.add(`${en}_${d}`);
-          if (sId) presentMap.add(`${en}_${sId}`);
-          if (log.qr_session_id) presentMap.add(`${en}_${log.qr_session_id}`);
-          if (log.otp_id) presentMap.add(`${en}_${log.otp_id}`);
+          if (log.qr_session_id) {
+            presentMap.add(`${en}_qr_${log.qr_session_id}`);
+            presentMap.add(`${en}_${log.qr_session_id}`);
+          }
+          if (log.otp_id) {
+            presentMap.add(`${en}_otp_${log.otp_id}`);
+            presentMap.add(`${en}_${log.otp_id}`);
+          }
+          if (log.id) {
+            presentMap.add(`${en}_${log.id}`);
+          }
         });
       }
     });
@@ -2511,23 +2980,23 @@ export default function AdminDashboard({
       const sessionAttendance = {};
 
       sessionCols.forEach((col) => {
-        const rawD = normDateStr(col.rawDate);
         const colDiv = col.sessDiv;
-
-        // Rule 5: Check if session was started for student's division
         const isApplicableForStudentDiv = (colDiv === 'ALL' || colDiv === divCode);
 
         if (!isApplicableForStudentDiv) {
-          // Rule 5: Session started for another division, not for this student's div -> Show '-'
           sessionAttendance[col.key] = '-';
         } else {
           conductedForStudentCount++;
-          const isPresent = studentKeys.some(k =>
-            presentMap.has(`${k}_${col.sessId}`) ||
-            presentMap.has(`${k}_${rawD}`) ||
-            (col.qr_session_id && presentMap.has(`${k}_${col.qr_session_id}`)) ||
-            (col.otp_id && presentMap.has(`${k}_${col.otp_id}`))
-          );
+          const qId = col.qr_session_id;
+          const oId = col.otp_id;
+          const sId = col.sessId;
+
+          const isPresent = studentKeys.some(enroll => {
+            if (qId && (presentMap.has(`${enroll}_qr_${qId}`) || presentMap.has(`${enroll}_${qId}`))) return true;
+            if (oId && (presentMap.has(`${enroll}_otp_${oId}`) || presentMap.has(`${enroll}_${oId}`))) return true;
+            if (sId && presentMap.has(`${enroll}_${sId}`)) return true;
+            return false;
+          });
 
           if (isPresent) {
             sessionAttendance[col.key] = 'P';
@@ -2555,7 +3024,6 @@ export default function AdminDashboard({
       };
     });
 
-    // Sort rows by Semester, Division, then Roll No
     rows.sort((a, b) => {
       const semA = parseInt(String(a.sem || a.semester || '').replace(/\D/g, '')) || 0;
       const semB = parseInt(String(b.sem || b.semester || '').replace(/\D/g, '')) || 0;
@@ -3239,11 +3707,14 @@ export default function AdminDashboard({
       }
     });
   };
-  const [qrCodeTimer, setQrCodeTimer] = useState(15);
+  const [qrCodeTimer, setQrCodeTimer] = useState(10);
   const [qrGenerationEnabled, setQrGenerationEnabled] = useState(true);
   const [qrDailyLimit, setQrDailyLimit] = useState(5);
   const [qrLimitInput, setQrLimitInput] = useState('5');
   const [qrLimitSaving, setQrLimitSaving] = useState(false);
+  const [qrCodeTime, setQrCodeTime] = useState(10);
+  const [qrTimeInput, setQrTimeInput] = useState('10');
+  const [qrTimeSaving, setQrTimeSaving] = useState(false);
   const qrCanvasRef = useRef(null);
 
   // College Location State with persistent cache hydration
@@ -3289,6 +3760,17 @@ export default function AdminDashboard({
   const statsPanelRef = useRef(null);
 
   // Auto-focus first input field when Add Semester Modal opens
+  useEffect(() => {
+    if (showAddDepartmentModal) {
+      setTimeout(() => {
+        if (firstDeptInputRef.current) {
+          firstDeptInputRef.current.focus();
+          firstDeptInputRef.current.select();
+        }
+      }, 50);
+    }
+  }, [showAddDepartmentModal]);
+
   useEffect(() => {
     if (showAddSemesterModal) {
       setTimeout(() => {
@@ -3668,8 +4150,8 @@ export default function AdminDashboard({
 
       const [resActive, resTodayQr, resTodayOtp] = await Promise.all([
         fetch('/api/qr/active', { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`/api/qr/today?date=${dateToFetch}`, { headers: { Authorization: `Bearer ${token}` } }),
-        fetch(`/api/otp/today?date=${dateToFetch}`, { headers: { Authorization: `Bearer ${token}` } })
+        fetch(`/api/qr/today?date=${dateToFetch}&all=true&view=admin`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`/api/otp/today?date=${dateToFetch}&all=true&view=admin`, { headers: { Authorization: `Bearer ${token}` } })
       ]);
 
       if (resActive.ok) {
@@ -3765,9 +4247,10 @@ export default function AdminDashboard({
 
   const fetchQrSettings = async () => {
     try {
-      const [resSettings, resLimit] = await Promise.all([
+      const [resSettings, resLimit, resTime] = await Promise.all([
         fetch('/api/qr/settings', { headers: { Authorization: `Bearer ${token}` } }),
-        fetch('/api/qr/limit', { headers: { Authorization: `Bearer ${token}` } })
+        fetch('/api/qr/limit', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/qr/time', { headers: { Authorization: `Bearer ${token}` } })
       ]);
       if (resSettings.ok) {
         const data = await resSettings.json();
@@ -3777,6 +4260,11 @@ export default function AdminDashboard({
         const data = await resLimit.json();
         setQrDailyLimit(data.limit);
         setQrLimitInput(String(data.limit));
+      }
+      if (resTime && resTime.ok) {
+        const data = await resTime.json();
+        setQrCodeTime(data.time || 10);
+        setQrTimeInput(String(data.time || 10));
       }
     } catch (err) {
       console.error('Error fetching QR settings:', err);
@@ -3843,6 +4331,42 @@ export default function AdminDashboard({
       showToast('Network error saving limit.', 'error');
     } finally {
       setQrLimitSaving(false);
+    }
+  };
+
+  const handleSaveQrTime = async () => {
+    const val = parseInt(qrTimeInput);
+    if (isNaN(val) || val < 3 || val > 120) {
+      showToast('Please enter a valid rotation time between 3 and 120 seconds.', 'warning');
+      return;
+    }
+    setQrTimeSaving(true);
+    try {
+      const res = await fetch('/api/qr/time', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ time: val })
+      });
+      if (res.ok) {
+        setQrCodeTime(val);
+        showToast(`QR rotation time set to ${val} seconds successfully!`, 'success', 3000);
+        window.dispatchEvent(new CustomEvent('app_data_changed'));
+        if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+          try {
+            const bc = new BroadcastChannel('attendance_system_sync');
+            bc.postMessage({ type: 'DATA_CHANGED' });
+            bc.close();
+          } catch (e) {}
+        }
+      } else {
+        const data = await res.json();
+        showToast(data.error || 'Failed to save QR time.', 'error');
+      }
+    } catch (err) {
+      console.error('Error saving QR time:', err);
+      showToast('Network error saving QR time.', 'error');
+    } finally {
+      setQrTimeSaving(false);
     }
   };
 
@@ -3949,23 +4473,29 @@ export default function AdminDashboard({
     let query = '';
     if (reportType === 'today') {
       const todayStr = new Date().toISOString().split('T')[0];
-      query = `?date=${todayStr}`;
+      query = `?date=${todayStr}&view=admin`;
     } else if (reportType === 'monthly') {
       // reportMonth is 'YYYY-MM'
       const [yr, mo] = reportMonth.split('-').map(Number);
       const startOfMonth = new Date(yr, mo - 1, 1).toISOString().split('T')[0];
       const endOfMonth = new Date(yr, mo, 0).toISOString().split('T')[0]; // last day of month
-      query = `?startDate=${startOfMonth}&endDate=${endOfMonth}`;
+      query = `?startDate=${startOfMonth}&endDate=${endOfMonth}&view=admin`;
     } else if (reportType === 'yearly') {
       // reportYear is 'YYYY'
       const yr = parseInt(reportYear, 10);
       const startOfYear = `${yr}-01-01`;
       const endOfYear = `${yr}-12-31`;
-      query = `?startDate=${startOfYear}&endDate=${endOfYear}`;
+      query = `?startDate=${startOfYear}&endDate=${endOfYear}&view=admin`;
     } else if (reportType === 'student_wise') {
-      query = `?studentId=${reportStudentId}`;
-    } else if (reportType === 'custom_date') {
-      query = `?date=${reportDate || new Date().toISOString().split('T')[0]}`;
+      query = `?studentId=${reportStudentId}&view=admin`;
+    } else if (reportType === 'custom_date' || reportType === 'day_wise') {
+      query = `?date=${reportDate || new Date().toISOString().split('T')[0]}&view=admin`;
+    } else if (reportType === 'subject_date_wise' || reportType === 'semester_date_wise') {
+      const sDate = reportStartDate || new Date().toISOString().split('T')[0];
+      const eDate = reportEndDate || new Date().toISOString().split('T')[0];
+      query = `?startDate=${sDate}&endDate=${eDate}&view=admin`;
+    } else {
+      query = '?view=admin';
     }
 
     try {
@@ -4077,10 +4607,12 @@ export default function AdminDashboard({
             fetchStats();
             return 0;
           }
+          const ROTATE_INTERVAL = qrCodeTime || 10;
           const elapsed = 120 - (prev - 1);
-          const idx = Math.min(7, Math.floor(elapsed / 15));
+          const totalTokens = activeQrSessionDetails?.tokens?.length || 12;
+          const idx = Math.min(totalTokens - 1, Math.floor(elapsed / ROTATE_INTERVAL));
           setTokenIndex(idx);
-          setQrCodeTimer(15 - (elapsed % 15));
+          setQrCodeTimer(ROTATE_INTERVAL - (elapsed % ROTATE_INTERVAL));
           return prev - 1;
         });
       }, 1000);
@@ -4090,7 +4622,7 @@ export default function AdminDashboard({
       setTokenIndex(0);
     }
     return () => clearInterval(timerInterval);
-  }, [activeQrSessionDetails, qrSessionTimer]);
+  }, [activeQrSessionDetails, qrSessionTimer, qrCodeTime]);
 
   // QR Code Rendering Effect
   useEffect(() => {
@@ -4130,7 +4662,7 @@ export default function AdminDashboard({
     if (activeTab === 'reports') {
       fetchReportData();
     }
-  }, [reportType, reportStudentId, reportDate, reportMonth, reportYear]);
+  }, [reportType, reportStudentId, reportDate, reportMonth, reportYear, reportStartDate, reportEndDate]);
 
   // Leaflet Map Initialization & Sync
   useEffect(() => {
@@ -4998,6 +5530,16 @@ export default function AdminDashboard({
       return;
     }
 
+    if (!studentForm.course || !String(studentForm.course).trim()) {
+      showToast('Please select Department / Course (Required)', 'warning');
+      return;
+    }
+
+    if (!studentForm.semester || !String(studentForm.semester).trim()) {
+      showToast('Please select Semester (Required)', 'warning');
+      return;
+    }
+
     if (!studentForm.mobile || !/^\d{10}$/.test(String(studentForm.mobile).trim())) {
       showToast('Please enter valid 10-digit mobile number (Required)', 'warning');
       return;
@@ -5185,6 +5727,38 @@ export default function AdminDashboard({
   const executeConfirmedDelete = async () => {
     const { type, entityType, studentId, targetIds } = deleteConfirmState;
     setDeleteConfirmState({ isOpen: false, type: 'single', entityType: 'student', studentId: null, studentName: '', targetIds: [] });
+
+    if (entityType === 'department') {
+      const targetIdsList = (targetIds && targetIds.length > 0 ? targetIds : [studentId]);
+      const targetSet = new Set(targetIdsList.map(id => String(id)));
+
+      const updated = customDepartments.filter(d => !targetSet.has(String(d.id)));
+      setCustomDepartments(updated);
+      try { localStorage.setItem('admin_custom_departments', JSON.stringify(updated)); } catch (e) {}
+      setSelectedDepartmentIds(prev => prev.filter(id => !targetSet.has(String(id))));
+
+      try {
+        if (targetIdsList.length === 1) {
+          await fetch(`/api/departments/${targetIdsList[0]}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${token}` }
+          });
+        } else {
+          await fetch('/api/departments/bulk-delete', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({ ids: targetIdsList })
+          });
+        }
+        showToast(`Selected department(s) deleted successfully!`, 'success');
+      } catch (err) {
+        console.error('Delete department error:', err);
+      }
+      return;
+    }
 
     if (entityType === 'semester') {
       const targetIdsList = (targetIds && targetIds.length > 0 ? targetIds : [studentId]);
@@ -5893,6 +6467,10 @@ export default function AdminDashboard({
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(facultyForm.email.trim())) {
       showToast('Please enter a valid email address', 'warning');
+      return;
+    }
+    if (!facultyForm.department || !String(facultyForm.department).trim()) {
+      showToast('Please select Department (Required)', 'warning');
       return;
     }
     if (facultyForm.mobile && !/^\d{10}$/.test(facultyForm.mobile.trim())) {
@@ -7365,7 +7943,7 @@ export default function AdminDashboard({
   return (
     <div className={`admin-dashboard-root ${theme === 'light' ? 'admin-theme-light' : ''}`}>
       {/* Floating Return to Dashboard Arrow Button (Rendered on mobile for any tab other than dashboard, students, faculty, subjects) */}
-      {activeTab !== 'dashboard' && !['students', 'faculty', 'subjects'].includes(activeTab) && !isAnyAdminModalOpen && (
+      {activeTab !== 'dashboard' && !['students', 'faculty', 'subjects', 'semesters', 'departments'].includes(activeTab) && !isAnyAdminModalOpen && (
         <button
           type="button"
           className="admin-floating-return-dashboard"
@@ -7797,6 +8375,77 @@ export default function AdminDashboard({
         </div>
       )}
 
+      {/* Mobile Floating Bottom-Right Department Actions Toggle Button */}
+      {activeTab === 'departments' && !isAnyAdminModalOpen && !mobileSidebarOpen && (
+        <button
+          type="button"
+          className={`student-floating-mobile-actions-toggle ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+          onClick={() => setShowDepartmentMobileActions(!showDepartmentMobileActions)}
+          title={showDepartmentMobileActions ? "Close Department Actions" : "Open Department Actions"}
+          style={{
+            bottom: showFloatingMobileMenu ? '92px' : '24px'
+          }}
+        >
+          {showDepartmentMobileActions ? (
+            <X size={24} color="#ffffff" />
+          ) : (
+            <SlidersHorizontal size={22} color="#ffffff" />
+          )}
+        </button>
+      )}
+
+      {/* Mobile Backdrop Overlay for Department Actions */}
+      {activeTab === 'departments' && !isAnyAdminModalOpen && !mobileSidebarOpen && showDepartmentMobileActions && (
+        <div
+          className="student-mobile-actions-backdrop"
+          onClick={() => setShowDepartmentMobileActions(false)}
+        />
+      )}
+
+      {/* Mobile Floating Action Buttons Container for Department */}
+      {activeTab === 'departments' && !isAnyAdminModalOpen && !mobileSidebarOpen && showDepartmentMobileActions && (
+        <div
+          className={`admin-action-btn-group mobile-actions-open ${!showFloatingMobileMenu ? 'hamburger-off-pos' : ''}`}
+          style={{
+            bottom: showFloatingMobileMenu ? '160px' : '92px'
+          }}
+        >
+          <button
+            className="admin-glass-btn admin-glass-btn-blue"
+            onClick={() => { setShowDepartmentMobileActions(false); handleDownloadDepartmentSampleTemplate(); }}
+            title="Download sample Excel file format for department import"
+          >
+            <FileSpreadsheet size={16} />
+            <span>Sample Format</span>
+          </button>
+
+          <button
+            className="admin-glass-btn admin-glass-btn-purple"
+            onClick={() => { setShowDepartmentMobileActions(false); departmentFileInputRef.current && departmentFileInputRef.current.click(); }}
+            title="Import department records batch from CSV or Excel"
+          >
+            <Upload size={16} />
+            <span>Bulk Upload</span>
+          </button>
+
+          <button
+            className="admin-glass-btn admin-glass-btn-green"
+            onClick={() => { setShowDepartmentMobileActions(false); handleExportDepartmentData(); }}
+            title="Export department records to Excel file"
+          >
+            <Download size={16} />
+            <span>Export Data</span>
+          </button>
+
+          <button
+            className="admin-glass-btn admin-glass-btn-amber full-width-mobile"
+            onClick={() => { setShowDepartmentMobileActions(false); handleOpenAddDepartmentModal(); }}
+          >
+            <Plus size={16} /> <span>Add Department</span>
+          </button>
+        </div>
+      )}
+
       {/* Mobile Backdrop Overlay when sidebar is open */}
       {mobileSidebarOpen && (
         <div
@@ -7824,6 +8473,14 @@ export default function AdminDashboard({
             >
               <LayoutGrid size={19} />
               <span>Dashboard</span>
+            </button>
+
+            <button
+              className={`admin-nav-item ${activeTab === 'departments' ? 'active' : ''}`}
+              onClick={() => { setActiveTab('departments'); setMobileSidebarOpen(false); }}
+            >
+              <Building2 size={19} />
+              <span>Department</span>
             </button>
 
             <button
@@ -8091,6 +8748,7 @@ export default function AdminDashboard({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
                   <h1 className="admin-banner-title">
                     {activeTab === 'dashboard' ? 'Dashboard' :
+                      activeTab === 'departments' ? 'Department' :
                       activeTab === 'students' ? 'Students' :
                         activeTab === 'faculty' ? 'Faculty' :
                           activeTab === 'attendance_logs' ? 'Attendance Logs' :
@@ -10235,6 +10893,181 @@ export default function AdminDashboard({
               </div>
             )}
 
+            {/* Add / Edit Department Modal Dialog */}
+            {showAddDepartmentModal && (
+              <div style={{
+                position: 'fixed',
+                top: 0, left: 0, right: 0, bottom: 0,
+                width: '100vw', width: '100dvw',
+                height: '100vh', height: '100dvh',
+                background: 'transparent',
+                backdropFilter: 'blur(5px)',
+                WebkitBackdropFilter: 'blur(5px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 99999,
+                padding: '16px',
+                boxSizing: 'border-box'
+              }}
+              onClick={() => setShowAddDepartmentModal(false)}
+              >
+                <div
+                  className="glass-panel"
+                  style={{
+                    maxWidth: '480px',
+                    width: '100%',
+                    background: '#ffffff',
+                    border: '1.5px solid #cbd5e1',
+                    borderRadius: '20px',
+                    padding: '24px',
+                    boxShadow: '0 20px 50px rgba(0,0,0,0.2)',
+                    boxSizing: 'border-box'
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <div style={{
+                        width: '38px',
+                        height: '38px',
+                        borderRadius: '10px',
+                        background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                        color: '#ffffff',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        <Building2 size={20} />
+                      </div>
+                      <h2 style={{ margin: 0, fontSize: '1.2rem', fontWeight: '800', color: '#0f172a' }}>
+                        {isEditingDepartment ? 'Edit Department' : 'Add New Department'}
+                      </h2>
+                    </div>
+                    <AdminModalCloseBtn onClick={() => setShowAddDepartmentModal(false)} />
+                  </div>
+
+                  <form onSubmit={handleSaveDepartment} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
+                        Department Code <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <input
+                        ref={firstDeptInputRef}
+                        type="text"
+                        className="glass-input"
+                        placeholder="e.g. BCA, CSE, IT, BBA"
+                        value={departmentFormData.code}
+                        onChange={(e) => setDepartmentFormData({ ...departmentFormData, code: e.target.value.toUpperCase() })}
+                        required
+                        tabIndex={1}
+                        autoFocus
+                        style={{ width: '100%', boxSizing: 'border-box' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
+                        Department Full Name <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <input
+                        type="text"
+                        className="glass-input"
+                        placeholder="e.g. Bachelor of Computer Applications"
+                        value={departmentFormData.name}
+                        onChange={(e) => setDepartmentFormData({ ...departmentFormData, name: e.target.value })}
+                        required
+                        tabIndex={2}
+                        style={{ width: '100%', boxSizing: 'border-box' }}
+                      />
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
+                        Duration (Years) <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="10"
+                        step="1"
+                        className="glass-input"
+                        placeholder="e.g. 3 or 4"
+                        value={departmentFormData.duration}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/\D/g, '').slice(0, 2);
+                          setDepartmentFormData({ ...departmentFormData, duration: val });
+                        }}
+                        required
+                        tabIndex={3}
+                        style={{ width: '100%', boxSizing: 'border-box' }}
+                      />
+                    </div>
+
+                    <div style={{
+                      marginTop: '20px',
+                      paddingTop: '16px',
+                      borderTop: '1px solid #e2e8f0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'flex-end',
+                      gap: '12px'
+                    }}>
+                      <button
+                        type="button"
+                        tabIndex={4}
+                        onClick={() => setShowAddDepartmentModal(false)}
+                        style={{
+                          flex: 1,
+                          height: '42px',
+                          borderRadius: '8px',
+                          border: '1.5px solid #000000',
+                          background: '#ffffff',
+                          color: '#000000',
+                          fontWeight: '600',
+                          fontSize: '0.95rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          transition: 'all 0.15s ease',
+                          outline: 'none'
+                        }}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        ref={addDeptCreateBtnRef}
+                        type="submit"
+                        tabIndex={6}
+                        style={{
+                          flex: 1,
+                          height: '42px',
+                          borderRadius: '8px',
+                          border: 'none',
+                          background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                          color: '#0f172a',
+                          fontWeight: '700',
+                          fontSize: '0.95rem',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          boxShadow: '0 2px 8px rgba(245, 158, 11, 0.25)',
+                          transition: 'all 0.15s ease',
+                          outline: 'none'
+                        }}
+                      >
+                        <Check size={18} color="#0f172a" />
+                        {isEditingDepartment ? 'Update Department' : 'Create Department'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            )}
+
             {/* Add / Edit Semester Modal Dialog */}
             {showAddSemesterModal && (
               <div style={{
@@ -10333,13 +11166,37 @@ export default function AdminDashboard({
 
                     <div>
                       <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
+                        Department <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <select
+                        className="glass-input"
+                        value={semesterFormData.department || semesterFormData.program || ''}
+                        onChange={(e) => setSemesterFormData({ ...semesterFormData, department: e.target.value, program: e.target.value })}
+                        tabIndex={3}
+                        style={{ width: '100%', padding: '10px 12px', boxSizing: 'border-box' }}
+                        required
+                      >
+                        <option value="">-- Select Department --</option>
+                        {allDepartmentsList.map((d) => (
+                          <option key={d.id} value={d.name}>
+                            {d.name} ({d.code})
+                          </option>
+                        ))}
+                        {semesterFormData.department && !allDepartmentsList.some(d => d.name === semesterFormData.department || d.code === semesterFormData.department) && (
+                          <option value={semesterFormData.department}>{semesterFormData.department}</option>
+                        )}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: '700', color: '#334155', marginBottom: '6px' }}>
                         Term Type
                       </label>
                       <select
                         className="glass-input"
                         value={semesterFormData.term}
                         onChange={(e) => setSemesterFormData({ ...semesterFormData, term: e.target.value })}
-                        tabIndex={3}
+                        tabIndex={4}
                         style={{ width: '100%', padding: '10px 12px', boxSizing: 'border-box' }}
                       >
                         <option value="Odd">Odd Term</option>
@@ -10863,6 +11720,259 @@ export default function AdminDashboard({
               </div>
             )}
 
+            {activeTab === 'departments' && (
+              <div style={styles.tabPanel}>
+                {/* CARD 1: ACTION BUTTONS CARD (TOP) */}
+                <div className="glass-panel desktop-student-action-card" style={{ padding: isMobile ? '14px 16px' : '18px 24px', borderRadius: '16px' }}>
+                  <input
+                    type="file"
+                    accept=".csv,.xlsx"
+                    ref={departmentFileInputRef}
+                    onChange={handleDepartmentImportFile}
+                    style={{ display: 'none' }}
+                  />
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '12px', width: '100%' }}>
+                    {/* Left Actions Group */}
+                    <div className="admin-action-btn-group desktop-student-action-group" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        className="admin-glass-btn admin-glass-btn-blue"
+                        onClick={() => { setShowDepartmentMobileActions(false); handleDownloadDepartmentSampleTemplate(); }}
+                        title="Download sample Excel file format for department import"
+                      >
+                        <FileSpreadsheet size={16} />
+                        <span>Sample Format</span>
+                      </button>
+
+                      <button
+                        className="admin-glass-btn admin-glass-btn-purple"
+                        onClick={() => { setShowDepartmentMobileActions(false); departmentFileInputRef.current && departmentFileInputRef.current.click(); }}
+                        title="Import department batch from CSV or Excel"
+                      >
+                        <Upload size={16} />
+                        <span>Bulk Upload</span>
+                      </button>
+
+                      <button
+                        className="admin-glass-btn admin-glass-btn-green"
+                        onClick={() => { setShowDepartmentMobileActions(false); handleExportDepartmentData(); }}
+                        title="Export department records to Excel file"
+                      >
+                        <Download size={16} />
+                        <span>Export</span>
+                      </button>
+
+                      {selectedDepartmentIds.length > 0 && (
+                        <button
+                          className="admin-glass-btn admin-glass-btn-rose"
+                          onClick={() => handleBulkDeleteDepartments(selectedDepartmentIds)}
+                          title={`Delete ${selectedDepartmentIds.length} selected department(s)`}
+                        >
+                          <Trash2 size={16} />
+                          <span>
+                            Delete ({selectedDepartmentIds.length})
+                          </span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Right Action Group */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
+                      <button
+                        onClick={handleOpenAddDepartmentModal}
+                        className="admin-glass-btn admin-glass-btn-amber full-width-mobile"
+                      >
+                        <Plus size={16} /> <span>Add Department</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* CARD 2: SEARCH FILTER BAR */}
+                <div className="glass-panel" style={{ padding: isMobile ? '14px 16px' : '18px 24px', borderRadius: '16px' }}>
+                  <div style={{ position: 'relative', display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <Search size={18} style={styles.searchIcon} />
+                    <input
+                      type="text"
+                      className="glass-input"
+                      placeholder="Search department by Code, Name, or Duration..."
+                      value={departmentSearchQuery}
+                      onChange={(e) => setDepartmentSearchQuery(e.target.value)}
+                      style={{ paddingLeft: '40px', paddingRight: departmentSearchQuery ? '36px' : '14px', width: '100%' }}
+                    />
+                    {departmentSearchQuery && (
+                      <button
+                        onClick={() => setDepartmentSearchQuery('')}
+                        style={{
+                          position: 'absolute',
+                          right: '12px',
+                          background: 'none',
+                          border: 'none',
+                          color: 'var(--text-muted)',
+                          cursor: 'pointer',
+                          padding: '4px',
+                          display: 'flex',
+                          alignItems: 'center'
+                        }}
+                        title="Clear search"
+                      >
+                        <X size={16} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* CARD 3: DEPARTMENT DATA TABLE CARD */}
+                <div className="glass-panel" style={{ ...styles.studentCrudPanel, padding: isMobile ? '14px 10px' : '24px', borderRadius: '16px' }}>
+                  <div className="custom-table-container">
+                    {allDepartmentsList.length === 0 ? (
+                      <div style={{
+                        textAlign: 'center',
+                        padding: '50px 20px',
+                        color: 'var(--text-muted)'
+                      }}>
+                        <Building2 size={52} color="var(--text-muted)" style={{ marginBottom: '14px', opacity: 0.4 }} />
+                        <h4 style={{ fontSize: '1.05rem', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 6px 0' }}>
+                          No departments created yet
+                        </h4>
+                        <p style={{ fontSize: '0.85rem', maxWidth: '420px', margin: '0 auto 16px auto', color: 'var(--text-secondary)' }}>
+                          You haven't created any departments yet. Click the "Add Department" button above to create a department.
+                        </p>
+                        <button
+                          onClick={handleOpenAddDepartmentModal}
+                          className="btn btn-primary"
+                          style={{ padding: '8px 18px', fontSize: '0.85rem', background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: '#0f172a', border: 'none', gap: '6px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+                        >
+                          <Plus size={16} color="#0f172a" /> Add Your First Department
+                        </button>
+                      </div>
+                    ) : (
+                      (() => {
+                        const filteredDepartments = allDepartmentsList.filter(dept => {
+                          if (!departmentSearchQuery) return true;
+                          const q = departmentSearchQuery.toLowerCase();
+                          return (
+                            (dept.name || '').toLowerCase().includes(q) ||
+                            (dept.code || '').toLowerCase().includes(q) ||
+                            String(dept.duration || '').toLowerCase().includes(q)
+                          );
+                        });
+
+                        return (
+                          <table className="custom-table">
+                            <thead>
+                              <tr>
+                                <th style={{ width: '40px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={filteredDepartments.length > 0 && filteredDepartments.every(d => selectedDepartmentIds.includes(d.id))}
+                                    onChange={toggleSelectAllDepartments}
+                                    title="Select / Unselect All"
+                                    style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                  />
+                                </th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Department Code</th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Department Name</th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Duration (Years)</th>
+                                <th style={{ textAlign: 'center', width: '110px', whiteSpace: 'nowrap' }}>Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {filteredDepartments.map((dept) => {
+                                const isChecked = selectedDepartmentIds.includes(dept.id);
+                                return (
+                                  <tr key={dept.id} style={{ background: isChecked ? 'rgba(147, 51, 234, 0.08)' : 'transparent' }}>
+                                    <td style={{ textAlign: 'center' }}>
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => toggleSelectDepartment(dept.id)}
+                                        style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+                                      />
+                                    </td>
+                                    <td style={{ whiteSpace: 'nowrap', fontWeight: '700', color: '#f59e0b', fontSize: '0.92rem' }}>
+                                      <span style={{
+                                        padding: '3px 10px',
+                                        borderRadius: '8px',
+                                        fontSize: '0.82rem',
+                                        fontWeight: '700',
+                                        background: 'rgba(245, 158, 11, 0.12)',
+                                        color: '#d97706',
+                                        display: 'inline-block'
+                                      }}>
+                                        {dept.code}
+                                      </span>
+                                    </td>
+                                    <td style={{ fontWeight: '700', color: 'var(--text-primary)', fontSize: '0.92rem', whiteSpace: 'nowrap' }}>
+                                      {dept.name}
+                                    </td>
+                                    <td style={{ whiteSpace: 'nowrap', fontWeight: '600', color: 'var(--text-secondary)', fontSize: '0.88rem' }}>
+                                      <span style={{
+                                        padding: '3px 12px',
+                                        borderRadius: '10px',
+                                        fontSize: '0.8rem',
+                                        fontWeight: '700',
+                                        background: 'rgba(59, 130, 246, 0.1)',
+                                        color: '#2563eb',
+                                        display: 'inline-block'
+                                      }}>
+                                        {dept.duration ? `${dept.duration} ${Number(dept.duration) === 1 ? 'Year' : 'Years'}` : '3 Years'}
+                                      </span>
+                                    </td>
+                                    <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                                        <button
+                                          onClick={() => handleOpenEditDepartmentModal(dept)}
+                                          style={{
+                                            width: '32px',
+                                            height: '32px',
+                                            borderRadius: '8px',
+                                            background: 'rgba(59, 130, 246, 0.08)',
+                                            border: '1px solid rgba(59, 130, 246, 0.2)',
+                                            color: '#2563eb',
+                                            cursor: 'pointer',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            transition: 'all 0.15s ease'
+                                          }}
+                                          title="Edit Department"
+                                        >
+                                          <Edit size={15} />
+                                        </button>
+                                        <button
+                                          onClick={() => handleDeleteDepartment(dept.id, dept.name)}
+                                          style={{
+                                            width: '32px',
+                                            height: '32px',
+                                            borderRadius: '8px',
+                                            background: 'rgba(239, 68, 68, 0.08)',
+                                            border: '1px solid rgba(239, 68, 68, 0.2)',
+                                            color: '#ef4444',
+                                            cursor: 'pointer',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            transition: 'all 0.15s ease'
+                                          }}
+                                          title="Delete Department"
+                                        >
+                                          <Trash2 size={15} />
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        );
+                      })()
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {activeTab === 'semesters' && (
               <div style={styles.tabPanel}>
                 {/* CARD 1: ACTION BUTTONS CARD (TOP) */}
@@ -11016,6 +12126,7 @@ export default function AdminDashboard({
                                 </th>
                                 <th style={{ whiteSpace: 'nowrap' }}>Semester Code</th>
                                 <th style={{ whiteSpace: 'nowrap' }}>Semester Name</th>
+                                <th style={{ whiteSpace: 'nowrap' }}>Department</th>
                                 <th style={{ whiteSpace: 'nowrap' }}>Term Type</th>
                                 <th style={{ whiteSpace: 'nowrap' }}>Status</th>
                                 <th style={{ textAlign: 'center', width: '110px', whiteSpace: 'nowrap' }}>Actions</th>
@@ -11043,6 +12154,9 @@ export default function AdminDashboard({
                                     </td>
                                     <td style={{ fontWeight: '700', color: 'var(--text-primary)', fontSize: '0.92rem', whiteSpace: 'nowrap' }}>
                                       {displayName}
+                                    </td>
+                                    <td style={{ fontWeight: '600', color: 'var(--text-secondary)', fontSize: '0.88rem', whiteSpace: 'nowrap' }}>
+                                      {sem.department || sem.program || '-'}
                                     </td>
                                     <td style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', whiteSpace: 'nowrap' }}>
                                       <span style={{
@@ -12586,8 +13700,8 @@ export default function AdminDashboard({
             {/* PANEL 3: QR ATTENDANCE */}
             {activeTab === 'otp' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', width: '100%' }}>
-                {/* Top Row: Faculty QR Settings + Set QR Limit side by side */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '24px', width: '100%' }}>
+                {/* Top Row: Faculty QR Settings + Set Session Limit + Set QR Time side by side */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '24px', width: '100%' }}>
                   {/* Card 1: Faculty QR Permission Controls */}
                   <div className="glass-panel" style={{ ...styles.dashboardPanelCard, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between', padding: '28px 30px' }}>
                     <h3 style={{ ...styles.cardTitle, width: '100%', textAlign: 'center', marginBottom: '16px' }}>Faculty QR Settings</h3>
@@ -12616,10 +13730,10 @@ export default function AdminDashboard({
                     </button>
                   </div>
 
-                  {/* Card 2: Set QR Limit */}
+                  {/* Card 2: Set Session Limit */}
                   <div className="glass-panel" style={{ ...styles.dashboardPanelCard, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '28px 30px' }}>
                     <div>
-                      <h3 style={{ ...styles.cardTitle, marginBottom: '6px' }}>Set QR Limit</h3>
+                      <h3 style={{ ...styles.cardTitle, marginBottom: '6px' }}>Set Session Limit</h3>
                       <p style={{ color: 'var(--text-secondary)', fontSize: '0.83rem', marginBottom: '20px', lineHeight: 1.5 }}>
                         Set how many QR sessions each faculty member can generate per day. Currently set to
                         <strong style={{ color: '#f59e0b', marginLeft: '4px' }}>{qrDailyLimit} session{qrDailyLimit === 1 ? '' : 's'}/day</strong>.
@@ -12702,6 +13816,96 @@ export default function AdminDashboard({
 
                       <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center', margin: 0 }}>
                         Range: 1 – 100 sessions per day
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Card 3: Set QR Time */}
+                  <div className="glass-panel" style={{ ...styles.dashboardPanelCard, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '28px 30px' }}>
+                    <div>
+                      <h3 style={{ ...styles.cardTitle, marginBottom: '6px' }}>Set QR Time</h3>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '0.83rem', marginBottom: '20px', lineHeight: 1.5 }}>
+                        Set how many seconds each QR code will stay active before rotating. Currently set to
+                        <strong style={{ color: '#06b6d4', marginLeft: '4px' }}>{qrCodeTime} second{qrCodeTime === 1 ? '' : 's'}</strong>.
+                      </p>
+
+                      {/* Current time display badge */}
+                      <div style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        marginBottom: '20px'
+                      }}>
+                        <div style={{
+                          width: '90px', height: '90px', borderRadius: '50%',
+                          background: 'linear-gradient(135deg, rgba(6,182,212,0.15), rgba(2,132,199,0.25))',
+                          border: '2px solid rgba(6,182,212,0.4)',
+                          display: 'flex', flexDirection: 'column',
+                          alignItems: 'center', justifyContent: 'center',
+                          boxShadow: '0 0 20px rgba(6,182,212,0.15)'
+                        }}>
+                          <span style={{ fontSize: '2rem', fontWeight: '800', color: '#06b6d4', lineHeight: 1 }}>{qrCodeTime}</span>
+                          <span style={{ fontSize: '0.65rem', fontWeight: '600', color: '#0ea5e9', textTransform: 'uppercase', letterSpacing: '0.5px' }}>seconds</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      {/* Custom number input & Save Time button */}
+                      <div style={{ display: 'flex', gap: '12px', alignItems: 'center', marginBottom: '16px', width: '100%' }}>
+                        <div style={{ flex: 1, position: 'relative' }}>
+                          <input
+                            type="number"
+                            min="3"
+                            max="120"
+                            value={qrTimeInput}
+                            onChange={e => setQrTimeInput(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && handleSaveQrTime()}
+                            style={{
+                              width: '100%',
+                              height: '46px',
+                              padding: '0 16px',
+                              borderRadius: '12px',
+                              border: '1.5px solid rgba(6,182,212,0.35)',
+                              background: 'rgba(6,182,212,0.06)',
+                              color: 'var(--text-primary)', fontSize: '1rem', fontWeight: '700',
+                              outline: 'none', boxSizing: 'border-box', textAlign: 'center'
+                            }}
+                            placeholder="e.g. 10"
+                          />
+                        </div>
+                        <button
+                          onClick={handleSaveQrTime}
+                          disabled={qrTimeSaving}
+                          style={{
+                            flex: 1,
+                            height: '46px',
+                            padding: '0 16px',
+                            borderRadius: '12px',
+                            fontWeight: '700',
+                            fontSize: '0.95rem',
+                            border: 'none',
+                            cursor: qrTimeSaving ? 'not-allowed' : 'pointer',
+                            background: qrTimeSaving
+                              ? 'rgba(6,182,212,0.3)'
+                              : 'linear-gradient(135deg, #06b6d4, #0284c7)',
+                            color: '#ffffff', transition: 'all 0.2s',
+                            display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px',
+                            whiteSpace: 'nowrap',
+                            boxShadow: '0 4px 12px rgba(6,182,212,0.25)'
+                          }}
+                        >
+                          {qrTimeSaving ? (
+                            <>
+                              <span style={{ width: '14px', height: '14px', border: '2px solid #ffffff', borderTopColor: 'transparent', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+                              Saving...
+                            </>
+                          ) : (
+                            <>✓ Save Time</>
+                          )}
+                        </button>
+                      </div>
+
+                      <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textAlign: 'center', margin: 0 }}>
+                        Range: 3 – 120 seconds per QR
                       </p>
                     </div>
                   </div>
@@ -15246,14 +16450,13 @@ export default function AdminDashboard({
                     </div>
 
                     <div style={styles.formGroup}>
-                      <label style={styles.formLabel}>Course / Department</label>
-                      <input
-                        type="text"
-                        className="glass-input"
-                        placeholder="e.g. B.E. Computer"
-                        value={studentForm.course}
-                        onChange={(e) => setStudentForm({ ...studentForm, course: e.target.value })}
-                        required
+                      <label style={styles.formLabel}>Department / Course *</label>
+                      <SearchableDepartmentSelect
+                        value={studentForm.course || ''}
+                        onChange={(val) => setStudentForm({ ...studentForm, course: val })}
+                        placeholder="Select Department"
+                        options={departmentSelectOptions}
+                        isDark={false}
                         tabIndex={4}
                       />
                     </div>
@@ -15586,14 +16789,13 @@ export default function AdminDashboard({
                     </div>
 
                     <div style={styles.formGroup}>
-                      <label style={styles.formLabel}>Department</label>
-                      <input
-                        type="text"
-                        className="glass-input"
-                        placeholder="e.g. Computer Science"
-                        value={facultyForm.department}
-                        onChange={(e) => setFacultyForm({ ...facultyForm, department: e.target.value })}
-                        required
+                      <label style={styles.formLabel}>Department *</label>
+                      <SearchableDepartmentSelect
+                        value={facultyForm.department || ''}
+                        onChange={(val) => setFacultyForm({ ...facultyForm, department: val })}
+                        placeholder="Select Department"
+                        options={departmentSelectOptions}
+                        isDark={false}
                         tabIndex={3}
                       />
                     </div>
@@ -15922,7 +17124,8 @@ export default function AdminDashboard({
                   </div>
                   <div>
                     <h3 style={{ margin: 0, fontSize: '1.2rem', color: '#0f172a', fontWeight: '800' }}>
-                      {deleteConfirmState.entityType === 'faculty' ? 'Confirm Faculty Deletion' :
+                      {deleteConfirmState.entityType === 'department' ? 'Confirm Department Deletion' :
+                       deleteConfirmState.entityType === 'faculty' ? 'Confirm Faculty Deletion' :
                        deleteConfirmState.entityType === 'semester' ? 'Confirm Semester Deletion' :
                        'Confirm Student Deletion'}
                     </h3>
@@ -15934,6 +17137,7 @@ export default function AdminDashboard({
 
                 <p style={{ fontSize: '0.94rem', color: '#334155', margin: 0, lineHeight: 1.55 }}>
                   Are you sure you want to delete <strong style={{ color: '#0f172a', fontWeight: '800' }}>{deleteConfirmState.studentName}</strong>? {
+                    deleteConfirmState.entityType === 'department' ? 'This department will be permanently deleted from the system.' :
                     deleteConfirmState.entityType === 'faculty' ? 'This faculty account will be permanently deleted from the system.' :
                     deleteConfirmState.entityType === 'semester' ? 'All associated semester data will also be permanently removed.' :
                     'All associated attendance history will also be permanently deleted.'

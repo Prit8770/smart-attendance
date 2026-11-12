@@ -15,6 +15,7 @@ const noticesRouter = require('./routes/notices');
 const rulesRouter = require('./routes/rules');
 const subjectsRouter = require('./routes/subjects');
 const semestersRouter = require('./routes/semesters');
+const departmentsRouter = require('./routes/departments');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -56,6 +57,7 @@ app.use('/api/notices', noticesRouter);
 app.use('/api/rules', rulesRouter);
 app.use('/api/subjects', subjectsRouter);
 app.use('/api/semesters', semestersRouter);
+app.use('/api/departments', departmentsRouter);
 
 // Serve frontend build static files in production
 app.use(express.static(path.join(__dirname, '../frontend/dist')));
